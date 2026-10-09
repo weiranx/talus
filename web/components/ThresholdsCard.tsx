@@ -1,7 +1,7 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import Pill from "@/components/Pill";
 import Link from "next/link";
 import { dayLabel, n0, pct } from "@/lib/format";
@@ -51,6 +51,14 @@ export default function ThresholdsCard({ current, inferred }: { current: Setting
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState<{ ok: boolean; text: string } | null>(null);
 
+  // While the engine reads runs in the background, check back until the estimate is ready.
+  const computing = inferred?.status === "computing";
+  useEffect(() => {
+    if (!computing) return;
+    const t = setInterval(() => router.refresh(), 5000);
+    return () => clearInterval(t);
+  }, [computing, router]);
+
   const ant = Number(form.ant);
   const aetPreview = form.aet ? Number(form.aet) : ant ? Math.round(ant * 0.88) : null;
 
@@ -83,7 +91,7 @@ export default function ThresholdsCard({ current, inferred }: { current: Setting
   }
 
   function useInferred() {
-    if (!inferred) return;
+    if (!inferred?.ant || !inferred.aet || !inferred.max) return;
     const next = { ...form };
     if (inferred.ant.value != null) next.ant = String(inferred.ant.value);
     // A provisional AeT is just the 88% rule: leave the box blank so the engine applies it and labels it.
@@ -127,12 +135,25 @@ export default function ThresholdsCard({ current, inferred }: { current: Setting
         <div className="muted">Talus needs these to score heart rate, split time into zones and work out cardio load.</div>
       )}
 
-      {inferred ? (
+      {inferred && !inferred.ant ? (
+        <div className="inferred">
+          <div style={{ fontWeight: 600 }}>Estimating from your runs</div>
+          <div className="muted">
+            Reading {inferred.runs_total} runs from the last {inferred.days} days
+            ({inferred.runs_read} done). This runs in the background, once; later visits are instant.
+          </div>
+        </div>
+      ) : null}
+
+      {inferred?.ant && inferred.aet && inferred.max ? (
         <div className="inferred">
           <div style={{ display: "flex", flexWrap: "wrap", justifyContent: "space-between", gap: 8, alignItems: "center" }}>
             <div>
               <div style={{ fontWeight: 600 }}>Estimated from your runs</div>
-              <div className="muted">{inferred.runs_with_hr} runs with heart rate in the last {inferred.days} days</div>
+              <div className="muted">
+                {inferred.runs_with_hr} runs with heart rate in the last {inferred.days} days
+                {inferred.status === "computing" ? ` (still reading ${inferred.runs_total - inferred.runs_read} more)` : ""}
+              </div>
             </div>
             <button className="btn light outline" onClick={useInferred}
               disabled={inferred.ant.value == null}>Use these</button>
@@ -149,7 +170,7 @@ export default function ThresholdsCard({ current, inferred }: { current: Setting
               </thead>
               <tbody>
                 {(["aet", "ant", "max"] as const).map((k) => {
-                  const e = inferred[k];
+                  const e = inferred[k]!;
                   return (
                     <tr key={k}>
                       <td>{k === "aet" ? "AeT" : k === "ant" ? "AnT" : "Max"}</td>
@@ -164,7 +185,7 @@ export default function ThresholdsCard({ current, inferred }: { current: Setting
           </div>
           <ul className="method-list">
             {(["ant", "aet", "max"] as const).map((k) => {
-              const e = inferred[k];
+              const e = inferred[k]!;
               return (
                 <li key={k}>
                   <span style={{ fontWeight: 600 }}>{k === "aet" ? "AeT" : k === "ant" ? "AnT" : "Max"}:</span> {e.method}

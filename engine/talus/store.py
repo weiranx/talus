@@ -130,6 +130,12 @@ CREATE TABLE IF NOT EXISTS chat (
     source TEXT,
     log_id INTEGER
 );
+CREATE TABLE IF NOT EXISTS activity_infer (
+    activity_id INTEGER PRIMARY KEY,
+    version TEXT NOT NULL,
+    features TEXT NOT NULL,
+    computed_at TEXT NOT NULL
+);
 CREATE TABLE IF NOT EXISTS setting (
     key TEXT PRIMARY KEY,
     value TEXT NOT NULL,
@@ -267,6 +273,7 @@ class Store:
              act.distance_m, act.gain_m),
         )
         activity_id = cur.fetchone()[0]
+        self.db.execute("DELETE FROM activity_infer WHERE activity_id = ?", (activity_id,))  # new file
         self.db.commit()
         return activity_id
 
@@ -274,6 +281,19 @@ class Store:
     def set_start_time(self, activity_id: int, start: datetime) -> None:
         self.db.execute("UPDATE activity SET start_time = ? WHERE id = ?", (start.isoformat(), activity_id))
         self._ledgers_changed()
+
+    # Threshold inference reads every run's streams, which is slow, so what each run contributes
+    # (infer.features) is kept per activity and read once. Only a new file for that activity, or
+    # a new FEATURES_VERSION, makes it read again; thresholds don't enter into it.
+    def infer_features(self, version: str) -> dict[int, dict | None]:
+        rows = self.db.execute("SELECT activity_id, features FROM activity_infer WHERE version = ?", (version,))
+        return {r["activity_id"]: json.loads(r["features"]) for r in rows}
+
+    @_writes
+    def save_infer_features(self, activity_id: int, version: str, features: dict | None) -> None:
+        self.db.execute("INSERT OR REPLACE INTO activity_infer VALUES (?, ?, ?, ?)",
+                        (activity_id, version, json.dumps(features),
+                         datetime.now().isoformat(timespec="seconds")))
 
     def activity(self, activity_id: int) -> sqlite3.Row | None:
         return self.db.execute("SELECT * FROM activity WHERE id = ?", (activity_id,)).fetchone()

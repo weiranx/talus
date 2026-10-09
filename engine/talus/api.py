@@ -728,33 +728,49 @@ def post_chat(body: ChatIn) -> dict:
 # Settings. Keys stay in .env: the engine reports whether each one is set, never its value.
 
 INFER_DAYS = 180
-_inferred_cache: dict = {}
+# Folders whose runs are being read for the threshold estimate, by a background thread each.
+_inferring: dict[str, threading.Thread] = {}
+_inferring_guard = threading.Lock()
+
+
+def start_inferring(folder) -> None:
+    """Read any runs without stored inference features, in the background, once per folder at a
+    time. Settings shows what is stored meanwhile."""
+    key = str(folder)
+
+    def run() -> None:
+        try:
+            cli.fill_infer_features(Store(folder), INFER_DAYS)
+        finally:
+            with _inferring_guard:
+                _inferring.pop(key, None)
+
+    with _inferring_guard:
+        if key in _inferring:
+            return
+        _inferring[key] = threading.Thread(target=run, name=f"infer {key}", daemon=True)
+        _inferring[key].start()
 
 
 def _inferred_thresholds(store: Store) -> dict | None:
     """Thresholds estimated from the last 180 days of runs (talus infer), with how far to trust
-    each one and the runs it came from. Parsing every run is slow, so the result is kept until
-    the set of activities changes."""
-    from .infer import infer
-
-    global _inferred_cache
-    rows = [r for r in store.activities() if r["start_time"]]
-    key = (str(store.dir), tuple(sorted(r["id"] for r in rows)), date.today())
-    cache = _inferred_cache  # one read: another request may swap in a new cache meanwhile
-    if key in cache:
-        return cache[key]
-    acts, _ = cli.infer_inputs(store, INFER_DAYS)
-    r = infer(acts)
-    value = None
-    if r["runs_with_hr"]:
-        info = {row["id"]: {"id": row["id"], "day": row["start_time"][:10], "name": row["name"]} for row in rows}
-        value = {
-            "days": INFER_DAYS, "runs_with_hr": r["runs_with_hr"],
-            **{k: {"value": e.value, "confidence": e.confidence, "method": e.method,
-                   "activities": [info[i] for i in e.activities if i in info]}
-               for k, e in ((k, r[k]) for k in ("aet", "ant", "max"))}}
-    _inferred_cache = {key: value}  # replaced, never cleared, so a concurrent reader keeps its copy
-    return value
+    each one and the runs it came from. Built from each run's stored features, so it is quick;
+    runs not read yet are read in the background and `status` says "computing" until they are."""
+    r, rows, missing = cli.inferred(store, INFER_DAYS)
+    if missing:
+        start_inferring(store.dir)
+    if not rows:
+        return None
+    status = {"status": "computing" if missing else "ready", "runs_read": len(rows) - missing,
+              "runs_total": len(rows)}
+    if not r["runs_with_hr"]:
+        return None if not missing else status | {"days": INFER_DAYS, "runs_with_hr": 0}
+    info = {row["id"]: {"id": row["id"], "day": row["start_time"][:10], "name": row["name"]} for row in rows}
+    return status | {
+        "days": INFER_DAYS, "runs_with_hr": r["runs_with_hr"],
+        **{k: {"value": e.value, "confidence": e.confidence, "method": e.method,
+               "activities": [info[i] for i in e.activities if i in info]}
+           for k, e in ((k, r[k]) for k in ("aet", "ant", "max"))}}
 
 
 def _usage_estimate(store: Store, mode: str, model_id: str, calls_per_month: int) -> dict:
@@ -994,6 +1010,7 @@ def sync_now(body: SyncIn, background: BackgroundTasks) -> dict:
         return store.settings()[f"last_sync_{body.source}"] | {"log": lines}
     # The coach writes after the response, so the sync button doesn't wait on it.
     background.add_task(warm_coach, result.pop("added_ids"))
+    background.add_task(start_inferring, store.dir)
     return result | {"log": lines}
 
 
@@ -1074,9 +1091,11 @@ class HealthKitIn(BaseModel):
 def import_healthkit(body: HealthKitIn, background: BackgroundTasks) -> dict:
     """What the Talus iOS app reads from HealthKit, for the signed-in account. See imports.import_healthkit."""
     from . import imports
-    result = imports.import_healthkit(get_store(), [w.model_dump() for w in body.workouts],
+    store = get_store()
+    result = imports.import_healthkit(store, [w.model_dump() for w in body.workouts],
                                       [n.model_dump(mode="json") for n in body.wellness], log=lambda *_: None)
     background.add_task(warm_coach, result.pop("added_ids"))
+    background.add_task(start_inferring, store.dir)
     return result
 
 
@@ -1115,6 +1134,7 @@ async def import_file(request: Request, background: BackgroundTasks, name: str =
     finally:
         tmp.unlink(missing_ok=True)
     background.add_task(warm_coach, result.pop("added_ids"))
+    background.add_task(start_inferring, store.dir)
     return result | {"log": lines}
 
 

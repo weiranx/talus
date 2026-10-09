@@ -351,7 +351,7 @@ def cmd_load(store: Store, args) -> None:
         sys.exit("No ledger yet: set thresholds, then sync or import activities")
     latest = max(d.day for d in days)
     print(f"Ledgers on {latest}")
-    for d in (d for d in days if d.day == latest):
+    for d in sorted((d for d in days if d.day == latest), key=lambda d: ledger.LEDGERS.index(d.ledger)):
         flags = "; ".join(ledger.FLAG_TEXT[f] for f in d.flags)
         nd = 1 if d.ledger == "distance" else 0
         print(f"  {d.ledger:8} last 7 days {ledger.describe_vs_normal(d.vs_normal):24} "

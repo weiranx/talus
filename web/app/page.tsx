@@ -71,7 +71,7 @@ export default async function TodayPage() {
           const limiter = t.readiness.legs.limiter === name && t.readiness.legs.state !== "fresh";
           const nd = ledgerDecimals(name), unit = ledgerUnit(name);
           return (
-            <section key={name} className="card" style={{ flex: "1 1 260px", gap: 10, outline: limiter ? `2px solid var(--${name})` : undefined }}>
+            <section key={name} className="card" style={{ flex: "1 1 220px", gap: 10, outline: limiter ? `2px solid var(--${name})` : undefined }}>
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
                 <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
                   <span className="swatch" style={{ background: `var(--${name})` }} />

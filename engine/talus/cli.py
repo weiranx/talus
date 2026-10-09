@@ -70,6 +70,7 @@ def main(argv: list[str] | None = None) -> None:
 
     sv = sub.add_parser("serve", help="run the engine API for the web app")
     sv.add_argument("--port", type=int, default=8000)
+    sv.add_argument("--host", default="127.0.0.1", help="0.0.0.0 to reach the engine from an iPhone on your Wi-Fi")
 
     ac = sub.add_parser("account", help="list accounts, create one, or reset a password")
     ac.add_argument("action", choices=["list", "create", "password"])
@@ -81,7 +82,7 @@ def main(argv: list[str] | None = None) -> None:
         accounts = Accounts(data_dir())  # moves a single-user install into account 1 first
         for a in accounts.all():  # once, so pages read stored ledgers from the start
             Store(accounts.user_dir(a.id)).refresh_ledgers()
-        uvicorn.run("talus.api:app", host="127.0.0.1", port=args.port)
+        uvicorn.run("talus.api:app", host=args.host, port=args.port)
         return
     accounts = Accounts(data_dir())
     if args.cmd == "account":

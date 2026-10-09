@@ -1,0 +1,243 @@
+import Foundation
+
+// Shapes of the engine's JSON (engine/talus/api.py). Every number comes from the engine; the app
+// only formats it. Distances are miles and vert is feet. Fields the engine may send as null are
+// optional, and anything added later is ignored. Keys decode from snake_case, which capitalizes
+// a letter after digits: intensity_28d is intensity28D.
+
+struct Flag: Codable, Hashable {
+    let key: String
+    let text: String
+}
+
+struct LedgerDay: Codable, Hashable {
+    let day: String
+    let load: Double
+    let fitness: Double
+    let fatigue: Double
+    let form: Double
+    let vsNormal: Double?
+    let vsNormalText: String
+    let flags: [Flag]
+    let building: Bool?
+}
+
+struct SparkPoint: Codable, Hashable {
+    let day: String
+    let fitness: Double
+    let fatigue: Double
+}
+
+struct TodayLedger: Codable, Hashable {
+    let day: String
+    let fitness: Double
+    let fatigue: Double
+    let vsNormal: Double?
+    let vsNormalText: String
+    let flags: [Flag]
+    let building: Bool?
+    let spark: [SparkPoint]
+}
+
+struct ActivitySummary: Codable, Hashable, Identifiable {
+    let id: Int
+    let day: String
+    let startTime: String
+    let name: String?
+    let sport: String?
+    let source: String
+    let deviceName: String?
+    let distanceMi: Double
+    let gainFt: Double
+    let lossFt: Double
+    let effortMi: Double
+    let movingTimeS: Double
+    let cardioLoad: Double?
+    let climbLoad: Double?
+    let descentLoad: Double?
+}
+
+struct Thresholds: Codable, Hashable {
+    let resting: Double
+    let aet: Double
+    let ant: Double
+    let max: Double
+    let source: String
+    let aerobicGap: Double
+}
+
+struct ZoneShare: Codable, Hashable {
+    let minutes: [String: Double]
+    let share: [String: Double]
+}
+
+struct ZoneInfo: Codable, Hashable {
+    let zone: Int
+    let name: String
+    let text: String
+}
+
+struct ZoneModel: Codable, Hashable {
+    let zones: Int
+    let custom: Bool
+    let list: [ZoneInfo]
+}
+
+struct Signal: Codable, Hashable {
+    let status: String
+    let text: String
+}
+
+struct Wellness: Codable, Hashable {
+    let hrv: Signal
+    let restingHr: Signal
+    let sleep: Signal
+}
+
+struct CheckIn: Codable, Hashable {
+    var soreness: Int
+    var energy: Int
+    var pain: Int
+}
+
+struct ReadinessPart: Codable, Hashable {
+    let state: String
+    let detail: String
+    let reason: String
+    let limiter: String?
+}
+
+struct Readiness: Codable, Hashable {
+    let engine: ReadinessPart
+    let legs: ReadinessPart
+}
+
+struct Call: Codable, Hashable {
+    let call: String
+    let session: String
+    let detail: String
+    let why: String
+}
+
+struct Week: Codable, Hashable {
+    let start: String
+    let activities: [ActivitySummary]
+    let distanceMi: Double
+    let gainFt: Double
+    let lossFt: Double
+}
+
+struct Today: Codable, Hashable {
+    let date: String
+    let checkin: CheckIn?
+    let wellness: Wellness?
+    let readiness: Readiness
+    let call: Call
+    let ledgers: [String: TodayLedger]
+    let week: Week
+    let intensity28D: ZoneShare
+    let zones28D: ZoneShare?
+    let zoneModel: ZoneModel?
+}
+
+struct CoachReply: Codable, Hashable {
+    let reply: Call
+    let source: String
+    let fallbackReason: String?
+}
+
+struct LoadLedger: Codable, Hashable {
+    let today: LedgerDay?
+    let series: [LedgerDay]
+}
+
+struct Gap: Codable, Hashable {
+    let from: String
+    let to: String
+}
+
+struct History: Codable, Hashable {
+    let since: String?
+    let gap: Gap?
+}
+
+struct WeekIntensity: Codable, Hashable {
+    let start: String
+    let share: [String: Double]
+}
+
+struct LoadData: Codable, Hashable {
+    let date: String
+    let ledgers: [String: LoadLedger]
+    let history: History
+    let intensityByWeek: [WeekIntensity]
+    let biggestDays: [ActivitySummary]
+    let thresholds: Thresholds?
+}
+
+struct LoadUsual: Codable, Hashable {
+    let load: Double?
+    let timesUsualDay: Double?
+    let sixWeekHigh: Bool
+}
+
+struct Segment: Codable, Hashable, Identifiable {
+    let index: Int
+    let kind: String
+    let distanceMi: Double
+    let gainFt: Double
+    let lossFt: Double
+    let avgGrade: Double
+    let timeS: Double
+    var id: Int { index }
+}
+
+struct Streams: Codable, Hashable {
+    let timeS: [Double]
+    let distanceMi: [Double]?
+    let altitudeFt: [Double]?
+    let heartRate: [Double]?
+}
+
+struct ActivityDetail: Codable, Hashable {
+    let id: Int
+    let name: String?
+    let day: String
+    let startTime: String
+    let source: String
+    let deviceName: String?
+    let sport: String?
+    let distanceMi: Double
+    let gainFt: Double
+    let lossFt: Double
+    let effortMi: Double
+    let movingTimeS: Double
+    let elapsedTimeS: Double
+    let hikeShare: Double?
+    let longestClimbFt: Double?
+    let longestDescentFt: Double?
+    let minutesAbove8000Ft: Double?
+    let notes: [String]
+    let loads: [String: LoadUsual]
+    let segments: [Segment]
+    let streams: Streams
+}
+
+struct AuthStatus: Codable {
+    struct Account: Codable { let email: String }
+    let account: Account?
+    let hasAccounts: Bool
+    let signupOpen: Bool
+}
+
+/// Ledgers in display order, as on the web. Names the engine adds later follow, alphabetically.
+enum LedgerName {
+    static let order = ["cardio", "distance", "climb", "descent"]
+
+    static func sorted(_ names: some Collection<String>) -> [String] {
+        names.sorted { a, b in
+            let ia = order.firstIndex(of: a) ?? order.count, ib = order.firstIndex(of: b) ?? order.count
+            return ia == ib ? a < b : ia < ib
+        }
+    }
+}

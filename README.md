@@ -26,6 +26,7 @@ Single-user prototype. Milestones 1 to 5 are here: sync from intervals.icu, file
 | `engine/talus/zones.py` | 3- and 5-zone heart rate models for display |
 | `engine/talus/demo.py` | Ten weeks of sample training for trying the app |
 | `web/` | Next.js web app: Today, Load, Activities, Settings |
+| `ios/` | SwiftUI iPhone app: Today, Load, Activity and Apple Health sync. See `ios/README.md` |
 | `engine/talus/store.py` | SQLite plus raw files kept on disk for rescoring |
 
 ## Getting started

@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import { DM_Mono, Figtree } from "next/font/google";
+import AccountMenu from "@/components/AccountMenu";
 import Nav from "@/components/Nav";
 import "./globals.css";
 
@@ -19,6 +20,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
             <div className="side-note">
               <div>Data from intervals.icu</div>
             </div>
+            <AccountMenu />
           </aside>
           <main className="main">
             <div className="page">{children}</div>

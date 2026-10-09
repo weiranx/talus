@@ -149,7 +149,7 @@ export interface CoachReply<T> {
   model: string | null;
 }
 
-// Settings. Keys stay in the engine's .env; the engine only says whether each one is set.
+// Settings, per account. The engine only says whether a key is set, never its value.
 export interface ZoneSettings extends ZoneModel {
   floors: number[];
   derived: number[];
@@ -205,7 +205,9 @@ export interface Settings {
   source: {
     name: string;
     key_set: boolean;
+    kind: "api_key" | "oauth" | null;
     athlete_id: string | null;
+    updated_at: string | null;
     garmin_fallback_set: boolean;
     activities: number;
     latest_activity: string | null;
@@ -220,10 +222,14 @@ export interface Settings {
     styles: { key: string; label: string; description: string }[];
     models: { id: string; label: string; input: number; output: number }[];
     estimate: { brief: Record<string, CostEstimate>; analysis: Record<string, CostEstimate> };
+    // This month's spending on the server's Anthropic key. ceiling is null for the owner.
+    cap: { limit: number | null; ceiling: number | null; spent: number; month: string };
   };
   readiness: { sleep_need_h: number; sleep_need_source: "saved" | "env" | "default" };
   units: { distance: "mi"; vert: "ft" };
 }
+
+export interface Account { id: number; email: string; is_owner: boolean; created_at: string }
 
 export interface Explanation {
   title: string;

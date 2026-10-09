@@ -1,14 +1,20 @@
-"""talus command line: thresholds, sync, import, score, rescore, list, load."""
+"""talus command line: thresholds, sync, import, score, rescore, list, load, account.
+
+Commands work on one account's data: the owner's (the first account) unless --user names another.
+"""
 
 from __future__ import annotations
 
 import argparse
+import getpass
 import hashlib
+import os
 import sys
 from datetime import date, datetime, timedelta
 from pathlib import Path
 
 from . import ledger
+from .accounts import Account, AccountError, Accounts
 from .config import data_dir, load_env
 from .models import ActivityScore, Thresholds
 from .parse import parse
@@ -23,6 +29,7 @@ WELLNESS_DAYS = BASELINE_DAYS + 6
 def main(argv: list[str] | None = None) -> None:
     load_env()
     p = argparse.ArgumentParser(prog="talus")
+    p.add_argument("--user", metavar="EMAIL", help="work on this account's data; default the owner's")
     sub = p.add_subparsers(dest="cmd", required=True)
 
     t = sub.add_parser("thresholds", help="set heart-rate anchors (bpm)")
@@ -64,16 +71,78 @@ def main(argv: list[str] | None = None) -> None:
     sv = sub.add_parser("serve", help="run the engine API for the web app")
     sv.add_argument("--port", type=int, default=8000)
 
+    ac = sub.add_parser("account", help="list accounts, create one, or reset a password")
+    ac.add_argument("action", choices=["list", "create", "password"])
+    ac.add_argument("email", nargs="?")
+
     args = p.parse_args(argv)
     if args.cmd == "serve":
         import uvicorn
         Store(data_dir()).refresh_ledgers()  # once, so pages read stored ledgers from the start
         uvicorn.run("talus.api:app", host="127.0.0.1", port=args.port)
         return
-    store = Store(data_dir())
-    {"thresholds": cmd_thresholds, "sync": cmd_sync, "import": cmd_import, "score": cmd_score,
-     "rescore": cmd_rescore, "list": cmd_list, "load": cmd_load, "infer": cmd_infer,
-     "demo": cmd_demo}[args.cmd](store, args)
+    accounts = Accounts(data_dir())
+    if args.cmd == "account":
+        cmd_account(accounts, args)
+        return
+    account = None
+    if args.user:
+        account = accounts.by_email(args.user)
+        if account is None:
+            sys.exit(f"No account {args.user}. See: talus account list")
+    store = Store(accounts.user_dir(account.id) if account else default_user_dir(accounts))
+    args.credential = credential_for(accounts, account)
+    # The coach runs after a sync through the API's code, which reads the account from here.
+    from . import api
+    reset = api._account.set(account)
+    try:
+        {"thresholds": cmd_thresholds, "sync": cmd_sync, "import": cmd_import, "score": cmd_score,
+         "rescore": cmd_rescore, "list": cmd_list, "load": cmd_load, "infer": cmd_infer,
+         "demo": cmd_demo}[args.cmd](store, args)
+    finally:
+        api._account.reset(reset)
+
+
+def default_user_dir(accounts: Accounts):
+    """The owner's folder. Before anyone has signed up that is account 1's, which is where an
+    existing single-user install's data was moved and which the first sign-up claims."""
+    owner = accounts.owner()
+    return accounts.user_dir(owner.id if owner else 1)
+
+
+def credential_for(accounts: Accounts, account: Account | None) -> dict | None:
+    """The intervals.icu key to sync with: the account's own, or for the owner, the .env key
+    while none is saved."""
+    account = account or accounts.owner()
+    cred = accounts.credential(account.id, "intervals") if account else None
+    if cred is None and (account is None or account.is_owner) and os.environ.get("INTERVALS_API_KEY"):
+        cred = {"kind": "api_key", "api_key": os.environ["INTERVALS_API_KEY"],
+                "athlete_id": os.environ.get("INTERVALS_ATHLETE_ID") or "0", "updated_at": None}
+    return cred
+
+
+def cmd_account(accounts: Accounts, args) -> None:
+    if args.action == "list":
+        for a in accounts.all():
+            print(f"{a.id:>4}  {a.email}{'  (owner)' if a.is_owner else ''}  since {a.created_at[:10]}")
+        if accounts.legacy_data_waiting():
+            print("Existing data is waiting for the first account: sign up in the web app or run talus account create.")
+        return
+    if not args.email:
+        sys.exit("Give the account's email.")
+    password = getpass.getpass("New password: ")
+    try:
+        if args.action == "create":
+            a = accounts.create(args.email, password)
+            print(f"Created account {a.id} for {a.email}{' (owner)' if a.is_owner else ''}")
+        else:
+            a = accounts.by_email(args.email)
+            if a is None:
+                sys.exit(f"No account {args.email}")
+            accounts.set_password(a.id, password)
+            print(f"Password changed for {a.email}; its sessions were signed out.")
+    except AccountError as e:
+        sys.exit(str(e))
 
 
 def infer_inputs(store: Store, days: int) -> tuple[list, dict[int, str]]:
@@ -142,12 +211,12 @@ def cmd_thresholds(store: Store, args) -> None:
 
 def cmd_sync(store: Store, args) -> None:
     since = args.since or date.today() - timedelta(days=args.days)
-    result = sync(store, args.source, since)
+    result = sync(store, args.source, since, credential=args.credential)
     if not args.no_coach and store.thresholds() is not None:
         warm_coach(result["added_ids"])
 
 
-def sync(store: Store, source_name: str, since: date, log=print) -> dict:
+def sync(store: Store, source_name: str, since: date, log=print, credential: dict | None = None) -> dict:
     """Pull new activities since a day, score them and rebuild the ledgers. The outcome is kept as
     the last sync, so the Settings screen can show it whether the sync ran here or from the web."""
     started = datetime.now().isoformat(timespec="seconds")
@@ -157,7 +226,9 @@ def sync(store: Store, source_name: str, since: date, log=print) -> dict:
     try:
         if source_name == "intervals":
             from .sources.intervals import IntervalsSource
-            source = IntervalsSource()
+            if credential is None:
+                raise RuntimeError("No intervals.icu key for this account. Add one in Settings > Data source.")
+            source = IntervalsSource.from_credential(credential)
         else:
             from .sources.garmin import GarminSource
             source = GarminSource()

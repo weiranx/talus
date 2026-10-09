@@ -90,5 +90,5 @@ def test_cli_infer_apply(tmp_path, monkeypatch, capsys):
     out = capsys.readouterr().out
     assert "3 runs with heart rate" in out and "Saved:" in out
     from talus.store import Store
-    th = Store(tmp_path / "data").thresholds()
+    th = Store(tmp_path / "data" / "users" / "1").thresholds()
     assert th.ant < 187 and th.max == 209 and th.resting == 54 and th.source.startswith("inferred")

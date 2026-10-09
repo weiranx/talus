@@ -40,3 +40,21 @@ def no_real_coach(monkeypatch):
     patch in a fake client."""
     from talus import api
     monkeypatch.setattr(api, "coach_client", lambda: None)
+
+
+OWNER = {"email": "owner@example.com", "password": "correct horse battery"}
+
+
+def sign_in(email: str = OWNER["email"], password: str = OWNER["password"]):
+    """A TestClient signed in to an account. The first account made is the owner, whose data is
+    what `talus` commands write. Signs up on first use, signs in after that."""
+    from fastapi.testclient import TestClient
+
+    from talus.api import app
+
+    client = TestClient(app)
+    r = client.post("/api/auth/signup", json={"email": email, "password": password})
+    if r.status_code != 200:
+        r = client.post("/api/auth/login", json={"email": email, "password": password})
+    assert r.status_code == 200, r.text
+    return client

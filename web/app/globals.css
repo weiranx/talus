@@ -126,6 +126,9 @@ code { font-family: var(--mono); font-size: 13px; background: var(--bg); padding
   .coach-read dd { margin-bottom: 10px !important; }
 }
 
+.link-btn { background: none; border: 0; padding: 0; color: var(--link); font: inherit; font-size: 12px; cursor: pointer; text-align: left; min-height: 24px; }
+.btn.danger { background: var(--bad-ink); }
+
 .explain { position: relative; display: inline; }
 .explain-num { font: inherit; color: inherit; background: none; border: 0; padding: 0; cursor: pointer; letter-spacing: inherit;
   text-decoration: underline dotted; text-decoration-color: var(--muted); text-underline-offset: 3px; }

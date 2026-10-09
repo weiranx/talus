@@ -1,9 +1,14 @@
 """App settings kept in SQLite and edited from the web app's Settings screen.
 
-API keys are not settings: they stay in .env, and the engine only ever reports whether one is set.
+Each account has its own settings, in its own talus.db. Keys are not settings: the Anthropic key
+stays in .env (the coach runs on the server's key), and each account's intervals.icu key lives
+encrypted in accounts.db. The engine only ever reports whether a key is set.
 """
 
 from __future__ import annotations
+
+import json
+import os
 
 from . import coach
 
@@ -30,3 +35,24 @@ def cost_per_call(model: str, tokens: tuple[float, float]) -> float | None:
     if m is None:
         return None
     return (tokens[0] * m["input"] + tokens[1] * m["output"]) / 1e6
+
+
+def server_ceiling() -> float:
+    """Most an account other than the owner's can spend on coach calls each month, in USD."""
+    try:
+        return float(os.environ.get("TALUS_COACH_CAP_USD", "5"))
+    except ValueError:
+        return 5.0
+
+
+def spent_since(store, since) -> float:
+    """Coach spending since a day, from the usage logged with each call. Cache reads are priced as
+    plain input, so this errs high."""
+    total = 0.0
+    for r in store.db.execute("SELECT model, usage FROM coach_log WHERE created_at >= ?"
+                              " AND usage IS NOT NULL AND usage != 'null'", (since.isoformat(),)):
+        u = json.loads(r["usage"])
+        tokens = (sum(u.get(k) or 0 for k in ("input_tokens", "cache_read_input_tokens",
+                                              "cache_creation_input_tokens")), u.get("output_tokens") or 0)
+        total += cost_per_call(r["model"], tokens) or 0.0
+    return round(total, 4)

@@ -12,6 +12,7 @@ const LINKS = [
 
 export default function Nav() {
   const path = usePathname();
+  if (path === "/login") return null;
   return (
     <nav className="nav" aria-label="Main">
       {LINKS.map((l) => {

@@ -1,6 +1,7 @@
 from datetime import date
 
 from talus import cli, ledger
+from talus.accounts import Accounts
 from talus.config import data_dir
 from talus.store import Store
 
@@ -18,7 +19,7 @@ def test_load_extends_stale_ledgers_and_unscored_cardio_is_na(tmp_path, monkeypa
     cli.main(["import", str(with_hr), str(no_hr)])
 
     # Ledgers last built on an earlier day, then rest days pass with no new activity.
-    store = Store(data_dir())
+    store = Store(cli.default_user_dir(Accounts(data_dir())))
     store.save_ledgers(ledger.build(store.scored_loads(), until=date(2026, 10, 2)))
     capsys.readouterr()
 

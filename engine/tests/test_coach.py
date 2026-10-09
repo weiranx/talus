@@ -2,9 +2,8 @@ import json
 from datetime import date, datetime, timedelta
 from types import SimpleNamespace
 
-from fastapi.testclient import TestClient
-
 from talus import api, cli, coach
+from tests.conftest import sign_in
 from tests.test_api import _gpx
 
 PACKET = {
@@ -127,7 +126,7 @@ def _demo(tmp_path, monkeypatch):
         files.append(str(f))
     cli.main(["thresholds", "--resting", "45", "--aet", "150", "--ant", "172", "--max", "190"])
     cli.main(["import", *files])
-    return TestClient(api.app)
+    return sign_in()
 
 
 def _keys(v) -> set:
@@ -231,7 +230,7 @@ def test_import_writes_the_coach_right_away(tmp_path, monkeypatch, capsys):
     assert "Coach brief: rest (coach)" in out and out.count("Coach read for activity") == 2
     assert [c["model"] for c in fake.calls] == ["claude-haiku-5-5", "claude-opus-5-5", "claude-opus-5-5"]
     # Opening the pages reuses what the import wrote.
-    client = TestClient(api.app)
+    client = sign_in()
     assert client.get("/api/coach/brief").json()["source"] == "coach"
     for a in client.get("/api/activities").json()[:2]:
         assert client.get(f"/api/coach/activity/{a['id']}").json()["source"] == "coach"

@@ -6,16 +6,25 @@ miles and all vert is feet.
 
 from __future__ import annotations
 
+import io
 import json
 import os
-from datetime import date, timedelta
+import sqlite3
+import threading
+import time
+import zipfile
+from contextvars import ContextVar
+from datetime import date, datetime, timedelta
+from http.cookies import SimpleCookie
 
 import numpy as np
-from fastapi import BackgroundTasks, FastAPI, HTTPException
+from fastapi import BackgroundTasks, FastAPI, HTTPException, Request, Response
+from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel, Field
 
 from . import cli, coach, explain, ledger, wellness, zones
 from . import settings as app_settings
+from .accounts import SESSION_DAYS, Account, AccountError, Accounts
 from .config import data_dir, load_env
 from .models import Thresholds
 from .parse import parse
@@ -29,10 +38,58 @@ MAX_POINTS = 800
 app = FastAPI(title="Talus engine")
 coach_client = coach.default_client  # swapped out in tests
 
+COOKIE = "talus_session"
+_account: ContextVar[Account | None] = ContextVar("talus_account", default=None)
+
+
+def get_accounts() -> Accounts:
+    load_env()
+    return Accounts(data_dir())
+
+
+def current_account() -> Account:
+    account = _account.get()
+    if account is None:
+        raise HTTPException(401, "Sign in first.")
+    return account
+
 
 def get_store() -> Store:
-    load_env()
-    return Store(data_dir())
+    """The signed-in account's own store. Outside a request (the CLI, tests) it is the owner's,
+    the same one `talus` commands use."""
+    accounts = get_accounts()
+    account = _account.get()
+    return Store(accounts.user_dir(account.id) if account else cli.default_user_dir(accounts))
+
+
+class AuthMiddleware:
+    """Every /api route except /api/auth/* needs a signed-in session. The account is set for the
+    request, and get_store() opens that account's folder, so no route can reach another
+    account's data."""
+
+    def __init__(self, inner):
+        self.inner = inner
+
+    async def __call__(self, scope, receive, send):
+        path = scope.get("path", "")
+        if scope["type"] != "http" or not path.startswith("/api/") or path.startswith("/api/auth/"):
+            return await self.inner(scope, receive, send)
+        cookie = SimpleCookie()
+        for name, value in scope.get("headers", []):
+            if name == b"cookie":
+                cookie.load(value.decode("latin-1"))
+        token = cookie[COOKIE].value if COOKIE in cookie else None
+        account = get_accounts().session_account(token)
+        if account is None:
+            return await JSONResponse({"detail": "Sign in first."}, status_code=401)(scope, receive, send)
+        reset = _account.set(account)
+        try:
+            await self.inner(scope, receive, send)
+        finally:
+            _account.reset(reset)
+
+
+app.add_middleware(AuthMiddleware)
 
 
 def _ledger_json(d: ledger.LedgerDay, since: date | None = None) -> dict:
@@ -279,6 +336,25 @@ def _coach_settings(store: Store) -> dict:
     return {k: saved.get(k, v) for k, v in app_settings.defaults().items()}
 
 
+def _is_owner() -> bool:
+    """The owner (first account) has no server ceiling on coach spending. Outside a request,
+    the CLI acts as the owner."""
+    account = _account.get()
+    return account is None or account.is_owner
+
+
+def _coach_cap(store: Store) -> dict:
+    """This calendar month's coach spending against the account's cap. Coach calls run on the
+    server's Anthropic key, so every account other than the owner's is held under the server
+    ceiling (TALUS_COACH_CAP_USD); each account can set its own cap lower."""
+    ceiling = None if _is_owner() else app_settings.server_ceiling()
+    chosen = store.settings().get("coach_monthly_cap_usd", ceiling)
+    limit = chosen if ceiling is None else (ceiling if chosen is None else min(chosen, ceiling))
+    month = date.today().replace(day=1)
+    return {"limit": limit, "ceiling": ceiling, "spent": app_settings.spent_since(store, month),
+            "month": month.isoformat()}
+
+
 def _coach(store: Store, mode: str, subject: str, packet: dict, fallback: dict, refresh: bool) -> dict:
     """Reuse the logged reply for the same packet, model and prompt version, so reloading a page
     doesn't call the API again. Only API calls are logged; with no key or the coach off, the rules
@@ -295,6 +371,10 @@ def _coach(store: Store, mode: str, subject: str, packet: dict, fallback: dict, 
     if row is not None and not (row["fallback_reason"] or "").startswith("api_error"):
         return {"source": row["source"], "reply": json.loads(row["reply"]), "log_id": row["id"],
                 "feedback": row["feedback"], "fallback_reason": row["fallback_reason"], "model": row["model"]}
+    cap = _coach_cap(store)
+    if cap["limit"] is not None and cap["spent"] >= cap["limit"]:
+        return {"source": "rules", "reply": fallback, "log_id": None, "feedback": None,
+                "fallback_reason": "cap", "model": None}
     result = coach.run(mode, packet, fallback, coach_client(), model_id, style)
     log_id = None
     if result.fallback_reason != "no_key":
@@ -384,6 +464,7 @@ def get_settings() -> dict:
     acts = [r for r in store.activities() if r["start_time"]]
     month_ago = (date.today() - timedelta(days=30)).isoformat()
     analyses = sum(1 for r in acts if r["start_time"][:10] >= month_ago)
+    cred = _intervals_credential()
     return {
         "thresholds": None if th is None else {
             "resting": th.resting, "aet": th.aet, "ant": th.ant, "max": th.max, "sex": th.sex,
@@ -393,9 +474,11 @@ def get_settings() -> dict:
         "inferred": _inferred_thresholds(store),
         "source": {
             "name": "intervals.icu",
-            "key_set": bool(os.environ.get("INTERVALS_API_KEY")),
-            "athlete_id": os.environ.get("INTERVALS_ATHLETE_ID") or None,
-            "garmin_fallback_set": bool(os.environ.get("GARMIN_EMAIL")),
+            "key_set": cred is not None,
+            "kind": cred and cred["kind"],
+            "athlete_id": cred and cred.get("athlete_id"),
+            "updated_at": cred and cred["updated_at"],
+            "garmin_fallback_set": _is_owner() and bool(os.environ.get("GARMIN_EMAIL")),
             "activities": len(acts),
             "latest_activity": max((r["start_time"][:10] for r in acts), default=None),
             "last_sync": saved.get("last_sync"),
@@ -414,6 +497,7 @@ def get_settings() -> dict:
             # after the sync and after the check-in. Analysis: one per activity, at the last 30 days' rate.
             "estimate": {mode: {m: _usage_estimate(store, mode, m, calls) for m in app_settings.MODELS}
                          for mode, calls in (("brief", 60), ("analysis", analyses))},
+            "cap": _coach_cap(store),
         },
         "readiness": dict(zip(("sleep_need_h", "sleep_need_source"), wellness.sleep_need(saved))),
         "units": {"distance": "mi", "vert": "ft"},
@@ -489,6 +573,7 @@ class CoachIn(BaseModel):
     enabled: bool
     brief_model: str
     analysis_model: str
+    monthly_cap_usd: float | None = Field(default=None, ge=0, le=1000)
     style: str | None = None  # left out keeps the saved style
 
 
@@ -499,9 +584,13 @@ def put_coach(body: CoachIn) -> dict:
             raise HTTPException(422, f"Unknown model {m}")
     if body.style is not None and body.style not in coach.STYLES:
         raise HTTPException(422, f"Unknown style {body.style}")
-    get_store().save_settings({"coach_enabled": body.enabled, "brief_model": body.brief_model,
-                               "analysis_model": body.analysis_model}
-                              | ({} if body.style is None else {"coach_style": body.style}))
+    values = {"coach_enabled": body.enabled, "brief_model": body.brief_model,
+              "analysis_model": body.analysis_model}
+    if body.style is not None:
+        values["coach_style"] = body.style
+    if "monthly_cap_usd" in body.model_fields_set:
+        values["coach_monthly_cap_usd"] = body.monthly_cap_usd
+    get_store().save_settings(values)
     return {"ok": True}
 
 
@@ -516,6 +605,29 @@ def put_readiness(body: ReadinessIn) -> dict:
     return {"ok": True}
 
 
+def _intervals_credential() -> dict | None:
+    return cli.credential_for(get_accounts(), _account.get())
+
+
+class SourceIn(BaseModel):
+    api_key: str = Field(min_length=8, max_length=200)
+    athlete_id: str = Field(default="0", pattern=r"^(0|i?\d{1,12})$")
+
+
+@app.put("/api/settings/source")
+def put_source(body: SourceIn) -> dict:
+    """Save this account's intervals.icu key. It is encrypted at rest and never sent back."""
+    get_accounts().set_credential(current_account().id, "intervals", "api_key",
+                                  {"api_key": body.api_key.strip(), "athlete_id": body.athlete_id})
+    return {"ok": True}
+
+
+@app.delete("/api/settings/source")
+def delete_source() -> dict:
+    get_accounts().clear_credential(current_account().id, "intervals")
+    return {"ok": True}
+
+
 class SyncIn(BaseModel):
     days: int = Field(default=30, ge=1, le=730)
 
@@ -523,11 +635,13 @@ class SyncIn(BaseModel):
 @app.post("/api/sync")
 def sync_now(body: SyncIn, background: BackgroundTasks) -> dict:
     store = get_store()
-    if not os.environ.get("INTERVALS_API_KEY"):
-        raise HTTPException(409, "Add INTERVALS_API_KEY to the engine's .env, then restart the engine.")
+    cred = _intervals_credential()
+    if cred is None:
+        raise HTTPException(409, "Add your intervals.icu API key under Data source first.")
     lines: list[str] = []
     try:
-        result = cli.sync(store, "intervals", date.today() - timedelta(days=body.days), log=lines.append)
+        result = cli.sync(store, "intervals", date.today() - timedelta(days=body.days), log=lines.append,
+                          credential=cred)
     except Exception:
         return store.settings()["last_sync"] | {"log": lines}
     # The coach writes after the response, so the sync button doesn't wait on it.
@@ -603,3 +717,152 @@ def explain_activity(activity_id: int, metric: str) -> dict:
         dt = np.minimum(np.diff(streams.time, prepend=streams.time[0]), MAX_DT_S)
         return explain.cardio_load(r, streams, dt, th)
     return getattr(explain, metric)(r)
+
+
+# Accounts: sign up, sign in, sign out, password, export and delete.
+
+class Credentials(BaseModel):
+    email: str = Field(max_length=254)
+    password: str = Field(max_length=256)
+
+
+_failures: dict[str, list[float]] = {}
+_failures_lock = threading.Lock()
+MAX_FAILURES = 10
+FAILURE_WINDOW_S = 15 * 60
+
+
+def _too_many_failures(email: str, failed: bool = False) -> bool:
+    key = email.strip().lower()
+    now = time.monotonic()
+    with _failures_lock:
+        recent = [t for t in _failures.get(key, []) if now - t < FAILURE_WINDOW_S]
+        if failed:
+            recent.append(now)
+        _failures[key] = recent
+        return len(recent) >= MAX_FAILURES
+
+
+def _signup_open(accounts: Accounts) -> bool:
+    """Anyone who can reach the app can make an account, unless TALUS_SIGNUP=closed. The first
+    account can always be made, so a fresh or upgraded install can be claimed."""
+    return accounts.count() == 0 or os.environ.get("TALUS_SIGNUP", "open").lower() != "closed"
+
+
+def _signed_in(response: Response, accounts: Accounts, account: Account) -> dict:
+    response.set_cookie(COOKIE, accounts.start_session(account.id), max_age=SESSION_DAYS * 86400,
+                        httponly=True, samesite="lax", path="/",
+                        secure=os.environ.get("TALUS_SECURE_COOKIE", "") == "1")
+    return _account_json(account)
+
+
+def _account_json(account: Account) -> dict:
+    return {"id": account.id, "email": account.email, "is_owner": account.is_owner,
+            "created_at": account.created_at}
+
+
+@app.get("/api/auth/status")
+def auth_status(request: Request) -> dict:
+    accounts = get_accounts()
+    account = accounts.session_account(request.cookies.get(COOKIE))
+    return {"account": account and _account_json(account), "has_accounts": accounts.count() > 0,
+            "signup_open": _signup_open(accounts), "existing_data": accounts.legacy_data_waiting()}
+
+
+@app.post("/api/auth/signup")
+def signup(body: Credentials, response: Response) -> dict:
+    accounts = get_accounts()
+    if not _signup_open(accounts):
+        raise HTTPException(403, "New accounts are closed on this Talus. Ask its owner.")
+    try:
+        account = accounts.create(body.email, body.password)
+    except AccountError as e:
+        raise HTTPException(422, str(e))
+    return _signed_in(response, accounts, account)
+
+
+@app.post("/api/auth/login")
+def login(body: Credentials, response: Response) -> dict:
+    if _too_many_failures(body.email):
+        raise HTTPException(429, "Too many tries. Wait 15 minutes, then try again.")
+    accounts = get_accounts()
+    account = accounts.authenticate(body.email, body.password)
+    if account is None:
+        _too_many_failures(body.email, failed=True)
+        raise HTTPException(401, "That email and password don't match an account.")
+    return _signed_in(response, accounts, account)
+
+
+@app.post("/api/auth/logout")
+def logout(request: Request, response: Response) -> dict:
+    get_accounts().end_session(request.cookies.get(COOKIE))
+    response.delete_cookie(COOKIE, path="/")
+    return {"ok": True}
+
+
+@app.get("/api/account")
+def get_account() -> dict:
+    return _account_json(current_account())
+
+
+class PasswordIn(BaseModel):
+    current: str = Field(max_length=256)
+    new: str = Field(max_length=256)
+
+
+@app.put("/api/account/password")
+def change_password(body: PasswordIn, response: Response) -> dict:
+    """Changing the password signs out every session, this one included, then signs this one back in."""
+    accounts = get_accounts()
+    account = current_account()
+    if accounts.authenticate(account.email, body.current) is None:
+        raise HTTPException(403, "Your current password is wrong.")
+    try:
+        accounts.set_password(account.id, body.new)
+    except AccountError as e:
+        raise HTTPException(422, str(e))
+    return _signed_in(response, accounts, account)
+
+
+@app.get("/api/account/export")
+def export_account() -> StreamingResponse:
+    """Everything Talus holds for this account as one zip: a consistent copy of its database
+    (activities, scores, ledgers, check-ins, wellness, settings, coach log) and every raw file.
+    Sign-in details and data-source keys are left out."""
+    account = current_account()
+    folder = get_accounts().user_dir(account.id)
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as z:
+        if (folder / "talus.db").exists():
+            snap = sqlite3.connect(":memory:")
+            src = sqlite3.connect(folder / "talus.db")
+            src.backup(snap)
+            src.close()
+            z.writestr("talus.db", snap.serialize())
+            snap.close()
+        for path in sorted((folder / "raw").rglob("*")) if (folder / "raw").exists() else []:
+            if path.is_file():
+                z.write(path, str(path.relative_to(folder)))
+        z.writestr("account.json", json.dumps({**_account_json(account),
+                                               "exported_at": datetime.now().isoformat(timespec="seconds")},
+                                              indent=2))
+    buf.seek(0)
+    name = f"talus-export-{date.today().isoformat()}.zip"
+    return StreamingResponse(buf, media_type="application/zip",
+                             headers={"Content-Disposition": f'attachment; filename="{name}"'})
+
+
+class DeleteIn(BaseModel):
+    password: str = Field(max_length=256)
+
+
+@app.post("/api/account/delete")
+def delete_account(body: DeleteIn, response: Response) -> dict:
+    """Delete the account and all its data. Needs the password again; cannot be undone."""
+    accounts = get_accounts()
+    account = current_account()
+    if accounts.authenticate(account.email, body.password) is None:
+        raise HTTPException(403, "Your password is wrong.")
+    accounts.delete(account.id)
+    response.delete_cookie(COOKIE, path="/")
+    return {"ok": True}

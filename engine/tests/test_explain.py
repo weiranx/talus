@@ -1,9 +1,9 @@
 from datetime import date, datetime, timedelta
 
 import pytest
-from fastapi.testclient import TestClient
 
-from talus import api, cli, explain, ledger, loads
+from talus import cli, explain, ledger, loads
+from tests.conftest import sign_in
 from tests.test_api import _gpx
 
 
@@ -18,7 +18,7 @@ def client(tmp_path, monkeypatch):
         files.append(str(f))
     cli.main(["thresholds", "--resting", "45", "--aet", "150", "--ant", "172", "--max", "190"])
     cli.main(["import", *files])
-    return TestClient(api.app)
+    return sign_in()
 
 
 def _num(text: str) -> float:

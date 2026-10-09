@@ -1,7 +1,6 @@
 from datetime import date, timedelta
 
 import httpx
-from fastapi.testclient import TestClient
 
 from talus import api, coach, wellness
 from talus.ledger import LedgerDay
@@ -9,6 +8,7 @@ from talus.readiness import daily_call, readiness
 from talus.sources.base import WellnessDay
 from talus.sources.intervals import IntervalsSource
 from talus.store import Store
+from tests.conftest import sign_in
 
 TODAY = date(2026, 10, 9)
 
@@ -127,7 +127,7 @@ def test_today_and_brief_carry_overnight_signals(tmp_path, monkeypatch):
     store = api.get_store()
     from talus.models import Thresholds
     store.set_thresholds(Thresholds(45, 150, 172, 190))
-    client = TestClient(api.app)
+    client = sign_in()
 
     t = client.get("/api/today").json()
     assert t["wellness"]["hrv"]["status"] == "no_data" and t["readiness"]["engine"]["state"] == "fresh"

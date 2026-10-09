@@ -27,11 +27,17 @@ SLEEP_SHORT_WEEK_H = 1.0  # or the 7-day average this far under need
 DEFAULT_SLEEP_NEED_H = 8.0
 
 
-def sleep_need_h() -> float:
+def sleep_need(saved: dict | None = None) -> tuple[float, str]:
+    """The athlete's stated sleep need in hours, and where it came from: the Settings screen
+    ("saved"), TALUS_SLEEP_NEED_H in .env ("env"), or the 8 h default ("default")."""
+    if saved and saved.get("sleep_need_h"):
+        return float(saved["sleep_need_h"]), "saved"
     try:
-        return float(os.environ.get("TALUS_SLEEP_NEED_H") or DEFAULT_SLEEP_NEED_H)
+        if os.environ.get("TALUS_SLEEP_NEED_H"):
+            return float(os.environ["TALUS_SLEEP_NEED_H"]), "env"
     except ValueError:
-        return DEFAULT_SLEEP_NEED_H
+        pass
+    return DEFAULT_SLEEP_NEED_H, "default"
 
 
 def _values(days: dict[date, dict], key: str, start: date, end: date) -> list[float]:
@@ -120,7 +126,7 @@ def evaluate(days: dict[date, dict], day: date, need_h: float | None = None) -> 
     """Read each overnight signal for `day`. `days` maps a date to that morning's record, as
     platforms file it: last night's sleep and HRV belong to the day you woke up."""
     return {"date": day.isoformat(), "hrv": _hrv(days, day), "resting_hr": _resting_hr(days, day),
-            "sleep": _sleep(days, day, need_h if need_h is not None else sleep_need_h())}
+            "sleep": _sleep(days, day, need_h if need_h is not None else sleep_need()[0])}
 
 
 def engine_effect(w: dict | None) -> tuple[str, str] | None:

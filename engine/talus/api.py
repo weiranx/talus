@@ -105,7 +105,8 @@ def today() -> dict:
     since = _history(store)["since"]
     now = {d.ledger: d for d in recent if d.day == day}
     checkin = store.checkin(day)
-    overnight = wellness.evaluate(store.wellness(day - timedelta(days=wellness.BASELINE_DAYS - 1), day), day)
+    overnight = wellness.evaluate(store.wellness(day - timedelta(days=wellness.BASELINE_DAYS - 1), day), day,
+                                  wellness.sleep_need(store.settings())[0])
     ready = readiness(now, checkin, overnight)
     week_start = day - timedelta(days=day.weekday())
     week = sorted(_activities(store, week_start), key=lambda a: a["start_time"])
@@ -379,6 +380,7 @@ def get_settings() -> dict:
             "estimate": {mode: {m: _usage_estimate(store, mode, m, calls) for m in app_settings.MODELS}
                          for mode, calls in (("brief", 60), ("analysis", analyses))},
         },
+        "readiness": dict(zip(("sleep_need_h", "sleep_need_source"), wellness.sleep_need(saved))),
         "units": {"distance": "mi", "vert": "ft"},
     }
 
@@ -424,6 +426,17 @@ def put_coach(body: CoachIn) -> dict:
     get_store().save_settings({"coach_enabled": body.enabled, "brief_model": body.brief_model,
                                "analysis_model": body.analysis_model}
                               | ({} if body.style is None else {"coach_style": body.style}))
+    return {"ok": True}
+
+
+class ReadinessIn(BaseModel):
+    sleep_need_h: float = Field(ge=4, le=12)
+
+
+@app.put("/api/settings/readiness")
+def put_readiness(body: ReadinessIn) -> dict:
+    """Sleep need, which readiness reads last night and the 7-day average against."""
+    get_store().save_settings({"sleep_need_h": round(body.sleep_need_h * 4) / 4})
     return {"ok": True}
 
 

@@ -12,7 +12,8 @@ from tests.test_intervals import source
 
 @pytest.fixture(autouse=True)
 def no_keys(monkeypatch):
-    for k in ("INTERVALS_API_KEY", "INTERVALS_ATHLETE_ID", "ANTHROPIC_API_KEY", "GARMIN_EMAIL", "TALUS_COACH_MODEL"):
+    for k in ("INTERVALS_API_KEY", "INTERVALS_ATHLETE_ID", "ANTHROPIC_API_KEY", "GARMIN_EMAIL", "TALUS_COACH_MODEL",
+              "TALUS_SLEEP_NEED_H"):
         monkeypatch.delenv(k, raising=False)
     monkeypatch.setattr(api, "load_env", lambda: None)
 
@@ -123,3 +124,15 @@ def test_settings_show_thresholds_inferred_from_runs(tmp_path, monkeypatch):
     assert inf["ant"]["value"] == round(150 * 0.97) and inf["ant"]["confidence"] == "medium"
     assert inf["ant"]["activities"][0].keys() == {"id", "day", "name"}
     assert inf["max"]["value"] == 150 and inf["aet"]["method"]
+
+
+def test_sleep_need_is_saved_and_read_by_today(tmp_path, monkeypatch):
+    client = _demo(tmp_path, monkeypatch)
+    s = client.get("/api/settings").json()
+    assert s["readiness"] == {"sleep_need_h": 8.0, "sleep_need_source": "default"}
+    monkeypatch.setenv("TALUS_SLEEP_NEED_H", "7.5")
+    assert client.get("/api/settings").json()["readiness"]["sleep_need_source"] == "env"
+    assert client.put("/api/settings/readiness", json={"sleep_need_h": 6.9}).json() == {"ok": True}
+    assert client.get("/api/settings").json()["readiness"] == {"sleep_need_h": 7.0, "sleep_need_source": "saved"}
+    assert client.get("/api/today").json()["wellness"]["sleep"]["need_h"] == 7.0
+    assert client.put("/api/settings/readiness", json={"sleep_need_h": 2}).status_code == 422

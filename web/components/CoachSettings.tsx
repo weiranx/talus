@@ -1,0 +1,94 @@
+"use client";
+
+import { useRouter } from "next/navigation";
+import { useState } from "react";
+import Pill from "@/components/Pill";
+import type { CostEstimate, Settings } from "@/lib/types";
+
+function money(v: number | null): string {
+  if (v == null) return "–";
+  if (v < 0.01) return v === 0 ? "$0" : "under 1¢";
+  return v < 1 ? `${Math.round(v * 100)}¢` : `$${v.toFixed(2)}`;
+}
+
+function costLine(e: CostEstimate | undefined): string {
+  if (!e) return "";
+  return `About ${money(e.per_call)} a call, ${money(e.per_month)} a month at ${e.calls_per_month} calls${e.from_log ? "" : ", from a typical reply size until the coach has run"}`;
+}
+
+const MODES = [
+  { key: "brief_model", mode: "brief", label: "Daily brief", when: "once a day, when you open Today" },
+  { key: "analysis_model", mode: "analysis", label: "Workout analysis", when: "once per activity, when you first open it" },
+] as const;
+
+export default function CoachSettings({ coach }: { coach: Settings["coach"] }) {
+  const router = useRouter();
+  const [enabled, setEnabled] = useState(coach.enabled);
+  const [models, setModels] = useState({ brief_model: coach.brief_model, analysis_model: coach.analysis_model });
+  const [saving, setSaving] = useState(false);
+  const [message, setMessage] = useState<{ ok: boolean; text: string } | null>(null);
+  const dirty = enabled !== coach.enabled || models.brief_model !== coach.brief_model || models.analysis_model !== coach.analysis_model;
+  const haiku = coach.models.find((m) => m.id.startsWith("claude-haiku"));
+
+  async function save() {
+    setSaving(true);
+    setMessage(null);
+    const res = await fetch("/api/settings/coach", {
+      method: "PUT",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ enabled, ...models }),
+    }).catch(() => null);
+    setSaving(false);
+    if (!res?.ok) return setMessage({ ok: false, text: "Could not save. Is the engine running?" });
+    setMessage({ ok: true, text: "Saved. The next brief and analysis use these settings." });
+    router.refresh();
+  }
+
+  return (
+    <section className="card">
+      <div style={{ display: "flex", flexWrap: "wrap", justifyContent: "space-between", alignItems: "center", gap: 8 }}>
+        <h2 className="label">AI coach</h2>
+        {!coach.key_set ? <Pill tone="warn">No API key</Pill> : coach.enabled ? <Pill tone="good">On</Pill> : <Pill tone="neutral">Off</Pill>}
+      </div>
+
+      <label className="toggle">
+        <input type="checkbox" role="switch" checked={enabled} onChange={(e) => setEnabled(e.target.checked)} />
+        <span>
+          <span style={{ fontWeight: 600 }}>Use the AI coach</span>
+          <span className="muted" style={{ display: "block" }}>
+            Off shows the rule-based call and summary instead, with no API calls. Sessions always come from the engine either way.
+          </span>
+        </span>
+      </label>
+      {!coach.key_set ? (
+        <div className="muted">Add <code>ANTHROPIC_API_KEY</code> to the engine&apos;s .env and restart it. Until then Talus shows rule-based text.</div>
+      ) : null}
+
+      <div className="form-grid">
+        {MODES.map((m) => {
+          const est = coach.estimate[m.mode][models[m.key]];
+          return (
+            <label key={m.key} className="field">
+              <span className="field-label">{m.label} model</span>
+              <select value={models[m.key]} disabled={!enabled} onChange={(e) => setModels({ ...models, [m.key]: e.target.value })}>
+                {coach.models.map((o) => <option key={o.id} value={o.id}>{o.label}</option>)}
+              </select>
+              <span className="muted">Runs {m.when}. {costLine(est)}.</span>
+            </label>
+          );
+        })}
+      </div>
+      {haiku && models.brief_model !== haiku.id ? (
+        <div className="muted">
+          The brief is a short reply, so it could run on {haiku.label} for about {money(coach.estimate.brief[haiku.id]?.per_month ?? null)} a month.
+          Every reply still goes through the same number check.
+        </div>
+      ) : null}
+
+      <div className="actions">
+        <button className="btn" onClick={save} disabled={!dirty || saving}>{saving ? "Saving" : "Save coach settings"}</button>
+      </div>
+      {message ? <div className={message.ok ? "ok-text" : "error-text"} role="status">{message.text}</div> : null}
+    </section>
+  );
+}

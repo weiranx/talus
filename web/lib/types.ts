@@ -51,9 +51,19 @@ export interface Thresholds {
 
 export interface ZoneShare { minutes: ZoneMinutes; share: ZoneMinutes }
 
+export type SignalStatus = "ok" | "low" | "high" | "short" | "no_data" | "building";
+
+export interface Wellness {
+  date: string;
+  hrv: { status: SignalStatus; text: string; last_night: number | null; avg_7d: number | null; baseline: number | null };
+  resting_hr: { status: SignalStatus; text: string; last_night: number | null; baseline: number | null };
+  sleep: { status: SignalStatus; text: string; last_night_h: number | null; avg_7d_h: number | null; need_h: number };
+}
+
 export interface Today {
   date: string;
   checkin: { soreness: number; energy: number; pain: number } | null;
+  wellness: Wellness;
   readiness: {
     engine: { state: State; detail: string; reason: string };
     legs: { state: State; detail: string; limiter: Ledger; reason: string };

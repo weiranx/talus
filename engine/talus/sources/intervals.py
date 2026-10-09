@@ -13,7 +13,7 @@ from datetime import date, datetime
 
 import httpx
 
-from .base import RawFile, RemoteActivity, sniff_format, unwrap
+from .base import RawFile, RemoteActivity, WellnessDay, sniff_format, unwrap
 
 BASE_URL = "https://intervals.icu/api/v1"
 STREAM_TYPES = "time,distance,altitude,heartrate,cadence,latlng"
@@ -70,3 +70,17 @@ class IntervalsSource:
         if not streams:
             return None
         return RawFile(json.dumps(streams).encode(), "icu-streams")
+
+    def list_wellness(self, since: date, until: date | None = None) -> list[WellnessDay]:
+        """Daily wellness: overnight HRV (rMSSD), resting HR and sleep, one record per day."""
+        params = {"oldest": since.isoformat(), "newest": (until or date.today()).isoformat()}
+        resp = self.client.get(f"/athlete/{self.athlete_id}/wellness", params=params)
+        resp.raise_for_status()
+        out = []
+        for w in resp.json():
+            day = WellnessDay(source=self.name, day=date.fromisoformat(w["id"][:10]), hrv=w.get("hrv") or None,
+                              resting_hr=w.get("restingHR") or None, sleep_s=w.get("sleepSecs") or None,
+                              sleep_score=w.get("sleepScore") or None)
+            if any(v is not None for v in (day.hrv, day.resting_hr, day.sleep_s)):
+                out.append(day)
+        return out

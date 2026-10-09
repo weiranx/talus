@@ -482,6 +482,7 @@ def get_settings() -> dict:
             "latest_activity": max((r["start_time"][:10] for r in acts), default=None),
             "last_sync": saved.get("last_sync"),
         },
+        "sources": _sources(saved),
         "coach": {
             "enabled": cfg["coach_enabled"],
             "key_set": bool(os.environ.get("ANTHROPIC_API_KEY")),
@@ -627,23 +628,147 @@ def delete_source() -> dict:
     return {"ok": True}
 
 
+def _sources(saved: dict) -> dict:
+    """Every way data can reach this account, for the Data sources card. Sync sources carry
+    their own last sync; uploads share the last import."""
+    accounts, account = get_accounts(), _account.get()
+    garmin = accounts.credential(account.id, "garmin") if account else None
+    return {
+        "intervals": {"connected": _intervals_credential() is not None,
+                      "last_sync": saved.get("last_sync_intervals")
+                      or (saved.get("last_sync") if (saved.get("last_sync") or {}).get("source") == "intervals" else None)},
+        "garmin": {"available": _is_owner(), "connected": garmin is not None,
+                   "updated_at": garmin and garmin["updated_at"],
+                   "mfa_pending": bool(account) and _garmin().mfa_pending(account.id),
+                   "last_sync": saved.get("last_sync_garmin")},
+        "upload": {"last_import": saved.get("last_import"), "max_mb": MAX_UPLOAD_MB},
+    }
+
+
+def _garmin():
+    from .sources import garmin
+    return garmin
+
+
 class SyncIn(BaseModel):
     days: int = Field(default=30, ge=1, le=730)
+    source: str = Field(default="intervals", pattern="^(intervals|garmin)$")
 
 
 @app.post("/api/sync")
 def sync_now(body: SyncIn, background: BackgroundTasks) -> dict:
     store = get_store()
-    cred = _intervals_credential()
-    if cred is None:
-        raise HTTPException(409, "Add your intervals.icu API key under Data source first.")
+    save = None
+    if body.source == "intervals":
+        cred = _intervals_credential()
+        if cred is None:
+            raise HTTPException(409, "Add your intervals.icu API key under Data sources first.")
+    else:
+        account = current_account()
+        if not account.is_owner:
+            raise HTTPException(403, "Garmin Connect is for the owner account only.")
+        cred = get_accounts().credential(account.id, "garmin")
+        if cred is None:
+            raise HTTPException(409, "Connect Garmin under Data sources first.")
+
+        def save(values: dict) -> None:
+            get_accounts().set_credential(account.id, "garmin", "tokens", values)
     lines: list[str] = []
     try:
-        result = cli.sync(store, "intervals", date.today() - timedelta(days=body.days), log=lines.append,
-                          credential=cred)
+        result = cli.sync(store, body.source, date.today() - timedelta(days=body.days), log=lines.append,
+                          credential=cred, save_credential=save)
     except Exception:
-        return store.settings()["last_sync"] | {"log": lines}
+        return store.settings()[f"last_sync_{body.source}"] | {"log": lines}
     # The coach writes after the response, so the sync button doesn't wait on it.
+    background.add_task(warm_coach, result.pop("added_ids"))
+    return result | {"log": lines}
+
+
+class GarminIn(BaseModel):
+    email: str = Field(min_length=3, max_length=200)
+    password: str = Field(min_length=1, max_length=200)
+
+
+class MfaIn(BaseModel):
+    code: str = Field(min_length=4, max_length=12)
+
+
+def _garmin_owner() -> Account:
+    account = current_account()
+    if not account.is_owner:
+        raise HTTPException(403, "Garmin Connect is for the owner account only.")
+    return account
+
+
+@app.post("/api/sources/garmin")
+def connect_garmin(body: GarminIn) -> dict:
+    """Sign in to Garmin Connect once. The password is used for this sign-in and dropped; only
+    the token bundle is kept, encrypted. Garmin may ask for an MFA code next."""
+    account = _garmin_owner()
+    garmin = _garmin()
+    try:
+        tokens = garmin.start_login(account.id, body.email.strip(), body.password)
+    except garmin.GarminLoginError as e:
+        raise HTTPException(400, str(e))
+    if tokens is None:
+        return {"status": "needs_mfa"}
+    get_accounts().set_credential(account.id, "garmin", "tokens", {"tokens": tokens})
+    return {"status": "connected"}
+
+
+@app.post("/api/sources/garmin/mfa")
+def garmin_mfa(body: MfaIn) -> dict:
+    account = _garmin_owner()
+    garmin = _garmin()
+    try:
+        tokens = garmin.finish_login(account.id, body.code)
+    except garmin.GarminLoginError as e:
+        raise HTTPException(400, str(e))
+    get_accounts().set_credential(account.id, "garmin", "tokens", {"tokens": tokens})
+    return {"status": "connected"}
+
+
+@app.delete("/api/sources/garmin")
+def disconnect_garmin() -> dict:
+    """Forget the Garmin tokens. Activities already synced stay."""
+    get_accounts().clear_credential(current_account().id, "garmin")
+    return {"ok": True}
+
+
+MAX_UPLOAD_MB = int(os.environ.get("TALUS_MAX_UPLOAD_MB", "2048"))
+
+
+@app.post("/api/import")
+async def import_file(request: Request, background: BackgroundTasks, name: str = "upload") -> dict:
+    """Upload one file as the request body: a FIT, GPX or TCX file (gzipped or not), a zip of
+    them, or the Health app's export.zip. Streamed to disk, since an Apple Health export can run
+    to gigabytes, and deleted once read."""
+    store = get_store()
+    tmp_dir = store.dir / "uploads"
+    tmp_dir.mkdir(parents=True, exist_ok=True)
+    tmp = tmp_dir / f"{int(time.time() * 1000)}-{os.getpid()}.part"
+    size = 0
+    try:
+        with tmp.open("wb") as f:
+            async for chunk in request.stream():
+                size += len(chunk)
+                if size > MAX_UPLOAD_MB * 1024 * 1024:
+                    raise HTTPException(413, f"That file is over {MAX_UPLOAD_MB} MB.")
+                f.write(chunk)
+        if size == 0:
+            raise HTTPException(400, "The file was empty.")
+        from starlette.concurrency import run_in_threadpool
+
+        from .imports import import_paths
+        lines: list[str] = []
+        try:
+            # A store's connection belongs to the thread that opened it.
+            result = await run_in_threadpool(
+                lambda: import_paths(Store(store.dir), [(os.path.basename(name), tmp)], lines.append))
+        except Exception:
+            return store.settings()["last_import"] | {"log": lines}
+    finally:
+        tmp.unlink(missing_ok=True)
     background.add_task(warm_coach, result.pop("added_ids"))
     return result | {"log": lines}
 

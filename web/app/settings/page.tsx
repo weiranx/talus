@@ -1,9 +1,11 @@
 import AccountCard from "@/components/AccountCard";
 import CoachSettings from "@/components/CoachSettings";
 import EngineDown from "@/components/EngineDown";
+import GarminCard from "@/components/GarminCard";
 import ReadinessSettings from "@/components/ReadinessSettings";
 import SourceCard from "@/components/SourceCard";
 import ThresholdsCard from "@/components/ThresholdsCard";
+import UploadCard from "@/components/UploadCard";
 import ZonesCard from "@/components/ZonesCard";
 import { engine, EngineError } from "@/lib/api";
 import type { Account, Settings } from "@/lib/types";
@@ -28,7 +30,10 @@ export default async function SettingsPage() {
       {s.thresholds ? <ZonesCard zones={s.thresholds.zones} /> : null}
       <div className="row">
         <div style={{ flex: "1 1 380px", minWidth: 0, display: "flex", flexDirection: "column", gap: 16 }}>
-          <SourceCard source={s.source} />
+          <h2 className="label" style={{ margin: "4px 0 -8px" }}>Data sources</h2>
+          <SourceCard source={s.source} lastSync={s.sources.intervals.last_sync} />
+          {s.sources.garmin.available ? <GarminCard garmin={s.sources.garmin} /> : null}
+          <UploadCard upload={s.sources.upload} />
           <ReadinessSettings readiness={s.readiness} />
           <section className="card">
             <h2 className="label">Units</h2>

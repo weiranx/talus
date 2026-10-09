@@ -39,10 +39,26 @@ def _ledgers_through_today(store: Store) -> None:
     store.save_ledgers(ledger.build(store.scored_loads()))
 
 
-def _ledger_json(d: ledger.LedgerDay) -> dict:
+def _ledger_json(d: ledger.LedgerDay, since: date | None = None) -> dict:
+    """`since` is where the current run of data starts; until it holds MIN_HISTORY_DAYS the
+    normal is still being built and reads as such."""
+    building = since is not None and (d.day - since).days + 1 < ledger.MIN_HISTORY_DAYS
     return {"day": d.day.isoformat(), "load": d.load, "fitness": d.fitness, "fatigue": d.fatigue,
             "form": d.form, "vs_normal": d.vs_normal, "vs_normal_text": ledger.describe_vs_normal(d.vs_normal),
-            "flags": [{"key": f, "text": ledger.FLAG_TEXT[f]} for f in d.flags]}
+            "flags": [{"key": f, "text": ledger.FLAG_TEXT[f]} for f in d.flags], "building": building}
+
+
+def _history(store: Store) -> dict:
+    """Where the current run of data starts, and the gap before it if there is one."""
+    days = sorted({d.day for d in store.ledger_days() if d.ledger == "cardio"})
+    if not days:
+        return {"since": None, "gap": None}
+    span = ledger.current_span([ledger.LedgerDay(d, "cardio", 0, 0, 0) for d in days])
+    since = span[0].day
+    before = [d for d in days if d < since]
+    gap = None if not before else {"from": (before[-1] + timedelta(days=1)).isoformat(),
+                                   "to": (since - timedelta(days=1)).isoformat()}
+    return {"since": since, "gap": gap}
 
 
 def _activities(store: Store, since: date | None = None) -> list[dict]:
@@ -85,7 +101,8 @@ def today() -> dict:
         raise HTTPException(409, "Set thresholds first: talus thresholds")
     _ledgers_through_today(store)
     day = date.today()
-    recent = store.ledger_days(day - timedelta(days=41))
+    recent = ledger.current_span(store.ledger_days(day - timedelta(days=41)))
+    since = _history(store)["since"]
     now = {d.ledger: d for d in recent if d.day == day}
     checkin = store.checkin(day)
     overnight = wellness.evaluate(store.wellness(day - timedelta(days=wellness.BASELINE_DAYS - 1), day), day)
@@ -98,7 +115,7 @@ def today() -> dict:
         "wellness": overnight,
         "readiness": ready,
         "call": daily_call(ready, checkin, th.aet) | {"source": "rules"},
-        "ledgers": {name: _ledger_json(now[name]) | {"spark": [
+        "ledgers": {name: _ledger_json(now[name], since) | {"spark": [
             {"day": d.day.isoformat(), "fitness": d.fitness, "fatigue": d.fatigue}
             for d in recent if d.ledger == name]} for name in ledger.LEDGERS if name in now},
         "week": {"start": week_start.isoformat(), "activities": week,
@@ -127,7 +144,9 @@ def load(days: int = 182) -> dict:
     store = get_store()
     _ledgers_through_today(store)
     day = date.today()
-    series = store.ledger_days(day - timedelta(days=days - 1))
+    # Charts start after the last gap in the data: months with nothing synced are not drawn.
+    series = ledger.current_span(store.ledger_days(day - timedelta(days=days - 1)))
+    hist = _history(store)
     acts = _activities(store, day - timedelta(days=55))
     weeks = []
     for w in range(7, -1, -1):
@@ -136,9 +155,11 @@ def load(days: int = 182) -> dict:
         weeks.append({"start": start.isoformat(), **_zone_share(in_week)})
     return {
         "date": day.isoformat(),
-        "ledgers": {name: {"today": _ledger_json([d for d in series if d.ledger == name][-1]) if series else None,
-                           "series": [_ledger_json(d) for d in series if d.ledger == name]}
+        "ledgers": {name: {"today": _ledger_json([d for d in series if d.ledger == name][-1], hist["since"])
+                           if series else None,
+                           "series": [_ledger_json(d, hist["since"]) for d in series if d.ledger == name]}
                     for name in ledger.LEDGERS},
+        "history": {"since": hist["since"] and hist["since"].isoformat(), "gap": hist["gap"]},
         "intensity_by_week": weeks,
         "biggest_days": sorted(acts, key=lambda a: a["effort_mi"], reverse=True)[:5],
         "thresholds": _thresholds(store),

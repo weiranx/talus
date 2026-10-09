@@ -28,6 +28,14 @@ export default async function LoadPage({ searchParams }: { searchParams: Promise
         <div>
           <h1 className="title">Load</h1>
           <div className="muted">Solid line: your normal, a 6-week average. Dashed line: your last 7 days.</div>
+          {data.history.gap ? (
+            <div className="muted">
+              No activities from {dayLabel(data.history.gap.from, { month: "short", day: "numeric" })} to{" "}
+              {dayLabel(data.history.gap.to, { month: "short", day: "numeric" })}, so that stretch is treated as missing
+              data, not rest. Charts and your normal start again on{" "}
+              {dayLabel(data.history.since!, { month: "short", day: "numeric" })}.
+            </div>
+          ) : null}
         </div>
         <nav className="seg-tabs" aria-label="Time range">
           {Object.entries(RANGES).map(([k, v]) => (

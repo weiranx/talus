@@ -30,7 +30,8 @@ export function stateLabel(state: string): string {
   return state === "overreached" ? "Overreached" : state === "loaded" ? "Loaded" : "Fresh";
 }
 
-export function ledgerBadge(d: { flags: { key: string; text: string }[]; vs_normal: number | null }) {
+export function ledgerBadge(d: { flags: { key: string; text: string }[]; vs_normal: number | null; building?: boolean }) {
+  if (d.building) return { text: "Building your normal", tone: "neutral" } as const;
   const flag = d.flags.find((f) => f.key === "overreach" || f.key === "ramp") ?? d.flags[0];
   if (flag) return { text: flag.text, tone: flag.key === "overreach" ? "bad" : "warn" } as const;
   if (d.vs_normal == null) return { text: "No history", tone: "neutral" } as const;

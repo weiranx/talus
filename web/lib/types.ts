@@ -13,6 +13,7 @@ export interface LedgerDay {
   vs_normal: number | null;
   vs_normal_text: string;
   flags: Flag[];
+  building: boolean;
 }
 
 export interface ZoneMinutes { z1: number; z2: number; z3: number }
@@ -81,6 +82,7 @@ export interface LoadData {
   intensity_by_week: (ZoneShare & { start: string })[];
   biggest_days: ActivitySummary[];
   thresholds: Thresholds | null;
+  history: { since: string | null; gap: { from: string; to: string } | null };
 }
 
 export interface Segment {

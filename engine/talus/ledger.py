@@ -20,6 +20,9 @@ SPIKE_RATIO = 1.3  # one day 30% larger than any day in the last 42
 DETRAINING_DROP = 0.10  # fitness down 10% in 14 days
 DETRAINING_DAYS = 14
 MIN_HISTORY_DAYS = 28  # ratio flags are noise before the averages warm up
+# No activity of any kind for this long means the data is missing (watch not synced, history not
+# imported), not that the athlete rested. Shorter stretches, a rest week or two, still count as rest.
+GAP_DAYS = 28
 
 
 @dataclass
@@ -50,13 +53,37 @@ def daily_loads(activities: list[tuple[date, dict[str, float | None]]]) -> dict[
     return dict(days)
 
 
+def segments(days: list[date], gap_days: int = GAP_DAYS) -> list[tuple[date, date]]:
+    """Split activity days into runs with no gap longer than `gap_days`: (first, last) each."""
+    days = sorted(days)
+    out = [[days[0], days[0]]]
+    for d in days[1:]:
+        if (d - out[-1][1]).days > gap_days:
+            out.append([d, d])
+        else:
+            out[-1][1] = d
+    return [(a, b) for a, b in out]
+
+
 def build(activities: list[tuple[date, dict[str, float | None]]], until: date | None = None) -> list[LedgerDay]:
-    """Run all three ledgers from the first activity day through `until` (default today)."""
+    """Run all three ledgers from the first activity day through `until` (default today).
+
+    A gap of more than GAP_DAYS with no activity is missing data: no days are written for it,
+    and the ledgers start fresh after it, seeded the same way as the start of history. So months
+    without synced data neither drag "your normal" toward zero nor draw a long decay on charts.
+    """
     loads = daily_loads(activities)
     if not loads:
         return []
-    start = min(loads)
-    end = max(until or date.today(), max(loads))
+    spans = segments(list(loads))
+    last = max(until or date.today(), max(loads))
+    out: list[LedgerDay] = []
+    for n, (start, end) in enumerate(spans):
+        out.extend(_run(loads, start, last if n == len(spans) - 1 else end))
+    return out
+
+
+def _run(loads: dict[date, dict[str, float]], start: date, end: date) -> list[LedgerDay]:
     a_fit, a_fat = 1 / FITNESS_DAYS, 1 / FATIGUE_DAYS
     out: list[LedgerDay] = []
     seed_days = [start + timedelta(days=i) for i in range(min(FITNESS_DAYS, (end - start).days + 1))]
@@ -76,6 +103,16 @@ def build(activities: list[tuple[date, dict[str, float | None]]], until: date | 
             day += timedelta(days=1)
         out.extend(history)
     return out
+
+
+def current_span(days: list[LedgerDay]) -> list[LedgerDay]:
+    """The days since the last gap in a stored series (gap days are never stored)."""
+    dates = sorted({d.day for d in days})
+    start = dates[0] if dates else None
+    for a, b in zip(dates, dates[1:]):
+        if (b - a).days > 1:
+            start = b
+    return [d for d in days if d.day >= start] if start else []
 
 
 def _flags(today: LedgerDay, history: list[LedgerDay]) -> list[str]:

@@ -35,10 +35,6 @@ def get_store() -> Store:
     return Store(data_dir())
 
 
-def _ledgers_through_today(store: Store) -> None:
-    store.save_ledgers(ledger.build(store.scored_loads()))
-
-
 def _ledger_json(d: ledger.LedgerDay, since: date | None = None) -> dict:
     """`since` is where the current run of data starts; until it holds MIN_HISTORY_DAYS the
     normal is still being built and reads as such."""
@@ -50,7 +46,7 @@ def _ledger_json(d: ledger.LedgerDay, since: date | None = None) -> dict:
 
 def _history(store: Store) -> dict:
     """Where the current run of data starts, and the gap before it if there is one."""
-    days = sorted({d.day for d in store.ledger_days() if d.ledger == "cardio"})
+    days = sorted({d.day for d in store.ledgers() if d.ledger == "cardio"})
     if not days:
         return {"since": None, "gap": None}
     span = ledger.current_span([ledger.LedgerDay(d, "cardio", 0, 0, 0) for d in days])
@@ -135,9 +131,8 @@ def today() -> dict:
     th = store.thresholds()
     if th is None:
         raise HTTPException(409, "Set thresholds first: talus thresholds")
-    _ledgers_through_today(store)
     day = date.today()
-    recent = ledger.current_span(store.ledger_days(day - timedelta(days=41)))
+    recent = ledger.current_span(store.ledgers(day - timedelta(days=41)))
     since = _history(store)["since"]
     now = {d.ledger: d for d in recent if d.day == day}
     checkin = store.checkin(day)
@@ -183,10 +178,9 @@ def checkin(body: CheckIn) -> dict:
 @app.get("/api/load")
 def load(days: int = 182) -> dict:
     store = get_store()
-    _ledgers_through_today(store)
     day = date.today()
     # Charts start after the last gap in the data: months with nothing synced are not drawn.
-    series = ledger.current_span(store.ledger_days(day - timedelta(days=days - 1)))
+    series = ledger.current_span(store.ledgers(day - timedelta(days=days - 1)))
     hist = _history(store)
     acts = _activities(store, day - timedelta(days=55))
     zm = _zone_model(store)
@@ -225,7 +219,7 @@ def activity(activity_id: int) -> dict:
     streams.sport = streams.sport or row["sport"]
     result = score(streams, th)
     day = date.fromisoformat(row["start_time"][:10])
-    before = {d.ledger: d.fitness for d in store.ledger_days(day - timedelta(days=1))
+    before = {d.ledger: d.fitness for d in store.ledgers(day - timedelta(days=1))
               if d.day == day - timedelta(days=1)}
     six_weeks = [a for a in _activities(store, day - timedelta(days=42)) if a["day"] <= day.isoformat()]
 
@@ -326,9 +320,8 @@ def coach_brief(refresh: bool = False) -> dict:
 def coach_activity(activity_id: int, refresh: bool = False) -> dict:
     a = activity(activity_id)
     store = get_store()
-    _ledgers_through_today(store)
     day = date.today()
-    now = {d.ledger: _ledger_json(d) for d in store.ledger_days(day) if d.day == day}
+    now = {d.ledger: _ledger_json(d) for d in store.ledgers(day) if d.day == day}
     packet = coach.analysis_packet(a, _thresholds(store), now, day)
     return _coach(store, "analysis", str(activity_id), packet, coach.rules_analysis(packet), refresh)
 
@@ -578,9 +571,8 @@ def explain_ledger(name: str, metric: str, day: date | None = None) -> dict:
     if name not in ledger.LEDGERS or metric not in explain.LEDGER_METRICS:
         raise HTTPException(404, "Unknown ledger or number")
     store = get_store()
-    _ledgers_through_today(store)
     day = day or date.today()
-    rows = {(d.day, d.ledger): d for d in store.ledger_days(day - timedelta(days=1)) if d.day <= day}
+    rows = {(d.day, d.ledger): d for d in store.ledgers(day - timedelta(days=1)) if d.day <= day}
     now = rows.get((day, name))
     if now is None:
         raise HTTPException(404, "No ledger for that day")
@@ -604,7 +596,7 @@ def explain_activity(activity_id: int, metric: str) -> dict:
     if metric.startswith("times_usual_"):
         name = metric.removeprefix("times_usual_")
         day = date.fromisoformat(row["start_time"][:10])
-        before = {d.ledger: d.fitness for d in store.ledger_days(day - timedelta(days=1))
+        before = {d.ledger: d.fitness for d in store.ledgers(day - timedelta(days=1))
                   if d.day == day - timedelta(days=1)}
         return explain.times_usual(name, getattr(r, f"{name}_load"), before.get(name))
     if metric == "cardio_load":

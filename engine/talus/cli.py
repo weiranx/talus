@@ -1,4 +1,4 @@
-"""talus command line: thresholds, sync, import, score, list."""
+"""talus command line: thresholds, sync, import, score, rescore, list, load."""
 
 from __future__ import annotations
 
@@ -8,6 +8,7 @@ import sys
 from datetime import date, datetime, timedelta
 from pathlib import Path
 
+from . import ledger
 from .config import data_dir, load_env
 from .models import ActivityScore, Thresholds
 from .parse import parse
@@ -45,10 +46,13 @@ def main(argv: list[str] | None = None) -> None:
     ls = sub.add_parser("list", help="recent activities in mi and ft")
     ls.add_argument("-n", type=int, default=20)
 
+    ld = sub.add_parser("load", help="cardio, climb and descent ledgers: today and recent days")
+    ld.add_argument("--days", type=int, default=14)
+
     args = p.parse_args(argv)
     store = Store(data_dir())
     {"thresholds": cmd_thresholds, "sync": cmd_sync, "import": cmd_import, "score": cmd_score,
-     "rescore": cmd_rescore, "list": cmd_list}[args.cmd](store, args)
+     "rescore": cmd_rescore, "list": cmd_list, "load": cmd_load}[args.cmd](store, args)
 
 
 def cmd_thresholds(store: Store, args) -> None:
@@ -84,6 +88,8 @@ def cmd_sync(store: Store, args) -> None:
         _score_and_save(store, activity_id, raw, th, act.sport, label=f"{act.start_time:%Y-%m-%d} {act.name}")
     if th is None:
         print("Set thresholds with `talus thresholds` to score these activities.")
+    elif new:
+        rebuild_ledgers(store)
 
 
 def cmd_import(store: Store, args) -> None:
@@ -97,6 +103,8 @@ def cmd_import(store: Store, args) -> None:
                              name=path.stem, sport=streams.sport)
         activity_id = store.add(act, raw)
         _score_and_save(store, activity_id, raw, th, act.sport, label=path.name)
+    if th is not None:
+        rebuild_ledgers(store)
 
 
 def cmd_score(store: Store, args) -> None:
@@ -112,6 +120,10 @@ def cmd_score(store: Store, args) -> None:
         streams.sport = streams.sport or row["sport"]
         result = score(streams, th)
         store.save_score(row["id"], result)
+        rebuild_ledgers(store)
+        print(report(result))
+        print(usual_day_line(store, row, result))
+        return
     print(report(result))
 
 
@@ -120,7 +132,8 @@ def cmd_rescore(store: Store, args) -> None:
     rows = store.activities()
     for row in rows:
         _score_and_save(store, row["id"], store.raw(row), th, row["sport"], label=f"{row['start_time'][:10]} {row['name']}")
-    print(f"Rescored {len(rows)} activities")
+    rebuild_ledgers(store)
+    print(f"Rescored {len(rows)} activities and rebuilt the ledgers")
 
 
 def cmd_list(store: Store, args) -> None:
@@ -136,6 +149,46 @@ def cmd_list(store: Store, args) -> None:
         print(f"{row['id']:>4}  {row['start_time'][:10]}  {m['distance_mi']:5.1f}  {m['gain_ft']:6,.0f}  "
               f"{m['loss_ft']:7,.0f}  {m['effort_mi']:6.1f}  {cardio:>6}  {m['climb_load']:6,.0f}  "
               f"{m['descent_load']:7,.0f}  {row['name'] or ''}")
+
+
+def cmd_load(store: Store, args) -> None:
+    days = store.ledger_days(date.today() - timedelta(days=args.days - 1))
+    if not days:
+        sys.exit("No ledger yet: set thresholds, then sync or import activities")
+    latest = max(d.day for d in days)
+    print(f"Ledgers on {latest}")
+    for d in (d for d in days if d.day == latest):
+        flags = "; ".join(ledger.FLAG_TEXT[f] for f in d.flags)
+        print(f"  {d.ledger:8} last 7 days {ledger.describe_vs_normal(d.vs_normal):24} "
+              f"(fitness {d.fitness:,.0f}, fatigue {d.fatigue:,.0f}, form {d.form:+,.0f})"
+              + (f"  ! {flags}" if flags else ""))
+    history_days = len(store.ledger_days()) // len(ledger.LEDGERS)
+    if history_days < ledger.MIN_HISTORY_DAYS:
+        print(f"  Thin history: flags start after {ledger.MIN_HISTORY_DAYS} days of data")
+    print()
+    print(f"{'day':10}  {'cardio':>6}  {'climb':>6}  {'descent':>7}  flags")
+    by_day: dict = {}
+    for d in days:
+        by_day.setdefault(d.day, {})[d.ledger] = d
+    for day in sorted(by_day):
+        row = by_day[day]
+        flags = ", ".join(f"{k} {f}" for k, v in row.items() for f in v.flags)
+        print(f"{day}  {row['cardio'].load:6,.0f}  {row['climb'].load:6,.0f}  {row['descent'].load:7,.0f}  {flags}")
+    print("\nLoads: cardio 100 = 1 hour at threshold HR; climb and descent 1 = one foot on a moderate grade.")
+
+
+def rebuild_ledgers(store: Store) -> None:
+    store.save_ledgers(ledger.build(store.scored_loads()))
+
+
+def usual_day_line(store: Store, row, r: ActivityScore) -> str:
+    day = date.fromisoformat(row["start_time"][:10])
+    before = {d.ledger: d.fitness for d in store.ledger_days(day - timedelta(days=1)) if d.day == day - timedelta(days=1)}
+    parts = []
+    for name, load in (("cardio", r.cardio_load), ("climb", r.climb_load), ("descent", r.descent_load)):
+        x = ledger.times_usual_day(load or 0.0, before.get(name, 0.0))
+        parts.append(f"{name} {'n/a' if x is None else f'{x:.1f}x'}")
+    return "Vs a usual day     " + ", ".join(parts)
 
 
 def _require_thresholds(store: Store) -> Thresholds:

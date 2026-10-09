@@ -5,9 +5,11 @@ from __future__ import annotations
 import json
 import sqlite3
 from dataclasses import asdict
-from datetime import datetime
+from datetime import date, datetime
 from pathlib import Path
 
+from . import MODEL_VERSION
+from .ledger import LedgerDay
 from .models import ActivityScore, Thresholds
 from .sources.base import RawFile, RemoteActivity
 
@@ -43,6 +45,17 @@ CREATE TABLE IF NOT EXISTS segment (
     kind TEXT, start_s REAL, end_s REAL, distance_m REAL, gain_m REAL, loss_m REAL,
     avg_grade REAL, grade_band TEXT, hike_share REAL,
     PRIMARY KEY (activity_id, idx)
+);
+CREATE TABLE IF NOT EXISTS daily_load (
+    day TEXT NOT NULL,
+    ledger TEXT NOT NULL,
+    load REAL NOT NULL,
+    fitness REAL NOT NULL,
+    fatigue REAL NOT NULL,
+    form REAL NOT NULL,
+    flags TEXT NOT NULL,
+    model_version TEXT NOT NULL,
+    PRIMARY KEY (day, ledger)
 );
 """
 
@@ -123,3 +136,32 @@ class Store:
               g["loss_m"], g["avg_grade"], g["grade_band"], g["hike_share"]) for i, g in enumerate(segments)],
         )
         self.db.commit()
+
+    # Ledgers
+    def scored_loads(self) -> list[tuple[date, dict[str, float | None]]]:
+        rows = self.db.execute(
+            """SELECT a.start_time, s.summary FROM activity a JOIN activity_score s ON s.activity_id = a.id
+               WHERE a.start_time IS NOT NULL ORDER BY a.start_time"""
+        ).fetchall()
+        out = []
+        for r in rows:
+            m = json.loads(r["summary"])
+            out.append((date.fromisoformat(r["start_time"][:10]),
+                        {"cardio": m["cardio_load"], "climb": m["climb_load"], "descent": m["descent_load"]}))
+        return out
+
+    def save_ledgers(self, days: list[LedgerDay]) -> None:
+        """Ledgers are derived data: replace them whole so old and new model numbers never mix."""
+        self.db.execute("DELETE FROM daily_load")
+        self.db.executemany(
+            "INSERT INTO daily_load VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            [(d.day.isoformat(), d.ledger, d.load, d.fitness, d.fatigue, d.form, json.dumps(d.flags),
+              MODEL_VERSION) for d in days],
+        )
+        self.db.commit()
+
+    def ledger_days(self, since: date | None = None) -> list[LedgerDay]:
+        rows = self.db.execute("SELECT * FROM daily_load WHERE day >= ? ORDER BY day, ledger",
+                               ((since or date.min).isoformat(),)).fetchall()
+        return [LedgerDay(date.fromisoformat(r["day"]), r["ledger"], r["load"], r["fitness"], r["fatigue"],
+                          json.loads(r["flags"])) for r in rows]

@@ -2,6 +2,7 @@ import Link from "next/link";
 import { Suspense } from "react";
 import EngineDown from "@/components/EngineDown";
 import Pill from "@/components/Pill";
+import Calendar from "@/components/plan/Calendar";
 import Chat from "@/components/plan/Chat";
 import CoachPlan, { CoachPlanPending } from "@/components/plan/CoachPlan";
 import ConstraintsForm from "@/components/plan/ConstraintsForm";
@@ -14,7 +15,7 @@ import WeeksTable from "@/components/plan/WeeksTable";
 import { engine, EngineError } from "@/lib/api";
 import { dayLabel, mi, n0 } from "@/lib/format";
 import { FOCUS_TEXT } from "@/lib/plan";
-import type { ChatMessage, Plan, PlanPage } from "@/lib/types";
+import type { ChatMessage, Plan, PlanPage, Schedule } from "@/lib/types";
 
 export const dynamic = "force-dynamic";
 
@@ -68,8 +69,10 @@ function Draft({ draft, hasAccepted }: { draft: Plan; hasAccepted: boolean }) {
 export default async function PlanPageView({ searchParams }: { searchParams: Promise<{ edit?: string }> }) {
   let p: PlanPage;
   let chat: { messages: ChatMessage[] };
+  let schedule: Schedule;
   try {
-    [p, chat] = await Promise.all([engine<PlanPage>("/api/plan"), engine<{ messages: ChatMessage[] }>("/api/coach/chat")]);
+    [p, chat, schedule] = await Promise.all([engine<PlanPage>("/api/plan"), engine<{ messages: ChatMessage[] }>("/api/coach/chat"),
+      engine<Schedule>("/api/schedule")]);
   } catch (e) {
     return <EngineDown message={e instanceof EngineError ? e.message : "Could not reach the engine."} />;
   }
@@ -89,6 +92,7 @@ export default async function PlanPageView({ searchParams }: { searchParams: Pro
           </div>
           <ObjectiveForm current={null} />
         </section>
+        <Calendar initial={schedule} />
         <section className="card">
           <h2 className="label">Training days</h2>
           <ConstraintsForm current={p.constraints} hasObjective={false} />
@@ -113,6 +117,8 @@ export default async function PlanPageView({ searchParams }: { searchParams: Pro
       </header>
 
       {p.draft ? <Draft draft={p.draft} hasAccepted={!!p.accepted} /> : null}
+
+      <Calendar initial={schedule} />
 
       <div className="row">
         <div style={{ flex: "2 1 520px", minWidth: 0, display: "flex", flexDirection: "column", gap: 16 }}>

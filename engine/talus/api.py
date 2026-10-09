@@ -27,6 +27,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from . import cli, coach, explain, google_auth, ledger, wellness, zones
 from . import plan as planner
+from . import schedule
 from . import settings as app_settings
 from .accounts import SESSION_DAYS, Account, AccountError, Accounts
 from .config import data_dir, load_env
@@ -210,10 +211,12 @@ def today() -> dict:
     call = daily_call(ready, checkin, th.aet) | {"source": "rules", "planned": False}
     planned = _planned_today(store, day, th.aet)
     if planned and call["call"] == "go":
-        # The plan sets a "go" day's session; a modify or rest call keeps its easier one.
+        # A scheduled run sets a "go" day's session; a modify or rest call keeps its easier one,
+        # so the call can ease a planned run but never make it harder.
         call |= {"session": planned["title"], "detail": planned["detail"], "planned": True}
     return {
         "date": day.isoformat(),
+        "planned": planned,
         "checkin": checkin,
         "wellness": overnight,
         "readiness": ready,
@@ -269,7 +272,16 @@ def load(days: int = 182) -> dict:
         "zone_model": _zone_model_json(zm),
         "biggest_days": sorted(acts, key=lambda a: a["effort_mi"], reverse=True)[:5],
         "thresholds": _thresholds(store),
+        "projection": _projection(store, day),
     }
+
+
+def _projection(store: Store, day: date) -> dict:
+    """Where the scheduled runs take each ledger, drawn after today on the Load charts."""
+    acts = _activities(store, day - timedelta(days=planner.CAPACITY_DAYS))
+    items = _calendar(store, day, schedule.PROJECT_DAYS + 1, acts)
+    done_today = any(a["day"] == day.isoformat() and planner.is_foot(a["sport"]) for a in acts)
+    return schedule.project(items, _plan_history(store, day), planner.rates(acts, day), day, done_today)
 
 
 @app.get("/api/activities")
@@ -463,12 +475,31 @@ def _sessions(store: Store, accepted: dict | None, acts: list[dict], day: date, 
     return [s | planner.session_text(s, aet, name) for s in planner.upcoming_sessions(accepted, acts, day, days)]
 
 
+def _zone_text(zm: dict | None) -> dict[int, str]:
+    return {} if zm is None else {z["zone"]: f"zone {z['zone']}, {z['text']}" for z in zm["list"]}
+
+
+def _calendar(store: Store, start: date, days: int, acts: list[dict] | None = None) -> list[dict]:
+    day = date.today()
+    acts = _activities(store, min(start, day) - timedelta(days=planner.CAPACITY_DAYS)) if acts is None else acts
+    th = store.thresholds()
+    return schedule.calendar(store.planned_runs(start, start + timedelta(days=days - 1)), store.plan("accepted"),
+                             acts, start, days, day, planner.pace(acts, day)["min_per_effort_mi"],
+                             th.aet if th else None, _zone_text(_zone_model(store)))
+
+
 def _planned_today(store: Store, day: date, aet: float) -> dict | None:
-    accepted = store.plan("accepted")
-    if accepted is None:
-        return None
-    s = _sessions(store, accepted, _activities(store, day - timedelta(days=7)), day, aet, 1)
-    return s[0] if s and s[0]["kind"] != "done" else None
+    """Today's scheduled run, the athlete's own or the plan's, unless it's already done."""
+    acts = _activities(store, day - timedelta(days=planner.CAPACITY_DAYS))
+    items = [it for it in _calendar(store, day, 1, acts) if it["status"] == "today"]
+    if not items:
+        # A plan rest day is still the plan: on a go day the call follows it.
+        rest = [s for s in _sessions(store, store.plan("accepted"), acts, day, aet, 1) if s["kind"] == "rest"]
+        return None if not rest else {"title": "Rest", "detail": "Your plan has no run today. Rest, or an easy walk.",
+                                      "source": "plan", "kind": "rest", "miles": 0.0, "gain_ft": 0.0, "loss_ft": 0.0}
+    it = items[0]
+    return {"title": it["title"], "detail": it["detail"], "source": it["source"], "kind": it["kind"],
+            "miles": it["miles"], "gain_ft": it["gain_ft"], "loss_ft": it["loss_ft"]}
 
 
 def _build_draft(store: Store, obj: planner.Objective, reason: str) -> dict:
@@ -512,6 +543,20 @@ def _plan_json(p: dict | None) -> dict | None:
                                   "options", "now", "changes")} | {"reason_text": planner.REPLAN_TEXT.get(p["reason"], p["reason"])}
 
 
+def _with_own_runs(store: Store, sessions: list[dict], acts: list[dict]) -> list[dict]:
+    """The plan's next 7 days, with any run the athlete scheduled on a day in place of the plan's."""
+    if not sessions:
+        return sessions
+    start = date.fromisoformat(sessions[0]["day"])
+    own = {it["day"]: it for it in _calendar(store, start, len(sessions), acts) if it["source"] == "manual"}
+    out = []
+    for s in sessions:
+        it = own.get(s["day"])
+        out.append(s if it is None else s | {k: it[k] for k in ("kind", "miles", "gain_ft", "loss_ft", "minutes", "title")}
+                   | {"how": it["notes"] or "Your own run.", "detail": it["detail"], "own": True})
+    return out
+
+
 @app.get("/api/plan")
 def get_plan() -> dict:
     store = get_store()
@@ -534,7 +579,7 @@ def get_plan() -> dict:
         "readiness": {**_readiness_json(now), "demand": now["demand"], "capacity": now["capacity"],
                       "pace": now["pace"]},
         "accepted": _plan_json(accepted), "draft": _plan_json(draft),
-        "sessions": _sessions(store, accepted, acts, day, th.aet if th else 150),
+        "sessions": _with_own_runs(store, _sessions(store, accepted, acts, day, th.aet if th else 150), acts),
         "review": _last_week_review(store, accepted, acts, day) if accepted else None,
     }
 
@@ -673,6 +718,66 @@ def coach_review(refresh: bool = False) -> dict:
     return _coach(store, "review", review["start"], packet, coach.rules_review(packet), refresh) | {"review": review}
 
 
+# Scheduled runs
+
+@app.get("/api/schedule")
+def get_schedule(start: date | None = None, days: int = 35) -> dict:
+    """The calendar: the athlete's scheduled runs and the plan's next 7 days, with what each
+    matched, plus weeks the scheduled runs would push too fast."""
+    store = get_store()
+    day = date.today()
+    start = start or day - timedelta(days=day.weekday())
+    days = max(1, min(days, 120))
+    return {"date": day.isoformat(), "start": start.isoformat(), "days": days,
+            "items": _calendar(store, start, days),
+            "warnings": _projection(store, day)["warnings"],
+            "kinds": [{"key": k, "label": v} for k, v in schedule.KINDS.items()],
+            "zone_model": _zone_model_json(_zone_model(store))}
+
+
+class PlannedRunIn(BaseModel):
+    day: date
+    kind: str = Field(pattern="^(" + "|".join(schedule.KINDS) + ")$")
+    miles: float = Field(ge=0, le=200)
+    gain_ft: float = Field(default=0, ge=0, le=40000)
+    loss_ft: float | None = Field(default=None, ge=0, le=40000)  # left out: same as gain
+    minutes: float | None = Field(default=None, gt=0, le=2880)
+    zone: int | None = Field(default=None, ge=1, le=5)
+    notes: str = Field(default="", max_length=300)
+
+
+def _run(body: PlannedRunIn, run_id: int | None = None) -> schedule.PlannedRun:
+    day = date.today()
+    if body.day < day - timedelta(days=7) or body.day > day + timedelta(days=schedule.MAX_AHEAD_DAYS):
+        raise HTTPException(422, "Schedule runs from a week ago to a year ahead.")
+    if body.miles == 0 and not body.minutes:
+        raise HTTPException(422, "Give the run a distance or a time.")
+    return schedule.PlannedRun(body.day, body.kind, body.miles, body.gain_ft,
+                               body.gain_ft if body.loss_ft is None else body.loss_ft, body.minutes, body.zone,
+                               body.notes.strip(), run_id)
+
+
+@app.post("/api/schedule")
+def add_planned_run(body: PlannedRunIn) -> dict:
+    store = get_store()
+    return {"id": store.save_planned_run(_run(body))}
+
+
+@app.put("/api/schedule/{run_id}")
+def change_planned_run(run_id: int, body: PlannedRunIn) -> dict:
+    """Edit a scheduled run; changing its day moves it."""
+    if get_store().save_planned_run(_run(body, run_id)) is None:
+        raise HTTPException(404, "No such scheduled run.")
+    return {"id": run_id}
+
+
+@app.delete("/api/schedule/{run_id}")
+def delete_planned_run(run_id: int) -> dict:
+    if not get_store().delete_planned_run(run_id):
+        raise HTTPException(404, "No such scheduled run.")
+    return {"ok": True}
+
+
 CHAT_HISTORY = 6  # earlier turns sent with each question
 
 
@@ -715,7 +820,7 @@ def post_chat(body: ChatIn) -> dict:
     if obj is not None:
         now = _readiness_json(planner.readiness_now(obj, acts, _descent_fitness(_plan_history(store, day)), day))
     plan_ctx = accepted if accepted is not None and obj is not None else None
-    sessions = _sessions(store, plan_ctx, acts, day, t["thresholds"]["aet"] if t else 150)
+    sessions = _with_own_runs(store, _sessions(store, plan_ctx, acts, day, t["thresholds"]["aet"] if t else 150), acts)
     packet = coach.chat_packet(question, history, t, plan_ctx, now if plan_ctx else None, sessions,
                                [a for a in acts if a["day"] >= (day - timedelta(days=13)).isoformat()], day)
     store.add_chat("athlete", question)

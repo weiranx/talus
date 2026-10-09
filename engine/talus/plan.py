@@ -225,7 +225,11 @@ class _Projector:
     trips the ramp or overreach flag."""
 
     def __init__(self, history: list[LedgerDay]):
-        self.hist = {n: [d for d in history if d.ledger == n][-ledger.FITNESS_DAYS * 2:] for n in PLAN_LEDGERS}
+        # Only ledgers with enough history to have a normal: a ledger starting from nothing would
+        # read any load as a ramp.
+        by = {n: [d for d in history if d.ledger == n] for n in ledger.LEDGERS}
+        self.hist = {n: h[-ledger.FITNESS_DAYS * 2:] for n, h in by.items()
+                     if n in PLAN_LEDGERS or (len(h) >= ledger.MIN_HISTORY_DAYS and h[-1].fitness > 0)}
 
     def trial(self, days: list[tuple[date, dict]]) -> tuple[dict, list[tuple[str, str]]]:
         """Run a week of planned loads. A long day lifts the 7-day average for a few days by
@@ -233,9 +237,9 @@ class _Projector:
         overreach is not allowed on any day."""
         hist = {n: list(h) for n, h in self.hist.items()}
         bad = set()
-        ratios: dict[str, list[float]] = {n: [] for n in PLAN_LEDGERS}
+        ratios: dict[str, list[float]] = {n: [] for n in hist}
         for day, loads in days:
-            for n in PLAN_LEDGERS:
+            for n in hist:
                 d = ledger._next(hist[n], n, day, loads.get(n, 0.0), seed=0.0)
                 hist[n].append(d)
                 if "overreach" in d.flags:
@@ -251,7 +255,7 @@ class _Projector:
         self.hist = {n: h[-ledger.FITNESS_DAYS * 2:] for n, h in hist.items()}
 
     def fitness(self, name: str) -> float:
-        h = self.hist[name]
+        h = self.hist.get(name) or []
         return h[-1].fitness if h else 0.0
 
 
@@ -395,6 +399,7 @@ def build(obj: Objective, acts: list[dict], history: list[LedgerDay], c: Constra
         def day_loads(scale: float) -> list[tuple[date, dict]]:
             return [(date.fromisoformat(s["day"]),
                      {"cardio": s["minutes"] * scale / 60 * r["cardio_per_hour"],
+                      "distance": s["miles"] * scale,
                       "climb": s["gain_ft"] * scale * r["climb_per_ft"],
                       "descent": s["loss_ft"] * scale * r["descent_per_ft"]})
                     for s in sessions if date.fromisoformat(s["day"]) >= first]

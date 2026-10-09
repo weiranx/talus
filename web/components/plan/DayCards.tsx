@@ -18,7 +18,7 @@ export default function DayCards({ sessions, today }: { sessions: PlanSession[];
             <div className="muted" style={{ color: objective ? "#b9c6c0" : undefined, fontWeight: s.day === today ? 600 : 400 }}>
               {s.day === today ? "Today" : dayLabel(s.day, { weekday: "short", month: "short", day: "numeric" })}
             </div>
-            <div style={{ fontWeight: 600 }}>{s.title}</div>
+            <div style={{ fontWeight: 600 }}>{s.title}{s.own ? <span className="muted" style={{ fontWeight: 400 }}> · your run</span> : null}</div>
             {off ? null : (
               <div className="mono" style={{ fontSize: 13 }}>
                 {mi(s.miles)} mi · {n0(s.gain_ft)} ft up · {n0(s.loss_ft)} ft down

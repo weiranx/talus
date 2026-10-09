@@ -329,3 +329,88 @@ def test_route_upload(tmp_path, monkeypatch):
     r = client.post("/api/plan/route", content=gpx, headers={"content-type": "application/gpx+xml"})
     assert r.status_code == 200 and r.json()["gain_ft"] > 500
     assert client.post("/api/plan/route", content=b"nope").status_code == 422
+
+
+# Scheduled runs ----------------------------------------------------------------------------
+
+def test_schedule_add_move_delete_and_match(tmp_path, monkeypatch):
+    client = _setup(tmp_path, monkeypatch)
+    today = date.today()
+    tomorrow = (today + timedelta(days=1)).isoformat()
+    r = client.post("/api/schedule", json={"day": tomorrow, "kind": "long", "miles": 14, "gain_ft": 3500, "zone": 1})
+    assert r.status_code == 200
+    rid = r.json()["id"]
+    cal = client.get("/api/schedule").json()
+    it = next(i for i in cal["items"] if i["id"] == rid)
+    assert it["source"] == "manual" and it["status"] == "planned" and it["loss_ft"] == 3500
+    assert it["estimated_minutes"] and it["minutes"] > 60 and "zone 1" in it["detail"] and "14.0 mi" in it["detail"]
+    # Move it to today: Today shows it, and on a go day it is the session.
+    body = {"day": today.isoformat(), "kind": "long", "miles": 14, "gain_ft": 3500, "zone": 1}
+    assert client.put(f"/api/schedule/{rid}", json=body).status_code == 200
+    t = client.get("/api/today").json()
+    assert t["planned"]["title"] == "Long run" and t["planned"]["source"] == "manual"
+    assert t["call"]["planned"] == (t["call"]["call"] == "go")
+    if t["call"]["call"] != "go":
+        assert t["call"]["session"] != "Long run"  # an easier call is never overridden
+    assert client.put("/api/schedule/999", json=body).status_code == 404
+    assert client.post("/api/schedule", json=body | {"day": (today - timedelta(days=30)).isoformat()}).status_code == 422
+    assert client.post("/api/schedule", json=body | {"kind": "swim"}).status_code == 422
+    # A past day with an activity on it reads done; one without reads missed.
+    ran = client.get("/api/activities").json()[0]["day"]
+    client.post("/api/schedule", json=body | {"day": ran, "kind": "easy"})
+    gap = next(d for k in range(1, 7) if (d := (today - timedelta(days=k)).isoformat()) not in
+               {a["day"] for a in client.get("/api/activities").json()})
+    client.post("/api/schedule", json=body | {"day": gap, "kind": "easy"})
+    cal = client.get(f"/api/schedule?start={(today - timedelta(days=7)).isoformat()}&days=14").json()
+    status = {i["day"]: i["status"] for i in cal["items"] if i["source"] == "manual"}
+    assert status[gap] == "missed"
+    if ran >= (today - timedelta(days=7)).isoformat():
+        assert status[ran] == "done"
+    assert client.delete(f"/api/schedule/{rid}").json() == {"ok": True}
+    assert client.delete(f"/api/schedule/{rid}").status_code == 404
+    other = sign_in("second@example.com", "another long password")
+    assert [i for i in other.get("/api/schedule").json()["items"] if i["source"] == "manual"] == []
+
+
+def test_scheduled_runs_project_on_load_and_flag_a_ramp(tmp_path, monkeypatch):
+    client = _setup(tmp_path, monkeypatch)
+    today = date.today()
+    assert client.get("/api/load").json()["projection"]["series"] == {}
+    for k in range(1, 15):  # two weeks of very big days
+        d = (today + timedelta(days=k)).isoformat()
+        client.post("/api/schedule", json={"day": d, "kind": "long", "miles": 20, "gain_ft": 6000})
+    load = client.get("/api/load").json()
+    proj = load["projection"]
+    assert proj["until"] == (today + timedelta(days=14)).isoformat()
+    assert proj["series"]["climb"][-1]["day"] == proj["until"]
+    assert proj["series"]["climb"][-1]["fatigue"] > load["ledgers"]["climb"]["today"]["fatigue"]
+    assert proj["warnings"] and proj["warnings"][0]["key"] in ("ramp", "overreach")
+    assert client.get("/api/schedule").json()["warnings"] == proj["warnings"]
+
+
+def test_own_run_replaces_the_plan_session_that_day(tmp_path, monkeypatch):
+    client = _setup(tmp_path, monkeypatch)
+    day = (date.today() + timedelta(weeks=10)).isoformat()
+    p = client.put("/api/plan/objective", json=OBJ | {"day": day}).json()
+    p = client.post(f"/api/plan/{p['draft']['id']}/accept").json()
+    target = next(s for s in p["sessions"] if s["kind"] not in ("rest", "done"))
+    client.post("/api/schedule", json={"day": target["day"], "kind": "hike", "miles": 6, "gain_ft": 2500,
+                                       "notes": "Peak with friends"})
+    p = client.get("/api/plan").json()
+    s = next(x for x in p["sessions"] if x["day"] == target["day"])
+    assert s["own"] and s["title"] == "Hike" and s["how"] == "Peak with friends"
+    cal = client.get("/api/schedule").json()["items"]
+    on_day = [i for i in cal if i["day"] == target["day"]]
+    assert [i["source"] for i in on_day] == ["manual"]
+    assert any(i["source"] == "plan" for i in cal)
+
+
+def test_match_prefers_the_same_type():
+    items = [{"day": "2026-10-10", "kind": "hike"}, {"day": "2026-10-10", "kind": "easy"}]
+    acts = [{"id": 1, "day": "2026-10-10", "sport": "Run", "start_time": "2026-10-10T07:00", "name": "r",
+             "distance_mi": 5, "gain_ft": 300, "loss_ft": 300, "moving_time_s": 2700},
+            {"id": 2, "day": "2026-10-10", "sport": "Hike", "start_time": "2026-10-10T12:00", "name": "h",
+             "distance_mi": 6, "gain_ft": 2000, "loss_ft": 2000, "moving_time_s": 9000}]
+    from talus import schedule
+    schedule.match(items, acts)
+    assert items[0]["activity"]["id"] == 2 and items[1]["activity"]["id"] == 1

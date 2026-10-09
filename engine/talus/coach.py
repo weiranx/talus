@@ -278,7 +278,8 @@ def allowed_numbers(packet: Any) -> set[float]:
         elif isinstance(v, str):
             out.update(float(t.replace(",", "")) for t in numbers_in(v))
         elif isinstance(v, dict):
-            for x in v.values():
+            for k, x in v.items():
+                walk(str(k).replace("_", " "))  # keys carry numbers too: minutes_above_8000ft, the "8-20" grade band
                 walk(x)
         elif isinstance(v, (list, tuple)):
             for x in v:
@@ -304,9 +305,14 @@ def traceable(token: str, allowed: set[float]) -> bool:
     return False
 
 
+# The prompt's own windows and scales ("42-day normal", "60-day baseline", 100 = an hour at AnT).
+# Small counts in it (1 to 8) stay out, so they still have to come from the packet.
+PROMPT_NUMBERS = {x for x in allowed_numbers(SYSTEM) if x >= 10}
+
+
 def check(reply: dict, packet: dict, mode: str) -> list[str]:
     """Problems with a reply, as sentences the model can act on. Empty means it passes."""
-    allowed = allowed_numbers(packet)
+    allowed = allowed_numbers(packet) | PROMPT_NUMBERS
     bad = []
     for value in reply.values():
         for tok in numbers_in(str(value)):
@@ -431,6 +437,12 @@ def _usage(resp: Any) -> dict | None:
                                               "cache_creation_input_tokens")}
 
 
+def _add_usage(a: dict | None, b: dict | None) -> dict | None:
+    if a is None or b is None:
+        return a or b
+    return {k: (a.get(k) or 0) + (b.get(k) or 0) for k in a.keys() | b.keys()}
+
+
 def run(mode: str, packet: dict, fallback: dict, client: Client | None, model_id: str | None = None,
         style: str = DEFAULT_STYLE) -> Result:
     """Ask the coach, check every number, retry once, then fall back to rules."""
@@ -447,7 +459,7 @@ def run(mode: str, packet: dict, fallback: dict, client: Client | None, model_id
             resp, reply = _ask(client, mode, packet, problems, model_id, style)
         except (anthropic.APIError, json.JSONDecodeError) as e:
             return Result("rules", fallback, model_id, attempt, f"api_error: {type(e).__name__}", rejected, usage)
-        usage = _usage(resp)
+        usage = _add_usage(usage, _usage(resp))  # a retry is billed too
         if reply is None:
             return Result("rules", fallback, resp.model, attempt, str(resp.stop_reason), rejected, usage)
         problems = check(reply, packet, mode)

@@ -172,9 +172,13 @@ class Accounts:
         if first:
             # Account 1 always owns the migrated folder, even if earlier accounts were deleted.
             self.db.execute("DELETE FROM sqlite_sequence WHERE name = 'account'")
-        cur = self.db.execute(
-            "INSERT INTO account (id, email, password_hash, is_owner, created_at) VALUES (?, ?, ?, ?, ?)",
-            (1 if first else None, email, hash_password(password), int(first), _now().isoformat()))
+        try:
+            cur = self.db.execute(
+                "INSERT INTO account (id, email, password_hash, is_owner, created_at) VALUES (?, ?, ?, ?, ?)",
+                (1 if first else None, email, hash_password(password), int(first), _now().isoformat()))
+        except sqlite3.IntegrityError:  # the same email, or a second first account, signed up at once
+            self.db.rollback()
+            raise AccountError("An account with that email already exists.") from None
         self.db.commit()
         account = self.get(cur.lastrowid)
         self.user_dir(account.id).mkdir(parents=True, exist_ok=True)
@@ -257,8 +261,15 @@ class Accounts:
                             (account_id, source)).fetchone()
         if r is None:
             return None
-        return {"kind": r["kind"], "updated_at": r["updated_at"],
-                **json.loads(self._cipher().decrypt(r["secret"].encode()))}
+        from cryptography.fernet import InvalidToken
+
+        try:
+            values = json.loads(self._cipher().decrypt(r["secret"].encode()))
+        except InvalidToken:
+            # Saved under another secret key (TALUS_SECRET_KEY changed, or secret.key was lost):
+            # treat it as not set, so Settings still opens and the key can be entered again.
+            return None
+        return {"kind": r["kind"], "updated_at": r["updated_at"], **values}
 
     def clear_credential(self, account_id: int, source: str) -> None:
         self.db.execute("DELETE FROM credential WHERE account_id = ? AND source = ?", (account_id, source))

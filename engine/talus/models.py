@@ -48,6 +48,8 @@ class Segment:
     avg_grade: float  # percent, signed
     grade_band: str  # "<8", "8-20" or ">20"
     hike_share: float  # share of moving time spent hiking
+    climb_load: float = 0.0  # weighted feet, same rules as the activity's climb load
+    descent_load: float = 0.0
 
 
 @dataclass

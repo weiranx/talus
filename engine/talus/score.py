@@ -13,7 +13,7 @@ MOVING_MPS = 0.3
 HIKE_CADENCE_SPM = 135  # below this, steps are hiking
 HIKE_SPEED_MPS = 1.5  # used only when there is no cadence
 CLIMB_GRADE_PCT = 3.0
-MIN_SEGMENT_M = 200.0
+MIN_SEGMENT_M = 400.0  # about a quarter mile
 ALTITUDE_EXPOSURE_M = m_from_ft(8000)
 HIKING_SPORTS = {"hiking", "walking", "hike", "walk"}
 
@@ -84,7 +84,7 @@ def score(s: Streams, th: Thresholds) -> ActivityScore:
         longest_climb_ft=ft(max(climbs, default=0.0)),
         longest_descent_ft=ft(max(descents, default=0.0)),
         minutes_above_8000ft=float(np.sum(dt[alt > ALTITUDE_EXPOSURE_M]) / 60) if alt is not None else 0.0,
-        segments=segments(s, grade, gain, loss, hiking & moving, dt, moving),
+        segments=segments(s, grade, gain, loss, hiking & moving, dt, moving, bands, hiking),
         notes=notes,
         model_version=MODEL_VERSION,
     )
@@ -98,7 +98,7 @@ def _hiking(s: Streams, speed: np.ndarray) -> np.ndarray:
     return speed < HIKE_SPEED_MPS
 
 
-def segments(s: Streams, grade, gain, loss, hiking, dt, moving) -> list[Segment]:
+def segments(s: Streams, grade, gain, loss, hiking, dt, moving, bands, hiking_all) -> list[Segment]:
     """Cut the track into climbs, descents and flats, absorbing pieces shorter than MIN_SEGMENT_M."""
     kind = np.where(grade > CLIMB_GRADE_PCT, "climb", np.where(grade < -CLIMB_GRADE_PCT, "descent", "flat"))
     runs: list[list[int]] = []  # [kind index start, end) as sample ranges
@@ -132,5 +132,10 @@ def segments(s: Streams, grade, gain, loss, hiking, dt, moving) -> list[Segment]
             avg_grade=avg_grade,
             grade_band=str(loads.band(avg_grade)),
             hike_share=float(np.sum(dt[sl][hiking[sl]]) / moving_t) if moving_t else 0.0,
+            climb_load=ft(loads.climb_load({b: float(gain[sl][bands[sl] == b].sum()) for b in loads.BANDS})),
+            descent_load=ft(
+                loads.descent_load({b: float(loss[sl][(bands[sl] == b) & ~hiking_all[sl]].sum()) for b in loads.BANDS})
+                + loads.descent_load({b: float(loss[sl][(bands[sl] == b) & hiking_all[sl]].sum()) for b in loads.BANDS},
+                                     hiking=True)),
         ))
     return out

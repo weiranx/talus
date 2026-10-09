@@ -135,9 +135,10 @@ export default async function TodayPage() {
           <section className="card">
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 8 }}>
               <h2 className="label">Intensity, 28 days</h2>
-              <div className="muted" style={{ fontSize: 12 }}>Target 80% Zone 1</div>
+              <div className="muted" style={{ fontSize: 12 }}>Target 80% below AeT</div>
             </div>
-            <ZoneBar share={t.intensity_28d.share} />
+            <ZoneBar share={t.zones_28d?.share ?? { ...t.intensity_28d.share }} model={t.zone_model}
+              belowAet={t.intensity_28d.share.z1} />
           </section>
           {t.checkin ? <CheckIn initial={t.checkin} /> : null}
         </div>

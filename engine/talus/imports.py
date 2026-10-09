@@ -14,7 +14,7 @@ from pathlib import Path
 
 from .parse import parse
 from .sources import apple_health
-from .sources.base import RawFile, RemoteActivity, local_naive, sniff_format
+from .sources.base import RawFile, RemoteActivity, sniff_format, wall_clock_start
 from .store import Store
 
 ACTIVITY_EXT = (".fit", ".gpx", ".tcx", ".fit.gz", ".gpx.gz", ".tcx.gz")
@@ -54,7 +54,7 @@ def import_paths(store: Store, paths: list[tuple[str, Path]], log=print, since: 
             result["failed"].append(f"{name}: {e}")
             log(f"  skip {name}: {e}")
             return
-        start = local_naive(streams.start_time) if streams.start_time else None
+        start = wall_clock_start(streams)
         act = RemoteActivity(source="file", source_id=hashlib.sha256(data).hexdigest()[:16], start_time=start,
                              name=Path(name).name.split(".")[0], sport=streams.sport,
                              distance_m=float(streams.distance[-1]) if streams.distance is not None else None)

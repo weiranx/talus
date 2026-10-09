@@ -5,7 +5,7 @@ from __future__ import annotations
 import io
 import json
 import xml.etree.ElementTree as ET
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 
 import fitdecode
 import numpy as np
@@ -26,6 +26,7 @@ def parse(raw: RawFile) -> Streams:
 def parse_fit(data: bytes) -> Streams:
     rows: list[dict] = []
     sport = None
+    activity = {}
     with fitdecode.FitReader(io.BytesIO(data)) as fit:
         for frame in fit:
             if not isinstance(frame, fitdecode.FitDataMessage):
@@ -34,6 +35,8 @@ def parse_fit(data: bytes) -> Streams:
                 rows.append({f.name: f.value for f in frame.fields if f.value is not None})
             elif frame.name == "session" and frame.has_field("sport"):
                 sport = str(frame.get_value("sport"))
+            elif frame.name == "activity":
+                activity = {f.name: f.value for f in frame.fields if f.value is not None}
     rows = [r for r in rows if "timestamp" in r]
     if not rows:
         raise ValueError("FIT file has no records")
@@ -62,9 +65,30 @@ def parse_fit(data: bytes) -> Streams:
         lat=col("position_lat", scale=SEMICIRCLE),
         lon=col("position_long", scale=SEMICIRCLE),
         start_time=t0,
+        start_local=_fit_local_start(t0, activity),
         sport=sport,
         barometric=True,  # assumption: most GPS watches record barometric altitude in FIT
     )
+
+
+FIT_EPOCH = datetime(1989, 12, 31, tzinfo=timezone.utc)
+
+
+def _fit_local_start(t0: datetime, activity: dict) -> datetime | None:
+    """The watch's wall-clock start: the activity message's local_timestamp minus its UTC
+    timestamp gives the zone offset, rounded to 15 minutes."""
+    utc, local = activity.get("timestamp"), activity.get("local_timestamp")
+    if utc is None or local is None:
+        return None
+    if isinstance(local, (int, float)):
+        local = FIT_EPOCH + timedelta(seconds=local)
+    if isinstance(utc, (int, float)):
+        utc = FIT_EPOCH + timedelta(seconds=utc)
+    local, utc = local.replace(tzinfo=None), utc.astimezone(timezone.utc).replace(tzinfo=None)
+    offset = timedelta(minutes=round((local - utc).total_seconds() / 900) * 15)
+    if abs(offset) > timedelta(hours=14):
+        return None
+    return (t0.astimezone(timezone.utc).replace(tzinfo=None) if t0.tzinfo else t0) + offset
 
 
 def _local(tag: str) -> str:

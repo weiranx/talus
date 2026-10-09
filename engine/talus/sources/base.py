@@ -64,8 +64,16 @@ def unwrap(data: bytes) -> bytes:
 
 def local_naive(dt: datetime) -> datetime:
     """Wall-clock time where the activity happened, without a zone: what intervals.icu and Garmin
-    call start_date_local. Files carry UTC, which is read as this machine's local time."""
+    call start_date_local, and what the ledgers file a day under. A file that carries only UTC
+    (GPX, TCX, FIT without local_timestamp) is read in the engine's zone, TZ or the machine's."""
     return dt.astimezone().replace(tzinfo=None) if dt.tzinfo else dt
+
+
+def wall_clock_start(streams) -> datetime | None:
+    """A parsed file's local start: the file's own when it has one, else local_naive()."""
+    if getattr(streams, "start_local", None) is not None:
+        return streams.start_local
+    return local_naive(streams.start_time) if streams.start_time else None
 
 
 def sniff_format(data: bytes) -> str:

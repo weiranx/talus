@@ -219,6 +219,9 @@ def cmd_thresholds(store: Store, args) -> None:
 def cmd_sync(store: Store, args) -> None:
     since = args.since or date.today() - timedelta(days=args.days)
     credential = args.credential
+    if args.source == "garmin" and not (args.account and args.account.is_owner):
+        # Unofficial and tied to one person's Garmin login: never pull it into another account.
+        sys.exit("Garmin Connect is for the owner account only.")
     if args.source == "garmin" and credential is None:
         # First run from the command line: sign in with GARMIN_EMAIL and GARMIN_PASSWORD from .env
         # (MFA prompts here), then keep only the tokens, like Settings does.
@@ -363,7 +366,29 @@ def cmd_rescore(store: Store, args) -> None:
     print(f"Rescored {n} activities and rebuilt the ledgers")
 
 
+def fix_utc_starts(store: Store, log=print) -> int:
+    """Files imported before Talus filed them by local time were stored with a UTC start, so an
+    evening run could land on the next day. Rewrite those starts as local wall-clock time."""
+    from .sources.base import local_naive, wall_clock_start
+    fixed = 0
+    for row in store.activities():
+        start = row["start_time"]
+        if not start or datetime.fromisoformat(start).tzinfo is None:
+            continue
+        try:
+            local = wall_clock_start(parse(store.raw(row)))
+        except Exception:  # unreadable file: at least move it into the engine's zone
+            local = None
+        local = local or local_naive(datetime.fromisoformat(start))
+        store.set_start_time(row["id"], local)
+        fixed += 1
+    if fixed:
+        log(f"Moved {fixed} imported activities from UTC to local start times")
+    return fixed
+
+
 def rescore(store: Store, th: Thresholds, log=print) -> int:
+    fix_utc_starts(store, log=log)
     rows = store.activities()
     for row in rows:
         _score_and_save(store, row["id"], lambda row=row: store.raw(row), th, row["sport"],

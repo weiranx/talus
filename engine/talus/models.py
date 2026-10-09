@@ -33,6 +33,9 @@ class Streams:
     lat: np.ndarray | None = None
     lon: np.ndarray | None = None
     start_time: datetime | None = None
+    # Wall-clock start where the activity happened, when the file says (FIT's local_timestamp).
+    # GPX and TCX carry only UTC.
+    start_local: datetime | None = None
     sport: str | None = None
     barometric: bool = False
 

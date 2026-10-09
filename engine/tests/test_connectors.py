@@ -302,3 +302,71 @@ def test_healthkit_endpoint_for_the_ios_app(tmp_path, monkeypatch):
     assert w[date(2026, 10, 2)]["hrv"] == 61  # the watch's night stays
     assert w[date(2026, 10, 3)] == {"hrv": None, "resting_hr": 46, "sleep_s": 27000, "sleep_score": None}
     assert client.post("/api/import/healthkit", json={"workouts": [{"uuid": "x", "sport": "swim"}]}).status_code == 422
+
+
+def _fit_with_local_time(utc_ms: int, offset_s: int) -> bytes:
+    from fit_tool.fit_file_builder import FitFileBuilder
+    from fit_tool.profile.messages.activity_message import ActivityMessage
+    from fit_tool.profile.messages.file_id_message import FileIdMessage
+    from fit_tool.profile.messages.record_message import RecordMessage
+    from fit_tool.profile.profile_type import FileType, Manufacturer
+
+    b = FitFileBuilder(auto_define=True)
+    fid = FileIdMessage()
+    fid.type = FileType.ACTIVITY
+    fid.manufacturer = Manufacturer.DEVELOPMENT.value
+    fid.time_created = utc_ms
+    b.add(fid)
+    for i in range(300):
+        r = RecordMessage()
+        r.timestamp = utc_ms + i * 1000
+        r.position_lat = 37.0 + i * 0.00003
+        r.position_long = -118.0
+        r.distance = i * 3.0
+        r.altitude = 2000 + i * 0.5
+        r.heart_rate = 145
+        b.add(r)
+    a = ActivityMessage()
+    a.timestamp = utc_ms + 300_000
+    a.local_timestamp = (utc_ms + 300_000) // 1000 + offset_s - 631065600  # seconds since the FIT epoch
+    b.add(a)
+    return b.build().to_bytes()
+
+
+def test_file_imports_file_runs_under_their_local_day(tmp_path, monkeypatch):
+    # 11 pm PDT on Oct 1 is 06:00 UTC on Oct 2. The ledger must count it on Oct 1.
+    utc = datetime(2026, 10, 2, 6, 0, tzinfo=__import__("datetime").timezone.utc)
+    data = _fit_with_local_time(int(utc.timestamp() * 1000), -7 * 3600)
+    store = _store(tmp_path, monkeypatch)
+    f = tmp_path / "late.fit"
+    f.write_bytes(data)
+    cli.main(["import", "--no-coach", str(f)])
+    [row] = store.activities()
+    assert row["start_time"] == "2026-10-01T23:00:00"
+
+
+def test_rescore_moves_old_utc_file_starts_to_local_time(tmp_path, monkeypatch):
+    store = _store(tmp_path, monkeypatch)
+    f = tmp_path / "late.fit"
+    utc = datetime(2026, 10, 2, 6, 0, tzinfo=__import__("datetime").timezone.utc)
+    f.write_bytes(_fit_with_local_time(int(utc.timestamp() * 1000), -7 * 3600))
+    cli.main(["import", "--no-coach", str(f)])
+    store.db.execute("UPDATE activity SET start_time = '2026-10-02T06:00:00+00:00'")  # how older imports stored it
+    store.db.commit()
+    cli.main(["rescore"])
+    assert store.activities()[0]["start_time"] == "2026-10-01T23:00:00"
+
+
+def test_garmin_sync_from_the_cli_is_owner_only(tmp_path, monkeypatch):
+    monkeypatch.setenv("TALUS_DATA_DIR", str(tmp_path / "data"))
+    sign_in()
+    sign_in("friend@example.com", "another long password")
+    monkeypatch.setenv("GARMIN_EMAIL", "owner@garmin.example")
+    monkeypatch.setenv("GARMIN_PASSWORD", "secret")
+    called = []
+    monkeypatch.setattr(garmin_mod, "start_login", lambda *a: called.append(a))
+    # Even with Garmin tokens saved for the friend somehow, the CLI refuses.
+    Accounts(data_dir()).set_credential(2, "garmin", "tokens", {"tokens": "{}"})
+    with pytest.raises(SystemExit, match="owner account only"):
+        cli.main(["--user", "friend@example.com", "sync", "--source", "garmin", "--no-coach"])
+    assert called == []

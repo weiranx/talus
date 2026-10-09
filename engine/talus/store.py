@@ -15,6 +15,7 @@ from . import MODEL_VERSION, ledger
 from .ledger import LedgerDay
 from .models import ActivityScore, Thresholds
 from .plan import Objective
+from .schedule import PlannedRun
 from .sources.base import RawFile, RemoteActivity, WellnessDay, local_naive
 
 SCHEMA = """
@@ -121,6 +122,19 @@ CREATE TABLE IF NOT EXISTS plan (
     reason TEXT NOT NULL,
     body TEXT NOT NULL,
     decided_at TEXT
+);
+CREATE TABLE IF NOT EXISTS planned_run (
+    id INTEGER PRIMARY KEY,
+    day TEXT NOT NULL,
+    kind TEXT NOT NULL,
+    miles REAL NOT NULL,
+    gain_ft REAL NOT NULL,
+    loss_ft REAL NOT NULL,
+    minutes REAL,
+    zone INTEGER,
+    notes TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
 );
 CREATE TABLE IF NOT EXISTS chat (
     id INTEGER PRIMARY KEY,
@@ -537,3 +551,27 @@ class Store:
     @_writes
     def clear_chat(self) -> None:
         self.db.execute("DELETE FROM chat")
+
+    # Scheduled runs the athlete set on the calendar
+    def planned_runs(self, since: date | None = None, until: date | None = None) -> list[PlannedRun]:
+        rows = self.db.execute("SELECT * FROM planned_run WHERE day BETWEEN ? AND ? ORDER BY day, id",
+                               ((since or date.min).isoformat(), (until or date.max).isoformat())).fetchall()
+        return [PlannedRun(date.fromisoformat(r["day"]), r["kind"], r["miles"], r["gain_ft"], r["loss_ft"],
+                           r["minutes"], r["zone"], r["notes"], r["id"]) for r in rows]
+
+    @_writes
+    def save_planned_run(self, run: PlannedRun) -> int | None:
+        """Add a run, or change one by id. Returns its id, or None when the id doesn't exist."""
+        now = datetime.now().isoformat(timespec="seconds")
+        values = (run.day.isoformat(), run.kind, run.miles, run.gain_ft, run.loss_ft, run.minutes, run.zone, run.notes)
+        if run.id is None:
+            cur = self.db.execute("INSERT INTO planned_run (day, kind, miles, gain_ft, loss_ft, minutes, zone, notes,"
+                                  " created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", (*values, now, now))
+            return cur.lastrowid
+        cur = self.db.execute("UPDATE planned_run SET day = ?, kind = ?, miles = ?, gain_ft = ?, loss_ft = ?, minutes = ?,"
+                              " zone = ?, notes = ?, updated_at = ? WHERE id = ?", (*values, now, run.id))
+        return run.id if cur.rowcount else None
+
+    @_writes
+    def delete_planned_run(self, run_id: int) -> bool:
+        return self.db.execute("DELETE FROM planned_run WHERE id = ?", (run_id,)).rowcount == 1

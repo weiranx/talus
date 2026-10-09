@@ -69,8 +69,11 @@ export interface Wellness {
   sleep: { status: SignalStatus; text: string; last_night_h: number | null; avg_7d_h: number | null; need_h: number };
 }
 
+export interface PlannedToday { title: string; detail: string; source: "manual" | "plan"; kind: string; miles: number; gain_ft: number; loss_ft: number }
+
 export interface Today {
   date: string;
+  planned: PlannedToday | null;
   checkin: { soreness: number; energy: number; pain: number } | null;
   wellness: Wellness;
   readiness: {
@@ -94,7 +97,12 @@ export interface LoadData {
   biggest_days: ActivitySummary[];
   thresholds: Thresholds | null;
   history: { since: string | null; gap: { from: string; to: string } | null };
+  projection: Projection;
 }
+
+export interface ProjectedDay { day: string; fitness: number; fatigue: number; flags: string[] }
+export interface ScheduleWarning { week: string; ledgers: Ledger[]; key: "ramp" | "overreach"; text: string }
+export interface Projection { series: Partial<Record<Ledger, ProjectedDay[]>>; warnings: ScheduleWarning[]; until: string | null }
 
 export interface Segment {
   index: number;
@@ -367,6 +375,7 @@ export interface PlanSession {
   focus: Focus;
   title: string;
   how: string;
+  own?: boolean;
   detail: string;
   longest_descent_ft?: number | null;
 }
@@ -400,3 +409,34 @@ export interface PlanReply { verdict: string; limiter: string; plan: string }
 export interface ReviewReply { week: string; next: string }
 
 export interface ChatMessage { id: number; created_at: string; role: "athlete" | "coach"; text: string; source: string | null; log_id: number | null }
+
+export type RunKind = "easy" | "long" | "hills" | "tempo" | "intervals" | "hike" | "race" | "other";
+
+export interface ScheduledRun {
+  id: number | null;
+  day: string;
+  kind: RunKind;
+  miles: number;
+  gain_ft: number;
+  loss_ft: number;
+  minutes: number;
+  estimated_minutes: boolean;
+  zone: number | null;
+  notes: string;
+  source: "manual" | "plan";
+  title: string;
+  how: string | null;
+  detail: string;
+  status: "done" | "missed" | "today" | "planned";
+  activity: { id: number; name: string | null; sport: string | null; distance_mi: number; gain_ft: number; loss_ft: number; moving_time_s: number } | null;
+}
+
+export interface Schedule {
+  date: string;
+  start: string;
+  days: number;
+  items: ScheduledRun[];
+  warnings: ScheduleWarning[];
+  kinds: { key: RunKind; label: string }[];
+  zone_model: ZoneModel | null;
+}

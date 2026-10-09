@@ -40,6 +40,21 @@ export default async function TodayPage() {
         <Suspense fallback={<CallCard call={t.call} planned={t.call.planned} note="Rule-based call. The AI coach is writing today's brief." />}>
           <CoachCall rules={t.call} />
         </Suspense>
+        {t.planned && !t.call.planned && t.planned.kind !== "rest" ? (
+          <section className="card" style={{ gap: 6 }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 8, flexWrap: "wrap" }}>
+              <h2 className="label">Scheduled today{t.planned.source === "plan" ? ", from your plan" : ""}</h2>
+              <Link href="/plan">Calendar</Link>
+            </div>
+            <div style={{ fontWeight: 600 }}>{t.planned.title}</div>
+            <div className="muted">{t.planned.detail}</div>
+            <div>
+              {t.call.call === "rest"
+                ? "Today's call is rest, so skip it or move it to another day."
+                : "Today's call eases it: follow the call above, not the full run."}
+            </div>
+          </section>
+        ) : null}
         {t.checkin ? null : <CheckIn initial={null} />}
         </div>
 

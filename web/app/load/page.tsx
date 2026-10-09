@@ -66,8 +66,14 @@ export default async function LoadPage({ searchParams }: { searchParams: Promise
                 </div>
               </div>
             </div>
-            <LedgerChart series={l.series} color={`var(--${name})`} label={LEDGER_LABEL[name]} decimals={nd} unit={unit} />
+            <LedgerChart series={l.series} projected={data.projection?.series[name] ?? []} color={`var(--${name})`} label={LEDGER_LABEL[name]} decimals={nd} unit={unit} />
+            {(data.projection?.warnings ?? []).filter((w) => w.ledgers.includes(name)).map((w) => (
+              <div key={w.week} style={{ color: "var(--warn-ink)", fontSize: 14 }}>
+                Week of {dayLabel(w.week, { month: "short", day: "numeric" })}: {w.text} <Link href="/plan">Change the schedule</Link>
+              </div>
+            ))}
             <div className="muted">
+              {data.projection?.series[name]?.length ? "Dotted: where your scheduled runs take it. " : ""}
               {spike ? `${dayLabel(spike.day, { weekday: "long" })} was your biggest ${name} day in 6 weeks. ` : ""}
               {LEDGER_UNIT[name]}
             </div>

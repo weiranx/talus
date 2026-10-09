@@ -227,7 +227,10 @@ def coach_brief(refresh: bool = False) -> dict:
     day = date.fromisoformat(t["date"])
     packet = coach.brief_packet(t, _activities(store, day - timedelta(days=13)))
     fallback = {k: t["call"][k] for k in ("call", "session", "detail", "why")}
-    return _coach(store, "brief", t["date"], packet, fallback, refresh)
+    out = _coach(store, "brief", t["date"], packet, fallback, refresh)
+    if out["source"] == "coach":
+        out["reply"] = coach.brief_reply(out["reply"], fallback, t["thresholds"]["aet"])
+    return out
 
 
 @app.get("/api/coach/activity/{activity_id}")

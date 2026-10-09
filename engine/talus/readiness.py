@@ -64,6 +64,16 @@ def _sentence(fragment: str) -> str:
     return fragment[0].upper() + fragment[1:] + "."
 
 
+def cautious_session(call: str, aet: float) -> dict:
+    """The session for a call the coach made more cautious than the rules did. Sessions are
+    always the engine's, so the coach can never prescribe more than the call allows."""
+    if call == "rest":
+        return {"session": "Rest or 30 min very easy",
+                "detail": f"Walk or jog flat ground under {aet:.0f} bpm, or take the day off."}
+    return {"session": "Short and easy",
+            "detail": f"30 to 45 min in Zone 1, under {aet:.0f} bpm, on flat ground or hiked hills."}
+
+
 def daily_call(ready: dict, checkin: dict | None, aet: float) -> dict:
     """go, modify or rest, with one session and a reason. Rule-based, and labeled so."""
     engine, legs = ready["engine"]["state"], ready["legs"]["state"]
@@ -74,9 +84,7 @@ def daily_call(ready: dict, checkin: dict | None, aet: float) -> dict:
                 "why": f"You reported pain {checkin['pain']} of 5."}
     if "overreached" in (engine, legs):
         why = engine_why if engine == "overreached" else legs_why
-        return {"call": "rest", "session": "Rest or 30 min very easy",
-                "detail": f"Walk or jog flat ground under {aet:.0f} bpm, or take the day off.",
-                "why": _sentence(why)}
+        return {"call": "rest", **cautious_session("rest", aet), "why": _sentence(why)}
     if legs == "loaded" and engine == "fresh":
         return {"call": "modify", "session": "Easy aerobic, low descent",
                 "detail": f"60 to 75 min in Zone 1, under {aet:.0f} bpm. Keep descent under 500 ft: "

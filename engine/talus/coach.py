@@ -18,13 +18,13 @@ from dataclasses import dataclass, field
 from datetime import date
 from typing import Any, Protocol
 
-PROMPT_VERSION = "coach-v0.1"
+PROMPT_VERSION = "coach-v0.2"
 MODEL = "claude-opus-5-5"
 # Server-side fallback: if the model declines, the API re-runs the request on Anthropic's
 # recommended substitute inside the same call.
 FALLBACK_BETA = "server-side-fallback-2026-07-01"
 CALL_ORDER = ("go", "modify", "rest")
-SMALL_COUNT = 10  # whole numbers up to this are allowed as counts ("two climbs", "3 days")
+ROUNDING_SLACK = 0.05  # "4,500" may stand for 4,512, but "10" may not stand for 12
 MAX_SEGMENTS = 40
 
 SYSTEM = """You are the coach inside Talus, a training app for mountain runners and hikers.
@@ -38,17 +38,15 @@ For each load, "normal" is the 42-day average per day and "last 7 days" is the 7
 Your reader is the athlete. They use miles and feet, never km or meters, and they always weigh distance and vert together.
 
 Rules:
-1. Every number you write must come from the data you are given, rounded no more finely than it appears there. Do not compute new numbers (no sums, differences, ratios, paces or conversions) and do not invent targets. If you want a number the data lacks, describe it in words instead.
+1. Every number you write must come from the data you are given, rounded no more finely than it appears there. Do not compute new numbers (no sums, differences, ratios, paces or conversions) and do not invent targets. If you want a number the data lacks, describe it in words instead. Write counts as words ("two days", "three climbs").
 2. Never quote GPS, names or anything not in the data.
 3. Plain language. Short sentences. Talk to the athlete as "you". No hype, no exclamation marks, no emoji.
 4. Ground every claim in a load, a state, a flag, a segment or the check-in, and name it.
 5. Pain above 3 of 5 means rest and, if it persists, see a clinician. Never talk an athlete into training through pain.
 
-Daily brief: you get today's readiness, the three loads, the last 14 days of activities, this week's totals, 28-day intensity and the rule-based call. Write the day's call:
-- call: go, modify or rest. You may be more cautious than rule_call but never less cautious.
-- session: a short name for the session, a few words.
-- detail: how to do it, in one or two sentences: duration, heart-rate cap, terrain, how much descent to allow. Take any durations and caps from rule_call or the thresholds.
-- why: one or two sentences on what in the data drives the call.
+Daily brief: you get today's readiness, the three loads, the last 14 days of activities, this week's totals, 28-day intensity and the rule-based call. The engine sets the session; you make the call and explain it:
+- call: go, modify or rest. Keep rule_call's call unless something in the data argues for more caution; never be less cautious. If you keep it, the athlete gets rule_call's session; if you choose a more cautious call, they get an easier one.
+- why: two or three sentences on what in the data drives the call, naming the loads, states or check-in behind it. Do not prescribe a different session.
 
 Workout analysis: you get one activity with its segments, its three loads against a usual day, and the athlete's current state. Answer five questions, one or two sentences each:
 - job: did it do its job? Judge from time in each zone, where the vert came from and the hike share.
@@ -62,11 +60,9 @@ BRIEF_SCHEMA = {
     "type": "object",
     "properties": {
         "call": {"type": "string", "enum": list(CALL_ORDER)},
-        "session": {"type": "string"},
-        "detail": {"type": "string"},
         "why": {"type": "string"},
     },
-    "required": ["call", "session", "detail", "why"],
+    "required": ["call", "why"],
     "additionalProperties": False,
 }
 
@@ -183,6 +179,16 @@ def analysis_packet(a: dict, thresholds: dict, ledgers_now: dict, today: date) -
     }
 
 
+def brief_reply(raw: dict, rule_call: dict, aet: float) -> dict:
+    """The card shown on Today: the coach's call and reasoning, with the engine's session for that
+    call. The coach never writes the session, so it can't prescribe more than the call allows."""
+    from .readiness import cautious_session
+
+    session = ({k: rule_call[k] for k in ("session", "detail")} if raw["call"] == rule_call["call"]
+               else cautious_session(raw["call"], aet))
+    return {"call": raw["call"], **session, "why": raw["why"]}
+
+
 def packet_hash(packet: dict) -> str:
     return hashlib.sha256(json.dumps(packet, sort_keys=True).encode()).hexdigest()[:16]
 
@@ -219,21 +225,18 @@ def allowed_numbers(packet: Any) -> set[float]:
 
 
 def traceable(token: str, allowed: set[float]) -> bool:
-    """A number is traceable when some packet number, as is or (for a fraction) as a percent,
-    rounds to it at the precision it was written ('4,500' may stand for 4,512; '1.5' for 1.47)."""
+    """A number is traceable when some packet number rounds to it at the precision it was
+    written: '1.5' for 1.47, and '4,500' for 4,512 when within ROUNDING_SLACK of it."""
     plain = token.replace(",", "")
     x = float(plain)
     decimals = len(plain.split(".")[1]) if "." in plain else 0
-    if decimals == 0 and x <= SMALL_COUNT:
-        return True
     zeros = len(plain) - len(plain.rstrip("0")) if decimals == 0 else 0
     for v in allowed:
-        for cand in (v, v * 100) if v < 2 else (v,):  # fractions may be quoted as percents
-            if abs(round(cand, decimals) - x) < 1e-9:
+        if abs(round(v, decimals) - x) < 1e-9:
+            return True
+        for k in range(1, min(zeros, 3) + 1):
+            if abs(round(v, -k) - x) < 1e-9 and abs(v - x) <= ROUNDING_SLACK * x:
                 return True
-            for k in range(1, min(zeros, 3) + 1):
-                if abs(round(cand, -k) - x) < 1e-9:
-                    return True
     return False
 
 

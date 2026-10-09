@@ -68,7 +68,8 @@ Put an Anthropic API key in `.env` as `ANTHROPIC_API_KEY` to turn it on. Without
 
 - **When it calls:** the daily brief when you open Today, the workout analysis the first time you open an activity. Replies are saved and reused until the input changes (new day, check-in, new activity), so reloads are free. Nothing runs in the background.
 - **What it sees:** a compact packet of engine numbers (`talus/coach.py`): loads, readiness, check-in, the rule-based call, the last 14 days. No GPS, no names.
-- **Number check:** every number in a reply must trace to the packet, rounded no finer than it appears there. One retry, then the rule-based text. The brief may be more cautious than the rule-based call, never less.
+- **Number check:** every number in a reply must appear in the packet, rounded no finer than it appears there (within 5% when rounded to tens or more). One retry, then the rule-based text.
+- **Who decides what:** in the brief the coach picks the call and explains it, but the session is always the engine's. The call may be more cautious than the rule-based one, never less, and a more cautious call gets the engine's easier session.
 - **Model:** `claude-opus-5-5` by default, with low effort for the brief and medium for analysis; set `TALUS_COACH_MODEL` to change it. Requests opt in to server-side fallback, so a declined request is re-run on Anthropic's recommended substitute.
 - **Log:** every call is stored whole in the `coach_log` table: packet, prompt version, model, reply, token usage, retries and your thumbs up or down.
 

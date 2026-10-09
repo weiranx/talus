@@ -25,9 +25,13 @@ export default function CoachSettings({ coach }: { coach: Settings["coach"] }) {
   const router = useRouter();
   const [enabled, setEnabled] = useState(coach.enabled);
   const [models, setModels] = useState({ brief_model: coach.brief_model, analysis_model: coach.analysis_model });
+  const [cap, setCap] = useState(coach.cap.limit == null ? "" : String(coach.cap.limit));
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState<{ ok: boolean; text: string } | null>(null);
-  const dirty = enabled !== coach.enabled || models.brief_model !== coach.brief_model || models.analysis_model !== coach.analysis_model;
+  const capValue = cap.trim() === "" ? null : Number(cap);
+  const capDirty = capValue !== coach.cap.limit;
+  const dirty = capDirty || enabled !== coach.enabled || models.brief_model !== coach.brief_model || models.analysis_model !== coach.analysis_model;
+  const capped = coach.cap.limit != null && coach.cap.spent >= coach.cap.limit;
   const haiku = coach.models.find((m) => m.id.startsWith("claude-haiku"));
 
   async function save() {
@@ -36,7 +40,7 @@ export default function CoachSettings({ coach }: { coach: Settings["coach"] }) {
     const res = await fetch("/api/settings/coach", {
       method: "PUT",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ enabled, ...models }),
+      body: JSON.stringify({ enabled, ...models, ...(capDirty ? { monthly_cap_usd: capValue } : {}) }),
     }).catch(() => null);
     setSaving(false);
     if (!res?.ok) return setMessage({ ok: false, text: "Could not save. Is the engine running?" });
@@ -61,7 +65,11 @@ export default function CoachSettings({ coach }: { coach: Settings["coach"] }) {
         </span>
       </label>
       {!coach.key_set ? (
-        <div className="muted">Add <code>ANTHROPIC_API_KEY</code> to the engine&apos;s .env and restart it. Until then Talus shows rule-based text.</div>
+        <div className="muted">
+          {coach.cap.ceiling == null
+            ? <>Add <code>ANTHROPIC_API_KEY</code> to the engine&apos;s .env and restart it.</>
+            : "The owner of this Talus hasn't added an Anthropic key yet."} Until then Talus shows rule-based text.
+        </div>
       ) : null}
 
       <div className="form-grid">
@@ -84,6 +92,17 @@ export default function CoachSettings({ coach }: { coach: Settings["coach"] }) {
           Every reply still goes through the same number check.
         </div>
       ) : null}
+
+      <label className="field">
+        <span className="field-label">Monthly spending cap</span>
+        <input inputMode="decimal" value={cap} placeholder={coach.cap.ceiling == null ? "No cap" : ""}
+          disabled={!enabled} onChange={(e) => setCap(e.target.value.replace(/[^0-9.]/g, ""))} />
+        <span className={capped ? "error-text" : "muted"}>
+          {money(coach.cap.spent)} spent this month{coach.cap.limit != null ? ` of $${coach.cap.limit.toFixed(2)}` : ""}.
+          {capped ? " Cap reached: rule-based text until next month." : ""}
+          {coach.cap.ceiling != null ? ` This Talus allows up to $${coach.cap.ceiling.toFixed(2)} a month per account.` : " In dollars; blank means no cap."}
+        </span>
+      </label>
 
       <div className="actions">
         <button className="btn" onClick={save} disabled={!dirty || saving}>{saving ? "Saving" : "Save coach settings"}</button>

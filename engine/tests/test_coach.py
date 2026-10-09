@@ -2,9 +2,8 @@ import json
 from datetime import date, datetime, timedelta
 from types import SimpleNamespace
 
-from fastapi.testclient import TestClient
-
 from talus import api, cli, coach
+from tests.conftest import sign_in
 from tests.test_api import _gpx
 
 PACKET = {
@@ -105,7 +104,7 @@ def _demo(tmp_path, monkeypatch):
         files.append(str(f))
     cli.main(["thresholds", "--resting", "45", "--aet", "150", "--ant", "172", "--max", "190"])
     cli.main(["import", *files])
-    return TestClient(api.app)
+    return sign_in()
 
 
 def _keys(v) -> set:

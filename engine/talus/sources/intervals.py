@@ -1,6 +1,10 @@
-"""intervals.icu source, single-athlete mode (personal API key over basic auth).
+"""intervals.icu source. Each Talus account syncs with its own credential.
 
-Multi-user Talus would need intervals.icu OAuth instead. intervals.icu said on 2026-10-09 that
+Today that is a personal API key over basic auth, which each person pastes into Settings. An app
+used by more than one person is meant to use intervals.icu OAuth instead (apps registered at
+intervals.icu/settings/apps; Bearer tokens; 100 requests per user per day, 500 users by default).
+from_credential() already takes an "oauth" credential with an access token, so adding OAuth means
+registering Talus there and adding the authorize and token-exchange routes; sync is unchanged. intervals.icu said on 2026-10-09 that
 Garmin data through its API will likely be blocked soon, so keep the Garmin adapter as a fallback.
 Strava-sourced activities are skipped: the API does not serve them, and Talus does not use Strava data.
 """
@@ -23,14 +27,25 @@ class IntervalsSource:
     name = "intervals"
 
     def __init__(self, api_key: str | None = None, athlete_id: str | None = None,
-                 client: httpx.Client | None = None):
-        api_key = api_key or os.environ.get("INTERVALS_API_KEY")
-        if not api_key:
+                 client: httpx.Client | None = None, access_token: str | None = None):
+        api_key = api_key or (None if access_token else os.environ.get("INTERVALS_API_KEY"))
+        if not api_key and not access_token:
             raise RuntimeError("Set INTERVALS_API_KEY (intervals.icu > Settings > Developer Settings)")
-        # "0" means the athlete that owns the API key.
-        self.athlete_id = athlete_id or os.environ.get("INTERVALS_ATHLETE_ID") or "0"
+        # "0" means the athlete that owns the API key or token.
+        self.athlete_id = athlete_id or (None if access_token else os.environ.get("INTERVALS_ATHLETE_ID")) or "0"
         self.client = client or httpx.Client(base_url=BASE_URL, timeout=60)
-        self.client.auth = httpx.BasicAuth("API_KEY", api_key)
+        if access_token:
+            self.client.headers["Authorization"] = f"Bearer {access_token}"
+        else:
+            self.client.auth = httpx.BasicAuth("API_KEY", api_key)
+
+    @classmethod
+    def from_credential(cls, cred: dict, client: httpx.Client | None = None) -> "IntervalsSource":
+        """A saved credential: {"kind": "api_key", "api_key", "athlete_id"} or
+        {"kind": "oauth", "access_token", "athlete_id"}."""
+        if cred.get("kind") == "oauth":
+            return cls(athlete_id=cred.get("athlete_id"), client=client, access_token=cred["access_token"])
+        return cls(api_key=cred["api_key"], athlete_id=cred.get("athlete_id") or "0", client=client)
 
     def list_activities(self, since: date, until: date | None = None) -> list[RemoteActivity]:
         params = {"oldest": since.isoformat(), "newest": (until or date.today()).isoformat()}

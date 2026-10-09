@@ -2,9 +2,9 @@ import json
 from datetime import date, datetime, timedelta
 
 import pytest
-from fastapi.testclient import TestClient
 
 from talus import api, cli, coach
+from tests.conftest import sign_in
 from tests.test_api import _gpx
 from tests.test_coach import FakeClient, _demo
 from tests.test_intervals import source
@@ -19,11 +19,11 @@ def no_keys(monkeypatch):
 
 def test_settings_before_anything_is_set(tmp_path, monkeypatch):
     monkeypatch.setenv("TALUS_DATA_DIR", str(tmp_path / "data"))
-    s = TestClient(api.app).get("/api/settings").json()
+    s = sign_in().get("/api/settings").json()
     assert s["thresholds"] is None and s["inferred"] is None
-    assert s["source"] == {"name": "intervals.icu", "key_set": False, "athlete_id": None,
-                           "garmin_fallback_set": False, "activities": 0, "latest_activity": None,
-                           "last_sync": None}
+    assert s["source"] == {"name": "intervals.icu", "key_set": False, "kind": None, "athlete_id": None,
+                           "updated_at": None, "garmin_fallback_set": False, "activities": 0,
+                           "latest_activity": None, "last_sync": None}
     assert s["coach"]["enabled"] and not s["coach"]["key_set"]
     assert s["coach"]["brief_model"] == s["coach"]["analysis_model"] == coach.MODEL
     assert s["units"] == {"distance": "mi", "vert": "ft"}
@@ -34,7 +34,7 @@ def test_settings_never_return_key_values(tmp_path, monkeypatch):
     monkeypatch.setenv("INTERVALS_API_KEY", "secret-intervals")
     monkeypatch.setenv("ANTHROPIC_API_KEY", "secret-anthropic")
     monkeypatch.setenv("INTERVALS_ATHLETE_ID", "i746070")
-    s = TestClient(api.app).get("/api/settings")
+    s = sign_in().get("/api/settings")
     assert "secret" not in s.text
     assert s.json()["source"]["key_set"] and s.json()["coach"]["key_set"]
     assert s.json()["source"]["athlete_id"] == "i746070"
@@ -90,10 +90,13 @@ def test_coach_uses_the_chosen_model_per_mode(tmp_path, monkeypatch):
 
 def test_sync_now_records_the_last_sync(tmp_path, monkeypatch):
     monkeypatch.setenv("TALUS_DATA_DIR", str(tmp_path / "data"))
-    client = TestClient(api.app)
+    client = sign_in()
     assert client.post("/api/sync", json={"days": 30}).status_code == 409
-    monkeypatch.setenv("INTERVALS_API_KEY", "k")
-    monkeypatch.setattr("talus.sources.intervals.IntervalsSource", lambda: source())
+    assert client.put("/api/settings/source", json={"api_key": "secret-key-1234", "athlete_id": "i42"}).json() == {
+        "ok": True}
+    used = []
+    monkeypatch.setattr("talus.sources.intervals.IntervalsSource.from_credential",
+                        lambda cred: used.append(cred) or source())
     days = (date.today() - date(2026, 9, 1)).days  # the mock serves activities from 2026-09-01
     r = client.post("/api/sync", json={"days": days})
     assert r.status_code == 200
@@ -102,6 +105,7 @@ def test_sync_now_records_the_last_sync(tmp_path, monkeypatch):
     last = client.get("/api/settings").json()["source"]["last_sync"]
     assert last["new"] == 2 and last["since"] == out["since"]
     assert json.dumps(last).count("secret") == 0
+    assert used[0]["api_key"] == "secret-key-1234" and used[0]["athlete_id"] == "i42"
 
 
 def test_settings_show_thresholds_inferred_from_runs(tmp_path, monkeypatch):
@@ -114,7 +118,7 @@ def test_settings_show_thresholds_inferred_from_runs(tmp_path, monkeypatch):
         files.append(str(f))
     cli.main(["thresholds", "--resting", "45", "--aet", "150", "--ant", "172", "--max", "190"])
     cli.main(["import", *files])
-    inf = TestClient(api.app).get("/api/settings").json()["inferred"]
+    inf = sign_in().get("/api/settings").json()["inferred"]
     assert (inf["runs_with_hr"], inf["days"]) == (3, 180)
     assert inf["ant"]["value"] == round(150 * 0.97) and inf["ant"]["confidence"] == "medium"
     assert inf["ant"]["activities"][0].keys() == {"id", "day", "name"}

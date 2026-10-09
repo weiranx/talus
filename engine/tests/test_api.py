@@ -1,9 +1,8 @@
 from datetime import date, datetime, timedelta
 
-from fastapi.testclient import TestClient
 
 from talus import cli
-from talus.api import app
+from tests.conftest import sign_in
 
 
 def _gpx(start: datetime, n=1800, climb_per_s=0.4, hr=140):
@@ -31,7 +30,7 @@ def test_api_end_to_end(tmp_path, monkeypatch):
         files.append(str(f))
     cli.main(["thresholds", "--resting", "45", "--aet", "150", "--ant", "172", "--max", "190"])
     cli.main(["import", *files])
-    client = TestClient(app)
+    client = sign_in()
 
     t = client.get("/api/today").json()
     assert set(t["ledgers"]) == {"cardio", "climb", "descent"}
@@ -74,7 +73,7 @@ def test_load_skips_a_gap_in_synced_data(tmp_path, monkeypatch):
         files.append(str(f))
     cli.main(["thresholds", "--resting", "45", "--aet", "150", "--ant", "172", "--max", "190"])
     cli.main(["import", *files])
-    client = TestClient(app)
+    client = sign_in()
 
     data = client.get("/api/load?days=365").json()
     since = (date.today() - timedelta(days=10)).isoformat()

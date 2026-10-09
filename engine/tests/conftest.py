@@ -32,3 +32,22 @@ def make_streams(legs, hr=140.0, cadence=165.0, barometric=True, noise_m=0.0, se
         cadence=None if cadence is None else np.full(n, float(cadence)),
         barometric=barometric,
     )
+
+
+
+OWNER = {"email": "owner@example.com", "password": "correct horse battery"}
+
+
+def sign_in(email: str = OWNER["email"], password: str = OWNER["password"]):
+    """A TestClient signed in to an account. The first account made is the owner, whose data is
+    what `talus` commands write. Signs up on first use, signs in after that."""
+    from fastapi.testclient import TestClient
+
+    from talus.api import app
+
+    client = TestClient(app)
+    r = client.post("/api/auth/signup", json={"email": email, "password": password})
+    if r.status_code != 200:
+        r = client.post("/api/auth/login", json={"email": email, "password": password})
+    assert r.status_code == 200, r.text
+    return client

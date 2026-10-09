@@ -120,3 +120,6 @@ code { font-family: var(--mono); font-size: 13px; background: var(--bg); padding
   .coach-read { grid-template-columns: 1fr !important; gap: 2px 0 !important; }
   .coach-read dd { margin-bottom: 10px !important; }
 }
+
+.link-btn { background: none; border: 0; padding: 0; color: var(--link); font: inherit; font-size: 12px; cursor: pointer; text-align: left; min-height: 24px; }
+.btn.danger { background: var(--bad-ink); }

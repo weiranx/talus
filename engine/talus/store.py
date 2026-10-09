@@ -112,7 +112,6 @@ BUSY_TIMEOUT_S = 30
 # one per database file, so they queue instead of colliding; WAL lets reads run alongside them,
 # and the busy timeout covers a second process (the CLI) writing at the same time.
 _write_locks: dict[Path, threading.RLock] = {}
-_ready: set[Path] = set()
 _guard = threading.Lock()
 
 
@@ -140,14 +139,11 @@ class Store:
         self.db.row_factory = sqlite3.Row
         with _guard:
             self._lock = _write_locks.setdefault(path, threading.RLock())
-        if path not in _ready:
-            with self._lock:
-                # Switching to WAL can't happen inside a transaction, and an existing database
-                # made before WAL is still in rollback mode, so switch first.
-                self.db.execute("PRAGMA journal_mode = WAL").fetchone()
-            with self._write():
-                self.db.executescript(SCHEMA)
-            _ready.add(path)
+        with self._lock:
+            # WAL is a property of the file and can't be switched inside a transaction; it's a
+            # no-op once set. The schema check writes nothing when the tables exist.
+            self.db.execute("PRAGMA journal_mode = WAL").fetchone()
+            self.db.executescript(SCHEMA)
 
     @contextmanager
     def _write(self):

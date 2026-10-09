@@ -185,15 +185,17 @@ def test_concurrent_requests_dont_lock_the_database(tmp_path, monkeypatch):
     assert _rows(store.ledgers()) == _rows(built)
 
 
-def test_a_database_made_before_wal_still_opens(tmp_path):
+def test_an_existing_database_switches_to_wal(tmp_path):
+    """A database made by an older engine (rollback journal, tables already there) opens fine."""
     import sqlite3
 
-    from talus.store import Store
-    old = sqlite3.connect(tmp_path / "talus.db")
-    old.execute("CREATE TABLE setting (key TEXT PRIMARY KEY, value TEXT NOT NULL, updated_at TEXT NOT NULL)")
-    old.execute("INSERT INTO setting VALUES ('x', '1', 'now')")
-    old.commit()
-    old.close()
+    from talus.store import SCHEMA, Store
+    db = sqlite3.connect(tmp_path / "talus.db")
+    db.executescript(SCHEMA.replace("CREATE TABLE IF NOT EXISTS ledger_state", "CREATE TABLE IF NOT EXISTS _x"))
+    db.execute("INSERT INTO setting VALUES ('a', '1', 'now')")
+    db.commit()
+    db.close()
     store = Store(tmp_path)
     assert store.db.execute("PRAGMA journal_mode").fetchone()[0] == "wal"
-    assert store.settings() == {"x": 1}
+    assert store.settings() == {"a": 1}
+    assert store.ledgers() == []

@@ -1,0 +1,28 @@
+# Talus on a single host. nginx on the host proxies https://talus.weiranxiong.com to 127.0.0.1:3020.
+# The engine has no published port; the web app reaches it as http://engine:8000.
+name: talus
+services:
+  engine:
+    build: { context: .., dockerfile: deploy/engine.Dockerfile }
+    image: talus-engine
+    env_file: .env
+    environment:
+      TALUS_DATA_DIR: /data
+      TZ: ${TALUS_TZ:-America/Los_Angeles}
+    volumes:
+      - ${TALUS_DATA_PATH:-./data}:/data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/auth/status')"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+  web:
+    build: { context: .., dockerfile: deploy/web.Dockerfile }
+    image: talus-web
+    environment:
+      TZ: ${TALUS_TZ:-America/Los_Angeles}
+    ports:
+      - "127.0.0.1:${TALUS_WEB_PORT:-3020}:3000"
+    depends_on: [engine]
+    restart: unless-stopped

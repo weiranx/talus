@@ -251,7 +251,15 @@ export interface Settings {
   units: { distance: "mi"; vert: "ft" };
 }
 
-export interface Account { id: number; email: string; is_owner: boolean; created_at: string }
+export interface Account {
+  id: number;
+  email: string;
+  is_owner: boolean;
+  created_at: string;
+  has_password: boolean;
+  google: { email: string | null; linked_at: string } | null;
+  google_available: boolean;
+}
 
 export interface Explanation {
   title: string;

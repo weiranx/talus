@@ -22,6 +22,7 @@ FRIEND = {"email": "friend@example.com", "password": "another long password"}
 @pytest.fixture(autouse=True)
 def isolated(tmp_path, monkeypatch):
     for k in ("INTERVALS_API_KEY", "INTERVALS_ATHLETE_ID", "ANTHROPIC_API_KEY", "GARMIN_EMAIL", "TALUS_SIGNUP",
+              "GOOGLE_CLIENT_ID", "GOOGLE_CLIENT_SECRET", "TALUS_PUBLIC_URL",
               "TALUS_COACH_CAP_USD", "TALUS_SECRET_KEY"):
         monkeypatch.delenv(k, raising=False)
     monkeypatch.setattr(api, "load_env", lambda: None)
@@ -57,7 +58,8 @@ def test_every_data_route_needs_a_session():
     client.cookies.set(api.COOKIE, "made-up")
     assert client.get("/api/today").status_code == 401
     s = client.get("/api/auth/status").json()
-    assert s == {"account": None, "has_accounts": False, "signup_open": True, "existing_data": False}
+    assert s == {"account": None, "has_accounts": False, "signup_open": True, "existing_data": False,
+                 "google": False}
 
 
 def test_existing_data_goes_to_the_first_account_after_a_backup(tmp_path):
@@ -263,3 +265,117 @@ def test_sync_and_its_coach_follow_up_run_as_the_signed_in_account(tmp_path, mon
     assert seen == [(FRIEND["email"], 2)]  # the background coach run still knows whose data it is
     assert len(Store(tmp_path / "data" / "users" / "2").activities()) == 2
     assert Store(tmp_path / "data" / "users" / "1").activities() == []
+
+
+# Sign in with Google
+
+GOOGLE = {"GOOGLE_CLIENT_ID": "talus-test.apps.googleusercontent.com", "GOOGLE_CLIENT_SECRET": "shh"}
+
+
+def _google(monkeypatch, sub="g-123", email=OWNER["email"], verified=True, **overrides):
+    """Patch the token exchange to return these ID-token claims, echoing the flow's nonce."""
+    for k, v in GOOGLE.items():
+        monkeypatch.setenv(k, v)
+    from talus import google_auth
+
+    def claims(code):
+        assert code == "the-code"
+        return {"iss": "https://accounts.google.com", "aud": GOOGLE["GOOGLE_CLIENT_ID"], "sub": sub, "email": email,
+                "email_verified": verified, "exp": datetime.now().timestamp() + 600, "nonce": _google.nonce,
+                **overrides}
+    monkeypatch.setattr(google_auth, "exchange_code", claims)
+
+
+def _google_round_trip(client, path="/api/auth/google/start", code="the-code"):
+    from urllib.parse import parse_qs, urlparse
+
+    start = client.get(path, follow_redirects=False)
+    assert start.status_code == 303
+    q = parse_qs(urlparse(start.headers["location"]).query)
+    assert q["redirect_uri"] == ["http://localhost:3000/api/auth/google/callback"]
+    _google.nonce = q["nonce"][0]
+    return client.get(f"/api/auth/google/callback?code={code}&state={q['state'][0]}", follow_redirects=False)
+
+
+def test_google_button_only_when_configured(monkeypatch):
+    assert TestClient(api.app).get("/api/auth/status").json()["google"] is False
+    r = TestClient(api.app).get("/api/auth/google/start", follow_redirects=False)
+    assert r.status_code == 303 and r.headers["location"].startswith("/login?google_error=")
+    _google(monkeypatch)
+    assert TestClient(api.app).get("/api/auth/status").json()["google"] is True
+
+
+def test_google_signs_into_the_account_with_that_email_and_links_it(monkeypatch):
+    sign_in()
+    _google(monkeypatch)
+    client = TestClient(api.app)
+    r = _google_round_trip(client)
+    assert r.status_code == 303 and r.headers["location"] == "/"
+    me = client.get("/api/account").json()
+    assert me["id"] == 1 and me["google"]["email"] == OWNER["email"] and me["has_password"]
+    # Next time the Google id itself finds the account, even if the Google email changed.
+    _google(monkeypatch, email="renamed@gmail.com")
+    other = TestClient(api.app)
+    _google_round_trip(other)
+    assert other.get("/api/account").json()["id"] == 1
+
+
+def test_google_makes_a_new_passwordless_account(monkeypatch):
+    sign_in()
+    _google(monkeypatch, sub="g-new", email="new@gmail.com")
+    client = TestClient(api.app)
+    _google_round_trip(client, "/api/auth/google/start?next=/load")
+    me = client.get("/api/account").json()
+    assert me["email"] == "new@gmail.com" and not me["is_owner"] and not me["has_password"]
+    assert TestClient(api.app).post("/api/auth/login", json={"email": "new@gmail.com", "password": ""}).status_code \
+        == 401
+    assert client.post("/api/account/google/unlink").status_code == 409  # would lock them out
+    assert client.put("/api/account/password", json={"current": "", "new": "now with a password"}).status_code == 200
+    assert client.post("/api/account/google/unlink").json() == {"ok": True}
+    assert client.get("/api/account").json()["google"] is None
+
+
+def test_google_respects_closed_signup_and_bad_tokens(monkeypatch):
+    sign_in()
+    monkeypatch.setenv("TALUS_SIGNUP", "closed")
+    _google(monkeypatch, sub="g-x", email="stranger@gmail.com")
+    r = _google_round_trip(TestClient(api.app))
+    assert "google_error=" in r.headers["location"] and "closed" in r.headers["location"]
+    for bad in ({"verified": False}, {"aud": "someone-else"}, {"iss": "https://evil.example"},
+                {"nonce": "replayed"}, {"exp": 1}):
+        _google(monkeypatch, **bad)
+        client = TestClient(api.app)
+        r = _google_round_trip(client)
+        assert r.headers["location"].startswith("/login?google_error="), bad
+        assert client.get("/api/account").status_code == 401
+
+
+def test_google_callback_needs_the_browser_that_started_it(monkeypatch):
+    _google(monkeypatch)
+    started = TestClient(api.app)
+    start = started.get("/api/auth/google/start", follow_redirects=False)
+    from urllib.parse import parse_qs, urlparse
+    state = parse_qs(urlparse(start.headers["location"]).query)["state"][0]
+    stranger = TestClient(api.app)
+    r = stranger.get(f"/api/auth/google/callback?code=the-code&state={state}", follow_redirects=False)
+    assert "google_error=" in r.headers["location"] and stranger.get("/api/account").status_code == 401
+    r = started.get("/api/auth/google/callback?code=the-code&state=wrong", follow_redirects=False)
+    assert "google_error=" in r.headers["location"]
+
+
+def test_link_google_from_settings(monkeypatch):
+    sign_in()
+    friend = sign_in(**FRIEND)
+    _google(monkeypatch, sub="g-friend", email="friend.personal@gmail.com")
+    r = _google_round_trip(friend, "/api/auth/google/start?link=1")
+    assert r.headers["location"] == "/settings"
+    assert friend.get("/api/account").json()["google"]["email"] == "friend.personal@gmail.com"
+    # The same Google account can't also link to the owner.
+    owner = sign_in()
+    r = _google_round_trip(owner, "/api/auth/google/start?link=1")
+    assert "already+linked" in r.headers["location"]
+
+
+def test_a_fresh_install_does_not_claim_existing_data(tmp_path):
+    Store(tmp_path / "data" / "users" / "1")  # opened before anyone signs up, still empty
+    assert TestClient(api.app).get("/api/auth/status").json()["existing_data"] is False

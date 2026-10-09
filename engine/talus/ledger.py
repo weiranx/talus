@@ -1,4 +1,4 @@
-"""The three load ledgers: daily load, fitness, fatigue and form for cardio, climb and descent.
+"""The load ledgers: daily load, fitness, fatigue and form for cardio, distance, climb and descent.
 
 Each ledger is kept separately and never blended. Fitness is a 42-day exponentially weighted
 average of daily load, fatigue a 7-day one, form is fitness minus fatigue. Flags are prompts
@@ -11,7 +11,10 @@ from collections import defaultdict
 from dataclasses import dataclass, field
 from datetime import date, timedelta
 
-LEDGERS = ("cardio", "climb", "descent")
+LEDGERS = ("cardio", "distance", "climb", "descent")
+# Where each ledger's daily input sits in an activity score. Distance is plain miles, flat or
+# steep: climb and descent already carry the vert, so the two are read side by side, never blended.
+ACTIVITY_KEY = {"cardio": "cardio_load", "distance": "distance_mi", "climb": "climb_load", "descent": "descent_load"}
 FITNESS_DAYS = 42
 FATIGUE_DAYS = 7
 RAMP_RATIO = 1.3
@@ -66,7 +69,7 @@ def segments(days: list[date], gap_days: int = GAP_DAYS) -> list[tuple[date, dat
 
 
 def build(activities: list[tuple[date, dict[str, float | None]]], until: date | None = None) -> list[LedgerDay]:
-    """Run all three ledgers from the first activity day through `until` (default today).
+    """Run every ledger from the first activity day through `until` (default today).
 
     A gap of more than GAP_DAYS with no activity is missing data: no days are written for it,
     and the ledgers start fresh after it, seeded the same way as the start of history. So months

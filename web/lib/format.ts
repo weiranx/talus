@@ -1,7 +1,8 @@
-export const LEDGER_LABEL = { cardio: "Cardio", climb: "Climb", descent: "Descent" } as const;
+export const LEDGER_LABEL = { cardio: "Cardio", distance: "Distance", climb: "Climb", descent: "Descent" } as const;
 
 export const LEDGER_UNIT = {
   cardio: "Cardio load: 100 is one hour at your threshold heart rate.",
+  distance: "Distance: miles covered, flat or steep. Climb and descent carry the vert.",
   climb: "Climb load: 1 is one foot gained on a moderate grade. Steeper feet count more.",
   descent: "Descent load: 1 is one foot lost on a moderate grade. Steeper feet count more.",
 } as const;
@@ -11,6 +12,12 @@ const int = new Intl.NumberFormat("en-US", { maximumFractionDigits: 0 });
 export const n0 = (v: number | null | undefined) => (v == null ? "–" : int.format(Math.round(v)));
 export const mi = (v: number) => v.toFixed(1);
 export const pct = (v: number) => `${Math.round(v * 100)}%`;
+
+// Ledger numbers: distance reads in miles to a tenth, the other loads as whole numbers.
+export const ledgerDecimals = (name: string) => (name === "distance" ? 1 : 0);
+export const ledgerNum = (v: number | null | undefined, decimals = 0) =>
+  v == null ? "–" : decimals ? v.toFixed(decimals) : n0(v);
+export const ledgerUnit = (name: string) => (name === "distance" ? " mi" : "");
 
 export function duration(seconds: number, withSeconds = false): string {
   const s = Math.round(seconds);

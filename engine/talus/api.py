@@ -281,7 +281,7 @@ def activity(activity_id: int) -> dict:
     six_weeks = [a for a in _activities(store, day - timedelta(days=42)) if a["day"] <= day.isoformat()]
 
     def usual(name: str, value: float | None) -> dict:
-        others = [a[f"{name}_load"] or 0 for a in six_weeks if a["id"] != activity_id]
+        others = [a[ledger.ACTIVITY_KEY[name]] or 0 for a in six_weeks if a["id"] != activity_id]
         return {"load": value,
                 "times_usual_day": None if value is None else ledger.times_usual_day(value, before.get(name, 0.0)),
                 "six_week_high": value is not None and bool(others) and value > max(others)}
@@ -321,8 +321,7 @@ def activity(activity_id: int) -> dict:
         "loss_by_band_ft": result.loss_by_band_ft, "longest_climb_ft": result.longest_climb_ft,
         "longest_descent_ft": result.longest_descent_ft, "minutes_above_8000ft": result.minutes_above_8000ft,
         "cardio_estimated": result.cardio_estimated, "notes": result.notes,
-        "loads": {"cardio": usual("cardio", result.cardio_load), "climb": usual("climb", result.climb_load),
-                  "descent": usual("descent", result.descent_load)},
+        "loads": {name: usual(name, getattr(result, key)) for name, key in ledger.ACTIVITY_KEY.items()},
         "segments": segments,
         "streams": {"time_s": pick(streams.time, nd=0), "distance_mi": pick(streams.distance, mi, 3),
                     "altitude_ft": pick(streams.altitude, ft, 0), "heart_rate": pick(hr, nd=0),
@@ -690,7 +689,7 @@ def explain_ledger(name: str, metric: str, day: date | None = None) -> dict:
     now = rows.get((day, name))
     if now is None:
         raise HTTPException(404, "No ledger for that day")
-    acts = [(a["name"] or a["sport"] or "Activity", a[f"{name}_load"])
+    acts = [(a["name"] or a["sport"] or "Activity", a[ledger.ACTIVITY_KEY[name]])
             for a in _activities(store, day) if a["day"] == day.isoformat()]
     return explain.ledger_metric(name, metric, now, rows.get((day - timedelta(days=1), name)), acts)
 
@@ -712,7 +711,7 @@ def explain_activity(activity_id: int, metric: str) -> dict:
         day = date.fromisoformat(row["start_time"][:10])
         before = {d.ledger: d.fitness for d in store.ledgers(day - timedelta(days=1))
                   if d.day == day - timedelta(days=1)}
-        return explain.times_usual(name, getattr(r, f"{name}_load"), before.get(name))
+        return explain.times_usual(name, getattr(r, ledger.ACTIVITY_KEY[name]), before.get(name))
     if metric == "cardio_load":
         dt = np.minimum(np.diff(streams.time, prepend=streams.time[0]), MAX_DT_S)
         return explain.cardio_load(r, streams, dt, th)

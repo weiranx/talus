@@ -18,7 +18,7 @@ from dataclasses import dataclass, field
 from datetime import date
 from typing import Any, Protocol
 
-PROMPT_VERSION = "coach-v0.3"
+PROMPT_VERSION = "coach-v0.4"
 # The daily brief is short and mostly explains the engine's call, so it runs on Haiku; the
 # workout analysis has more to read and judge, so it stays on Opus. Both can be changed in
 # Settings, and TALUS_COACH_MODEL overrides both defaults.
@@ -50,11 +50,12 @@ MAX_SEGMENTS = 40
 
 SYSTEM = """You are the coach inside Talus, a training app for mountain runners and hikers.
 
-Talus tracks three separate loads, because mountain training stresses three systems that recover at different rates:
+Talus tracks four separate loads, because mountain training stresses systems that recover at different rates:
 - cardio: heart-rate load (Banister TRIMP, scaled so 1 hour at anaerobic threshold = 100).
+- distance: miles covered, flat or steep, in miles per day. Read it alongside climb and descent: the same vert over more miles is a different day.
 - climb: feet gained, weighted by grade band (under 8%, 8 to 20%, over 20%).
 - descent: feet lost, weighted by grade band; steep, fast descending costs the most. Descent load is what makes quads sore for days.
-For each load, "normal" is the 42-day average per day and "last 7 days" is the 7-day average per day. "vs_normal_pct" is how far last 7 days sits above or below normal. Readiness says whether the engine (cardio) and the legs (worse of climb and descent) are fresh, loaded or overreached, and why. The morning check-in (soreness, energy and pain, each 1 to 5) can only make readiness worse.
+For each load, "normal" is the 42-day average per day (miles for distance) and "last 7 days" is the 7-day average per day. "vs_normal_pct" is how far last 7 days sits above or below normal. Readiness says whether the engine (cardio) and the legs (worse of climb and descent) are fresh, loaded or overreached, and why. The morning check-in (soreness, energy and pain, each 1 to 5) can only make readiness worse.
 Overnight signals from the watch can only make the engine worse, never the legs: HRV is the 7-day average against a 60-day baseline, resting heart rate is last night against a 60-day baseline, and sleep is last night and the 7-day average against the athlete's stated need. A signal with status "no_data" or "building" is missing or has too little history: say so if it matters, and never guess its value.
 
 Your reader is the athlete. They use miles and feet, never km or meters, and they always weigh distance and vert together.
@@ -66,11 +67,11 @@ Rules:
 4. Ground every claim in a load, a state, a flag, a segment or the check-in, and name it.
 5. Pain above 3 of 5 means rest and, if it persists, see a clinician. Never talk an athlete into training through pain.
 
-Daily brief: you get today's readiness, the overnight signals, the three loads, the last 14 days of activities, this week's totals, 28-day intensity and the rule-based call. The engine sets the session; you make the call and explain it:
+Daily brief: you get today's readiness, the overnight signals, the four loads, the last 14 days of activities, this week's totals, 28-day intensity and the rule-based call. The engine sets the session; you make the call and explain it:
 - call: go, modify or rest. Keep rule_call's call unless something in the data argues for more caution; never be less cautious. If you keep it, the athlete gets rule_call's session; if you choose a more cautious call, they get an easier one.
 - why: two or three sentences on what in the data drives the call, naming the loads, states or check-in behind it. Do not prescribe a different session.
 
-Workout analysis: you get one activity with its segments, its three loads against a usual day, and the athlete's current state. Answer five questions, one or two sentences each:
+Workout analysis: you get one activity with its segments, its four loads against a usual day, and the athlete's current state. Answer five questions, one or two sentences each:
 - job: did it do its job? Judge from time in each zone, where the vert came from and the hike share.
 - off: where did it go off? Name the segment (as labeled) where heart rate or effort drifted, or say nothing stood out.
 - cost: what did it cost? Name the loads, especially any 6-week high or any load well above a usual day.
@@ -140,10 +141,16 @@ def _athlete(th: dict, zone_model: dict | None = None) -> dict:
             "hr_max": _r(th["max"]), "zones": _zone_text(zone_model)}
 
 
-def _ledger(d: dict) -> dict:
+def _nd(name: str) -> int:
+    """Miles to a tenth, other loads to the whole number."""
+    return 1 if name == "distance" else 0
+
+
+def _ledger(d: dict, name: str = "") -> dict:
+    nd = _nd(name)
     return {"vs_normal_pct": None if d["vs_normal"] is None else _r(d["vs_normal"] * 100),
-            "last_7_days_per_day": _r(d["fatigue"]), "normal_per_day": _r(d["fitness"]),
-            "load_today": _r(d["load"]), "flags": [f["text"] for f in d["flags"]]}
+            "last_7_days_per_day": _r(d["fatigue"], nd), "normal_per_day": _r(d["fitness"], nd),
+            "load_today": _r(d["load"], nd), "flags": [f["text"] for f in d["flags"]]}
 
 
 def _activity_line(a: dict) -> dict:
@@ -181,7 +188,7 @@ def brief_packet(today: dict, last_14_days: list[dict]) -> dict:
         "readiness": {"engine": {k: ready["engine"][k] for k in ("state", "reason")},
                       "legs": {k: ready["legs"][k] for k in ("state", "reason", "limiter")}},
         "rule_call": {k: today["call"][k] for k in ("call", "session", "detail", "why")},
-        "ledgers": {name: _ledger(d) for name, d in today["ledgers"].items()},
+        "ledgers": {name: _ledger(d, name) for name, d in today["ledgers"].items()},
         "week_so_far": {"start": week["start"], "activities": len(week["activities"]),
                         "distance_mi": _r(week["distance_mi"], 1), "gain_ft": _r(week["gain_ft"]),
                         "loss_ft": _r(week["loss_ft"])},
@@ -222,7 +229,7 @@ def analysis_packet(a: dict, thresholds: dict, ledgers_now: dict, today: date) -
             "minutes_above_8000ft": _r(a["minutes_above_8000ft"]),
             "cardio_estimated_without_hr": a["cardio_estimated"], "notes": a["notes"],
         },
-        "loads": {name: {"load": _r(l["load"]), "times_usual_day": _r(l["times_usual_day"], 1),
+        "loads": {name: {"load": _r(l["load"], _nd(name)), "times_usual_day": _r(l["times_usual_day"], 1),
                          "six_week_high": l["six_week_high"]} for name, l in a["loads"].items()},
         "segments": [{"label": label, "distance_mi": _r(s["distance_mi"], 2), "gain_ft": _r(s["gain_ft"]),
                       "loss_ft": _r(s["loss_ft"]), "avg_grade_pct": _r(s["avg_grade"], 1),
@@ -232,7 +239,7 @@ def analysis_packet(a: dict, thresholds: dict, ledgers_now: dict, today: date) -
                       "climb_load": _r(s["climb_load"]),
                       "descent_load": _r(s["descent_load"])}
                      for label, s in zip(segment_labels(segs), segs)],
-        "ledgers_now": {name: _ledger(d) for name, d in ledgers_now.items()},
+        "ledgers_now": {name: _ledger(d, name) for name, d in ledgers_now.items()},
     }
 
 

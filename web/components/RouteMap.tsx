@@ -27,23 +27,29 @@ export default function RouteMap({ lat, lon, colors, highlight }: Props) {
   const el = useRef<HTMLDivElement>(null);
   const map = useRef<import("maplibre-gl").Map | null>(null);
   const ready = useRef(false);
+  // The map loads asynchronously; draw() reads the latest props, not the first render's.
+  const latest = useRef({ colors, highlight });
+  latest.current = { colors, highlight };
 
   const features = () => ({
     type: "FeatureCollection" as const,
     features: lat.slice(1).map((_, i) => ({
       type: "Feature" as const,
-      properties: { color: colors[i + 1] },
+      properties: { color: latest.current.colors[i + 1] },
       geometry: { type: "LineString" as const, coordinates: [[lon[i], lat[i]], [lon[i + 1], lat[i + 1]]] },
     })),
   });
-  const highlighted = () => ({
-    type: "Feature" as const,
-    properties: {},
-    geometry: {
-      type: "LineString" as const,
-      coordinates: highlight ? lat.slice(highlight[0], highlight[1] + 1).map((la, i) => [lon[highlight[0] + i], la]) : [],
-    },
-  });
+  const highlighted = () => {
+    const hl = latest.current.highlight;
+    return {
+      type: "Feature" as const,
+      properties: {},
+      geometry: {
+        type: "LineString" as const,
+        coordinates: hl ? lat.slice(hl[0], hl[1] + 1).map((la, i) => [lon[hl[0] + i], la]) : [],
+      },
+    };
+  };
 
   useEffect(() => {
     let cancelled = false;

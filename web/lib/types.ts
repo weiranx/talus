@@ -55,8 +55,8 @@ export interface Today {
   date: string;
   checkin: { soreness: number; energy: number; pain: number } | null;
   readiness: {
-    engine: { state: State; detail: string };
-    legs: { state: State; detail: string; limiter: Ledger };
+    engine: { state: State; detail: string; reason: string };
+    legs: { state: State; detail: string; limiter: Ledger; reason: string };
   };
   call: { call: "go" | "modify" | "rest"; session: string; detail: string; why: string; source: string };
   ledgers: Record<Ledger, LedgerDay & { spark: { day: string; fitness: number; fatigue: number }[] }>;

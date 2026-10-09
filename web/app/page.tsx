@@ -34,7 +34,8 @@ export default async function TodayPage() {
       </header>
 
       <div className="row">
-        <section className="card dark" style={{ flex: "2 1 420px", padding: "22px 24px 18px" }}>
+        <div style={{ flex: "2 1 420px", minWidth: 0, display: "flex", flexDirection: "column", gap: 16 }}>
+        <section className="card dark" style={{ padding: "22px 24px 18px" }}>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
             <h2 className="label">Today&apos;s call</h2>
             <Pill tone={CALL_TONE[t.call.call]}>{CALL_TEXT[t.call.call]}</Pill>
@@ -44,9 +45,10 @@ export default async function TodayPage() {
           <div style={{ color: "#b9c6c0", fontSize: 14, maxWidth: 620 }}>Why: {t.call.why}</div>
           <div style={{ color: "#b9c6c0", fontSize: 12 }}>Rule-based call from your load data. The AI coach replaces it in a later milestone.</div>
         </section>
+        {t.checkin ? null : <CheckIn initial={null} />}
+        </div>
 
-        <div style={{ flex: "1 1 300px", minWidth: 0, display: "flex", flexDirection: "column", gap: 16 }}>
-        <section className="card" style={{ gap: 14 }}>
+        <section className="card" style={{ flex: "1 1 300px", gap: 14, alignSelf: "flex-start" }}>
           <h2 className="label">Readiness</h2>
           {(["engine", "legs"] as const).map((k, i) => (
             <div key={k} style={{ display: "flex", flexDirection: "column", gap: 14 }}>
@@ -61,8 +63,6 @@ export default async function TodayPage() {
             </div>
           ))}
         </section>
-        {t.checkin ? null : <CheckIn initial={null} />}
-        </div>
       </div>
 
       <div className="row">

@@ -119,3 +119,29 @@ def test_current_span_starts_after_the_last_gap():
     days = ledger.build(_steady(date(2026, 3, 1), 10) + _steady(date(2026, 9, 1), 5), until=date(2026, 9, 10))
     span = ledger.current_span(days)
     assert min(d.day for d in span) == date(2026, 9, 1)
+
+
+@pytest.mark.parametrize("short", [42, 60, 120])
+def test_extend_matches_a_full_build(short):
+    """Carrying stored days forward as rest days gives the same numbers and flags as rebuilding,
+    after a gap and once the current span is past its opening weeks."""
+    acts = {i: {"cardio": 60 + i % 5 * 20, "climb": 900 + i % 7 * 300, "descent": 1000} for i in range(0, 40, 2)}
+    acts |= {i: {"cardio": 90, "climb": 4000, "descent": 4500} for i in range(100, 100 + short, 3)}
+    full = days(acts, 100 + short + 30)
+    stored = days(acts, 100 + short)
+    until = START + timedelta(days=100 + short + 29)
+    tail = [d for d in stored if d.day >= stored[-1].day - timedelta(days=ledger.FITNESS_DAYS)]
+    ext = ledger.extend(tail, until)
+    want = [d for d in full if d.day > stored[-1].day]
+    key = lambda d: (d.day, d.ledger)
+    assert [(d.day, d.ledger, d.flags) for d in sorted(ext, key=key)] == \
+        [(d.day, d.ledger, d.flags) for d in sorted(want, key=key)]
+    for a, b in zip(sorted(ext, key=key), sorted(want, key=key)):
+        assert a.fitness == pytest.approx(b.fitness) and a.fatigue == pytest.approx(b.fatigue)
+
+
+def test_a_young_span_is_not_seeded_yet():
+    young = days({100: {"cardio": 50}, 0: {"cardio": 50}}, 120)
+    assert not ledger.seeded(young)
+    assert not ledger.seeded(days({100: {"cardio": 50}}, 141))
+    assert ledger.seeded(days({100: {"cardio": 50}}, 142))

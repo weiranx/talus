@@ -2,13 +2,16 @@
 
 from __future__ import annotations
 
+import functools
 import json
 import sqlite3
+import threading
+from contextlib import contextmanager
 from dataclasses import asdict
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from pathlib import Path
 
-from . import MODEL_VERSION
+from . import MODEL_VERSION, ledger
 from .ledger import LedgerDay
 from .models import ActivityScore, Thresholds
 from .sources.base import RawFile, RemoteActivity, WellnessDay
@@ -90,6 +93,11 @@ CREATE TABLE IF NOT EXISTS coach_log (
     usage TEXT,
     feedback INTEGER
 );
+CREATE TABLE IF NOT EXISTS ledger_state (
+    id INTEGER PRIMARY KEY CHECK (id = 1),
+    stale INTEGER NOT NULL,
+    model_version TEXT NOT NULL
+);
 CREATE TABLE IF NOT EXISTS setting (
     key TEXT PRIMARY KEY,
     value TEXT NOT NULL,
@@ -98,15 +106,62 @@ CREATE TABLE IF NOT EXISTS setting (
 """
 
 EXT = {"fit": "fit", "gpx": "gpx", "tcx": "tcx", "icu-streams": "json"}
+BUSY_TIMEOUT_S = 30
+
+# The API opens a Store per request on a thread pool. Writes within one process take this lock,
+# one per database file, so they queue instead of colliding; WAL lets reads run alongside them,
+# and the busy timeout covers a second process (the CLI) writing at the same time.
+_write_locks: dict[Path, threading.RLock] = {}
+_ready: set[Path] = set()
+_guard = threading.Lock()
+
+
+def _same(a: LedgerDay | None, b: LedgerDay) -> bool:
+    return (a is not None and a.flags == b.flags
+            and all(abs(x - y) <= 1e-9 * max(1.0, abs(y)) for x, y in
+                    ((a.load, b.load), (a.fitness, b.fitness), (a.fatigue, b.fatigue))))
+
+
+def _writes(method):
+    """Run a write method as one serialized transaction (see Store._write)."""
+    @functools.wraps(method)
+    def run(self, *args, **kwargs):
+        with self._write():
+            return method(self, *args, **kwargs)
+    return run
 
 
 class Store:
     def __init__(self, data_dir: str | Path):
         self.dir = Path(data_dir)
         self.dir.mkdir(parents=True, exist_ok=True)
-        self.db = sqlite3.connect(self.dir / "talus.db")
+        path = (self.dir / "talus.db").resolve()
+        self.db = sqlite3.connect(path, timeout=BUSY_TIMEOUT_S)
         self.db.row_factory = sqlite3.Row
-        self.db.executescript(SCHEMA)
+        with _guard:
+            self._lock = _write_locks.setdefault(path, threading.RLock())
+        if path not in _ready:
+            with self._write():
+                self.db.execute("PRAGMA journal_mode = WAL").fetchone()
+                self.db.executescript(SCHEMA)
+            _ready.add(path)
+
+    @contextmanager
+    def _write(self):
+        """One write transaction, serialized with every other writer in this process."""
+        with self._lock:
+            if self.db.in_transaction:  # already inside one of ours
+                yield self.db
+                return
+            # IMMEDIATE takes the write lock up front, so a read-then-write can't interleave with
+            # another process's write; the busy timeout waits for it rather than failing.
+            self.db.execute("BEGIN IMMEDIATE")
+            try:
+                yield self.db
+                self.db.commit()
+            except BaseException:
+                self.db.rollback()
+                raise
 
     # Athlete
     def thresholds(self) -> Thresholds | None:
@@ -116,6 +171,7 @@ class Store:
         return Thresholds(r["resting"], r["aet"], r["ant"], r["max"], r["sex"],
                           r["threshold_pace_s_per_mi"], r["source"])
 
+    @_writes
     def set_thresholds(self, th: Thresholds) -> None:
         self.db.execute(
             "INSERT OR REPLACE INTO athlete VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?)",
@@ -128,6 +184,7 @@ class Store:
     def settings(self) -> dict:
         return {r["key"]: json.loads(r["value"]) for r in self.db.execute("SELECT key, value FROM setting")}
 
+    @_writes
     def save_settings(self, values: dict) -> None:
         now = datetime.now().isoformat(timespec="seconds")
         self.db.executemany("INSERT OR REPLACE INTO setting VALUES (?, ?, ?)",
@@ -139,6 +196,7 @@ class Store:
         return self.db.execute("SELECT 1 FROM activity WHERE source = ? AND source_id = ?",
                                (source, source_id)).fetchone() is not None
 
+    @_writes
     def add(self, act: RemoteActivity, raw: RawFile) -> int:
         path = self.dir / "raw" / act.source / f"{act.source_id}.{EXT[raw.fmt]}"
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -171,6 +229,7 @@ class Store:
     def raw(self, row: sqlite3.Row) -> RawFile:
         return RawFile((self.dir / row["raw_path"]).read_bytes(), row["raw_fmt"])
 
+    @_writes
     def save_score(self, activity_id: int, score: ActivityScore) -> None:
         summary = asdict(score)
         segments = summary.pop("segments")
@@ -183,6 +242,7 @@ class Store:
             [(activity_id, i, g["kind"], g["start_s"], g["end_s"], g["distance_m"], g["gain_m"],
               g["loss_m"], g["avg_grade"], g["grade_band"], g["hike_share"]) for i, g in enumerate(segments)],
         )
+        self._ledgers_changed()
         self.db.commit()
 
     # Ledgers
@@ -198,23 +258,77 @@ class Store:
                         {"cardio": m["cardio_load"], "climb": m["climb_load"], "descent": m["descent_load"]}))
         return out
 
-    def save_ledgers(self, days: list[LedgerDay]) -> None:
-        """Ledgers are derived data: replace them whole so old and new model numbers never mix."""
-        self.db.execute("DELETE FROM daily_load")
+    # The daily ledgers are derived from activity scores and kept in daily_load. Anything that
+    # changes a score marks them stale; writers (sync, import, score, rescore) then refresh them,
+    # rewriting only from the earliest day that changed. Reads never write: they carry the stored
+    # days forward to today as rest days, or, while marked stale, build them in memory.
+    def _ledgers_changed(self) -> None:
+        self.db.execute("INSERT INTO ledger_state VALUES (1, 1, ?) ON CONFLICT (id) DO UPDATE SET stale = 1",
+                        (MODEL_VERSION,))
+
+    def _ledgers_stale(self) -> bool:
+        r = self.db.execute("SELECT stale, model_version FROM ledger_state WHERE id = 1").fetchone()
+        return r is None or bool(r["stale"]) or r["model_version"] != MODEL_VERSION
+
+    @_writes
+    def save_ledgers(self, days: list[LedgerDay], since: date | None = None) -> None:
+        """Replace the stored ledgers from `since` on (all of them by default)."""
+        start = (since or date.min).isoformat()
+        self.db.execute("DELETE FROM daily_load WHERE day >= ?", (start,))
         self.db.executemany(
             "INSERT INTO daily_load VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
             [(d.day.isoformat(), d.ledger, d.load, d.fitness, d.fatigue, d.form, json.dumps(d.flags),
-              MODEL_VERSION) for d in days],
+              MODEL_VERSION) for d in days if d.day.isoformat() >= start],
         )
-        self.db.commit()
+        self.db.execute("INSERT OR REPLACE INTO ledger_state VALUES (1, 0, ?)", (MODEL_VERSION,))
+
+    @_writes
+    def refresh_ledgers(self, until: date | None = None) -> date | None:
+        """Bring the stored ledgers up to date if a score changed. Returns the first day rewritten,
+        or None when nothing needed writing."""
+        if not self._ledgers_stale():
+            return None
+        days = ledger.build(self.scored_loads(), until)
+        old = {(d.day, d.ledger): d for d in self.ledger_days()}
+        if self.db.execute("SELECT 1 FROM daily_load WHERE model_version != ? LIMIT 1", (MODEL_VERSION,)).fetchone():
+            old = {}
+        new = {(d.day, d.ledger): d for d in days}
+        changed = [k[0] for k in old.keys() - new.keys()]
+        changed += [d.day for d in days if not _same(old.get((d.day, d.ledger)), d)]
+        first = min(changed, default=None)
+        if first is not None:
+            self.save_ledgers(days, since=first)
+        self.db.execute("INSERT OR REPLACE INTO ledger_state VALUES (1, 0, ?)", (MODEL_VERSION,))
+        return first
+
+    def ledgers(self, since: date | None = None, until: date | None = None) -> list[LedgerDay]:
+        """Daily ledgers from `since` through `until` (default today). Read-only."""
+        until = until or date.today()
+        days = None
+        if not self._ledgers_stale():
+            last = self.db.execute("SELECT max(day) FROM daily_load").fetchone()[0]
+            if last is None:
+                return []
+            # Enough stored history for extend() to match build(): a fitness window, plus the gap
+            # check that finds where the current span starts.
+            tail_from = date.fromisoformat(last) - timedelta(days=ledger.FITNESS_DAYS)
+            stored = self.ledger_days(min(since, tail_from) if since else None)
+            tail = [d for d in stored if d.day >= tail_from]
+            if ledger.seeded(tail) or date.fromisoformat(last) >= until:
+                days = stored + sorted(ledger.extend(tail, until), key=lambda d: (d.day, d.ledger))
+        if days is None:  # stale, or a span still in its opening weeks: build it, it's small
+            days = ledger.build(self.scored_loads(), until)
+        return [d for d in days if (since is None or d.day >= since) and d.day <= until]
 
     def ledger_days(self, since: date | None = None) -> list[LedgerDay]:
+        """The stored rows as last written; most callers want `ledgers`, which reaches today."""
         rows = self.db.execute("SELECT * FROM daily_load WHERE day >= ? ORDER BY day, ledger",
                                ((since or date.min).isoformat(),)).fetchall()
         return [LedgerDay(date.fromisoformat(r["day"]), r["ledger"], r["load"], r["fitness"], r["fatigue"],
                           json.loads(r["flags"])) for r in rows]
 
     # Daily health: the 10-second morning check-in
+    @_writes
     def save_checkin(self, day: date, soreness: int, energy: int, pain: int) -> None:
         self.db.execute("INSERT OR REPLACE INTO daily_health VALUES (?, ?, ?, ?, ?)",
                         (day.isoformat(), soreness, energy, pain, datetime.now().isoformat(timespec="seconds")))
@@ -225,6 +339,7 @@ class Store:
         return None if r is None else {"soreness": r["soreness"], "energy": r["energy"], "pain": r["pain"]}
 
     # Wellness: overnight HRV, resting HR and sleep from the watch platform, one row per morning
+    @_writes
     def save_wellness(self, days: list[WellnessDay]) -> None:
         now = datetime.now().isoformat(timespec="seconds")
         self.db.executemany(
@@ -239,6 +354,7 @@ class Store:
                 for r in rows}
 
     # Coach log: every call kept whole, so replies can be audited and prompts compared
+    @_writes
     def log_coach(self, mode: str, subject: str, prompt_version: str, packet_hash: str, packet: dict,
                   result) -> int:
         cur = self.db.execute(
@@ -268,6 +384,7 @@ class Store:
         n = len(ins)
         return (sum(ins) / n, sum(outs) / n, n) if n else (0.0, 0.0, 0)
 
+    @_writes
     def coach_feedback(self, log_id: int, rating: int | None) -> bool:
         cur = self.db.execute("UPDATE coach_log SET feedback = ? WHERE id = ?", (rating, log_id))
         self.db.commit()

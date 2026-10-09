@@ -73,6 +73,14 @@ Put an Anthropic API key in `.env` as `ANTHROPIC_API_KEY` to turn it on. Without
 - **Model:** `claude-opus-5-5` by default, with low effort for the brief and medium for analysis; set `TALUS_COACH_MODEL` to change it. Requests opt in to server-side fallback, so a declined request is re-run on Anthropic's recommended substitute.
 - **Log:** every call is stored whole in the `coach_log` table: packet, prompt version, model, reply, token usage, retries and your thumbs up or down.
 
+### Thresholds from your own runs
+
+`talus infer` estimates AnT, AeT and max HR from the last 180 days of runs, says how far to trust each one and which runs it came from. `--apply` saves AeT and AnT (resting and a higher max are kept); `talus thresholds` always overrides.
+
+- **AnT:** the best hour of heart rate, or the best 30 minutes less 3%. Without a hard sustained effort in the history it reads low, and says so.
+- **AeT:** the drift test read from ordinary runs. A steady, flat hour that drifts less than 5% in pace-to-heart-rate sets a floor; one that drifts more sets a ceiling. With no such run, 88% of AnT, marked provisional.
+- **Max:** the highest heart rate held for 5 seconds. A true max may be higher.
+
 Other commands: `talus import <files>` for FIT/GPX/TCX, `talus rescore` after changing thresholds or the model, `talus sync --source garmin` for the unofficial Garmin library (`uv sync --extra garmin`).
 
 ## Assumptions to check against real runs

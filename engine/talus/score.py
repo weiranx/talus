@@ -16,6 +16,7 @@ CLIMB_GRADE_PCT = 3.0
 MIN_SEGMENT_M = 400.0  # about a quarter mile
 ALTITUDE_EXPOSURE_M = m_from_ft(8000)
 HIKING_SPORTS = {"hiking", "walking", "hike", "walk"}
+MAX_GAIN_FT_PER_HOUR = 5000  # beyond a vertical-kilometer race pace: the elevation data is suspect
 
 
 def score(s: Streams, th: Thresholds) -> ActivityScore:
@@ -32,7 +33,8 @@ def score(s: Streams, th: Thresholds) -> ActivityScore:
     hike_share = float(np.sum(dt[moving & hiking]) / max(np.sum(dt[moving]), 1.0))
 
     if s.altitude is not None:
-        alt, threshold = elevation.clean(s.altitude, s.barometric)
+        alt, threshold, alt_notes = elevation.clean(s.altitude, s.barometric, s.time)
+        notes.extend(alt_notes)
         if not s.barometric:
             notes.append("GPS-only elevation: gain and loss are less reliable")
         gain, loss, _, _ = elevation.hysteresis(alt, threshold)
@@ -66,6 +68,10 @@ def score(s: Streams, th: Thresholds) -> ActivityScore:
         notes.append("No heart rate and no threshold pace: cardio load not scored")
 
     gain_ft, miles = ft(float(gain.sum())), mi(distance_m)
+    moving_h = float(np.sum(dt[moving])) / 3600
+    if moving_h > 0.25 and gain_ft / moving_h > MAX_GAIN_FT_PER_HOUR:
+        notes.append(f"{gain_ft / moving_h:,.0f} ft of gain per moving hour is not humanly possible: "
+                     "check this activity's elevation against the watch")
     return ActivityScore(
         distance_mi=miles,
         gain_ft=gain_ft,

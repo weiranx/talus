@@ -67,6 +67,7 @@ def main(argv: list[str] | None = None) -> None:
     args = p.parse_args(argv)
     if args.cmd == "serve":
         import uvicorn
+        Store(data_dir()).refresh_ledgers()  # once, so pages read stored ledgers from the start
         uvicorn.run("talus.api:app", host="127.0.0.1", port=args.port)
         return
     store = Store(data_dir())
@@ -274,8 +275,7 @@ def cmd_list(store: Store, args) -> None:
 
 
 def cmd_load(store: Store, args) -> None:
-    rebuild_ledgers(store)  # extends the ledgers through today, so rest days count
-    days = store.ledger_days(date.today() - timedelta(days=args.days - 1))
+    days = store.ledgers(date.today() - timedelta(days=args.days - 1))
     if not days:
         sys.exit("No ledger yet: set thresholds, then sync or import activities")
     latest = max(d.day for d in days)
@@ -285,7 +285,7 @@ def cmd_load(store: Store, args) -> None:
         print(f"  {d.ledger:8} last 7 days {ledger.describe_vs_normal(d.vs_normal):24} "
               f"(fitness {d.fitness:,.0f}, fatigue {d.fatigue:,.0f}, form {d.form:+,.0f})"
               + (f"  ! {flags}" if flags else ""))
-    history_days = len(store.ledger_days()) // len(ledger.LEDGERS)
+    history_days = len(store.ledgers()) // len(ledger.LEDGERS)
     if history_days < ledger.MIN_HISTORY_DAYS:
         print(f"  Thin history: flags start after {ledger.MIN_HISTORY_DAYS} days of data")
     print()
@@ -318,12 +318,12 @@ def cmd_demo(store: Store, args) -> None:
 
 
 def rebuild_ledgers(store: Store) -> None:
-    store.save_ledgers(ledger.build(store.scored_loads()))
+    store.refresh_ledgers()
 
 
 def usual_day_line(store: Store, row, r: ActivityScore) -> str:
     day = date.fromisoformat(row["start_time"][:10])
-    before = {d.ledger: d.fitness for d in store.ledger_days(day - timedelta(days=1)) if d.day == day - timedelta(days=1)}
+    before = {d.ledger: d.fitness for d in store.ledgers(day - timedelta(days=1)) if d.day == day - timedelta(days=1)}
     parts = []
     for name, load in (("cardio", r.cardio_load), ("climb", r.climb_load), ("descent", r.descent_load)):
         x = None if load is None else ledger.times_usual_day(load, before.get(name, 0.0))

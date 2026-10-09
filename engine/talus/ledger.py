@@ -84,25 +84,53 @@ def build(activities: list[tuple[date, dict[str, float | None]]], until: date | 
 
 
 def _run(loads: dict[date, dict[str, float]], start: date, end: date) -> list[LedgerDay]:
-    a_fit, a_fat = 1 / FITNESS_DAYS, 1 / FATIGUE_DAYS
     out: list[LedgerDay] = []
     seed_days = [start + timedelta(days=i) for i in range(min(FITNESS_DAYS, (end - start).days + 1))]
     for ledger in LEDGERS:
         # Seed both averages with the opening weeks' mean, so a history that starts mid-season
         # does not read as a huge ramp while the 42-day average warms up from zero.
-        fitness = fatigue = sum(loads.get(d, {}).get(ledger, 0.0) for d in seed_days) / len(seed_days)
+        seed = sum(loads.get(d, {}).get(ledger, 0.0) for d in seed_days) / len(seed_days)
         history: list[LedgerDay] = []
         day = start
         while day <= end:
-            load = loads.get(day, {}).get(ledger, 0.0)
-            fitness += (load - fitness) * a_fit
-            fatigue += (load - fatigue) * a_fat
-            today = LedgerDay(day, ledger, load, fitness, fatigue)
-            today.flags = _flags(today, history)
-            history.append(today)
+            history.append(_next(history, ledger, day, loads.get(day, {}).get(ledger, 0.0), seed))
             day += timedelta(days=1)
         out.extend(history)
     return out
+
+
+def _next(history: list[LedgerDay], ledger: str, day: date, load: float, seed: float = 0.0) -> LedgerDay:
+    fitness = history[-1].fitness if history else seed
+    fatigue = history[-1].fatigue if history else seed
+    today = LedgerDay(day, ledger, load, fitness + (load - fitness) / FITNESS_DAYS,
+                      fatigue + (load - fatigue) / FATIGUE_DAYS)
+    today.flags = _flags(today, history)
+    return today
+
+
+def extend(days: list[LedgerDay], until: date) -> list[LedgerDay]:
+    """Carry stored ledgers forward through `until` as rest days, matching what `build` would
+    write. `days` must hold at least the last FITNESS_DAYS days of the stored series, so the
+    flags see the same history, and the current span must be at least FITNESS_DAYS old: before
+    that, each new day still changes the opening-weeks seed (see `seeded`)."""
+    span = current_span(days)
+    out: list[LedgerDay] = []
+    for ledger in LEDGERS:
+        history = [d for d in span if d.ledger == ledger]
+        if not history:
+            continue
+        day = history[-1].day + timedelta(days=1)
+        while day <= until:
+            history.append(_next(history, ledger, day, 0.0))
+            out.append(history[-1])
+            day += timedelta(days=1)
+    return out
+
+
+def seeded(days: list[LedgerDay]) -> bool:
+    """Whether the current span is old enough that its seed no longer moves as days pass."""
+    span = current_span(days)
+    return bool(span) and (span[-1].day - span[0].day).days + 1 >= FITNESS_DAYS
 
 
 def current_span(days: list[LedgerDay]) -> list[LedgerDay]:

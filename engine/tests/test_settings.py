@@ -49,7 +49,7 @@ def test_thresholds_save_rescore_and_follow_the_cli_rules(tmp_path, monkeypatch)
     assert r.json() == {"ok": True, "rescored": 30}
     th = client.get("/api/settings").json()["thresholds"]
     assert (th["aet"], th["aet_provisional"]) == (141, True)  # 88% of 160
-    assert [z["text"] for z in th["zones"]] == ["under 141 bpm", "141 to 160 bpm", "over 160 bpm"]
+    assert [z["text"] for z in th["zones"]["list"]] == ["under 141 bpm", "141 to 160 bpm", "161 bpm and up"]
     after = client.get("/api/activities").json()[0]
     assert after["cardio_load"] != before["cardio_load"]  # same runs, new anchors
     client.put("/api/settings/thresholds", json={"resting": 50, "aet": 145, "ant": 160, "max": 175})

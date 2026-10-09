@@ -75,3 +75,4 @@ class ActivityScore:
     segments: list[Segment] = field(default_factory=list)
     notes: list[str] = field(default_factory=list)
     model_version: str = ""
+    hr_hist: dict[str, float] | None = None  # seconds at each whole bpm, for any display zone model

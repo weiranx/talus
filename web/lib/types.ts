@@ -37,6 +37,7 @@ export interface ActivitySummary {
   descent_load: number;
   cardio_estimated: boolean;
   zone_minutes: ZoneMinutes;
+  hr_zone_minutes: HrZoneMinutes | null;
   hike_share: number;
   notes: string[];
 }
@@ -51,6 +52,13 @@ export interface Thresholds {
 }
 
 export interface ZoneShare { minutes: ZoneMinutes; share: ZoneMinutes }
+
+// Zones chosen in Settings (3 or 5). Keys run z1..zN. ZoneMinutes above is the engine's own split:
+// z1 below AeT, z2 AeT to AnT, z3 above AnT, which the 80% easy target reads.
+export type HrZoneMinutes = Record<string, number>;
+export interface HrZoneShare { minutes: HrZoneMinutes; share: HrZoneMinutes }
+export interface ZoneInfo { zone: number; name: string; low: number | null; high: number | null; text: string }
+export interface ZoneModel { zones: 3 | 5; custom: boolean; list: ZoneInfo[] }
 
 export type SignalStatus = "ok" | "low" | "high" | "short" | "no_data" | "building";
 
@@ -73,13 +81,16 @@ export interface Today {
   ledgers: Record<Ledger, LedgerDay & { spark: { day: string; fitness: number; fatigue: number }[] }>;
   week: { start: string; activities: ActivitySummary[]; distance_mi: number; gain_ft: number; loss_ft: number };
   intensity_28d: ZoneShare;
+  zones_28d: HrZoneShare | null;
+  zone_model: ZoneModel | null;
   thresholds: Thresholds;
 }
 
 export interface LoadData {
   date: string;
   ledgers: Record<Ledger, { today: LedgerDay | null; series: LedgerDay[] }>;
-  intensity_by_week: (ZoneShare & { start: string })[];
+  intensity_by_week: (ZoneShare & { start: string; zones: HrZoneShare | null })[];
+  zone_model: ZoneModel | null;
   biggest_days: ActivitySummary[];
   thresholds: Thresholds | null;
   history: { since: string | null; gap: { from: string; to: string } | null };
@@ -98,6 +109,7 @@ export interface Segment {
   start_s: number;
   end_s: number;
   zone_minutes: ZoneMinutes | null;
+  hr_zone_minutes: HrZoneMinutes | null;
   climb_load: number;
   descent_load: number;
 }
@@ -113,6 +125,7 @@ export interface ActivityDetail extends Omit<ActivitySummary, "cardio_load" | "c
   minutes_above_8000ft: number;
   loads: Record<Ledger, UsualDay>;
   segments: Segment[];
+  zone_model: ZoneModel;
   streams: {
     time_s: number[];
     distance_mi: number[];
@@ -137,7 +150,11 @@ export interface CoachReply<T> {
 }
 
 // Settings. Keys stay in the engine's .env; the engine only says whether each one is set.
-export interface Zone { zone: 1 | 2 | 3; low: number | null; high: number | null; text: string }
+export interface ZoneSettings extends ZoneModel {
+  floors: number[];
+  derived: number[];
+  options: Record<"3" | "5", { derived: number[]; custom: number[] | null; names: string[] }>;
+}
 
 export interface SettingsThresholds {
   resting: number;
@@ -148,7 +165,7 @@ export interface SettingsThresholds {
   threshold_pace_s_per_mi: number | null;
   source: string;
   aet_provisional: boolean;
-  zones: Zone[];
+  zones: ZoneSettings;
   aerobic_gap: number;
 }
 

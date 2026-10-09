@@ -14,7 +14,7 @@ import numpy as np
 from fastapi import BackgroundTasks, FastAPI, HTTPException
 from pydantic import BaseModel, Field
 
-from . import cli, coach, explain, ledger, wellness
+from . import cli, coach, explain, ledger, wellness, zones
 from . import settings as app_settings
 from .config import data_dir, load_env
 from .models import Thresholds
@@ -61,7 +61,28 @@ def _history(store: Store) -> dict:
     return {"since": since, "gap": gap}
 
 
+def _zone_model(store: Store) -> dict | None:
+    th = store.thresholds()
+    return None if th is None else zones.model(th, store.settings().get("hr_zones"))
+
+
+def _display_minutes(m: dict, zm: dict | None) -> dict | None:
+    """Time in each display zone. Activities scored before the histogram existed fall back to the
+    engine split when that is the model in use; saving zone settings rescores, which fills it in."""
+    if zm is None:
+        return None
+    n = zm["zones"]
+    if m.get("hr_hist") is not None:
+        return zones.minutes(m["hr_hist"], zm["floors"])
+    if not sum(m["zone_minutes"].values()):
+        return {f"z{k + 1}": 0.0 for k in range(n)}
+    if n == 3 and not zm["custom"]:
+        return m["zone_minutes"]
+    return None
+
+
 def _activities(store: Store, since: date | None = None) -> list[dict]:
+    zm = _zone_model(store)
     out = []
     for row in store.activities():
         if not row["summary"] or not row["start_time"]:
@@ -75,7 +96,7 @@ def _activities(store: Store, since: date | None = None) -> list[dict]:
                     "device_name": row["device_name"], **{k: m[k] for k in (
                         "distance_mi", "gain_ft", "loss_ft", "effort_mi", "moving_time_s", "elapsed_time_s",
                         "cardio_load", "climb_load", "descent_load", "cardio_estimated", "zone_minutes",
-                        "hike_share", "notes")}})
+                        "hike_share", "notes")}, "hr_zone_minutes": _display_minutes(m, zm)})
     return out
 
 
@@ -88,9 +109,24 @@ def _thresholds(store: Store) -> dict | None:
 
 
 def _zone_share(acts: list[dict]) -> dict:
+    """The engine's split: z1 below AeT, z2 AeT to AnT, z3 above AnT. The 80% easy check reads z1."""
     total = {z: sum(a["zone_minutes"][z] for a in acts) for z in ("z1", "z2", "z3")}
     minutes = sum(total.values())
     return {"minutes": total, "share": {z: (v / minutes if minutes else 0.0) for z, v in total.items()}}
+
+
+def _display_share(acts: list[dict], zm: dict | None) -> dict | None:
+    """Time in each zone of the zone model chosen in Settings."""
+    if zm is None:
+        return None
+    keys = [f"z{k + 1}" for k in range(zm["zones"])]
+    total = {z: sum((a["hr_zone_minutes"] or {}).get(z, 0.0) for a in acts) for z in keys}
+    minutes = sum(total.values())
+    return {"minutes": total, "share": {z: (v / minutes if minutes else 0.0) for z, v in total.items()}}
+
+
+def _zone_model_json(zm: dict | None) -> dict | None:
+    return None if zm is None else {k: zm[k] for k in ("zones", "custom", "list")}
 
 
 @app.get("/api/today")
@@ -110,6 +146,8 @@ def today() -> dict:
     ready = readiness(now, checkin, overnight)
     week_start = day - timedelta(days=day.weekday())
     week = sorted(_activities(store, week_start), key=lambda a: a["start_time"])
+    last_28 = _activities(store, day - timedelta(days=27))
+    zm = _zone_model(store)
     return {
         "date": day.isoformat(),
         "checkin": checkin,
@@ -122,7 +160,9 @@ def today() -> dict:
         "week": {"start": week_start.isoformat(), "activities": week,
                  "distance_mi": sum(a["distance_mi"] for a in week),
                  "gain_ft": sum(a["gain_ft"] for a in week), "loss_ft": sum(a["loss_ft"] for a in week)},
-        "intensity_28d": _zone_share(_activities(store, day - timedelta(days=27))),
+        "intensity_28d": _zone_share(last_28),
+        "zones_28d": _display_share(last_28, zm),
+        "zone_model": _zone_model_json(zm),
         "thresholds": _thresholds(store),
     }
 
@@ -149,11 +189,12 @@ def load(days: int = 182) -> dict:
     series = ledger.current_span(store.ledger_days(day - timedelta(days=days - 1)))
     hist = _history(store)
     acts = _activities(store, day - timedelta(days=55))
+    zm = _zone_model(store)
     weeks = []
     for w in range(7, -1, -1):
         start = day - timedelta(days=day.weekday()) - timedelta(weeks=w)
         in_week = [a for a in acts if start.isoformat() <= a["day"] < (start + timedelta(days=7)).isoformat()]
-        weeks.append({"start": start.isoformat(), **_zone_share(in_week)})
+        weeks.append({"start": start.isoformat(), **_zone_share(in_week), "zones": _display_share(in_week, zm)})
     return {
         "date": day.isoformat(),
         "ledgers": {name: {"today": _ledger_json([d for d in series if d.ledger == name][-1], hist["since"])
@@ -162,6 +203,7 @@ def load(days: int = 182) -> dict:
                     for name in ledger.LEDGERS},
         "history": {"since": hist["since"] and hist["since"].isoformat(), "gap": hist["gap"]},
         "intensity_by_week": weeks,
+        "zone_model": _zone_model_json(zm),
         "biggest_days": sorted(acts, key=lambda a: a["effort_mi"], reverse=True)[:5],
         "thresholds": _thresholds(store),
     }
@@ -194,7 +236,9 @@ def activity(activity_id: int) -> dict:
                 "six_week_high": value is not None and bool(others) and value > max(others)}
 
     hr = streams.heart_rate
-    zone = None if hr is None else np.where(hr < th.aet, 1, np.where(hr <= th.ant, 2, 3))
+    zm = zones.model(th, store.settings().get("hr_zones"))
+    split = None if hr is None else np.where(hr < th.aet, 1, np.where(hr <= th.ant, 2, 3))
+    zone = None if hr is None else zones.indices(hr, zm["floors"])
     step = max(1, len(streams.time) // MAX_POINTS)
     idx = np.arange(0, len(streams.time), step)
 
@@ -205,19 +249,24 @@ def activity(activity_id: int) -> dict:
     segments = []
     for n, seg in enumerate(result.segments):
         sl = (streams.time >= seg.start_s) & (streams.time <= seg.end_s)
-        z = None if zone is None else {f"z{k}": float(np.sum(dt[sl & (zone == k)]) / 60) for k in (1, 2, 3)}
+        z = None if split is None else {f"z{k}": float(np.sum(dt[sl & (split == k)]) / 60) for k in (1, 2, 3)}
+        hz = None if zone is None else {f"z{k}": float(np.sum(dt[sl & (zone == k)]) / 60)
+                                        for k in range(1, zm["zones"] + 1)}
         segments.append({"index": n, "kind": seg.kind, "distance_mi": mi(seg.distance_m),
                          "gain_ft": ft(seg.gain_m), "loss_ft": ft(seg.loss_m), "avg_grade": seg.avg_grade,
                          "grade_band": seg.grade_band, "hike_share": seg.hike_share,
                          "time_s": seg.end_s - seg.start_s, "start_s": seg.start_s, "end_s": seg.end_s,
-                         "zone_minutes": z, "climb_load": seg.climb_load, "descent_load": seg.descent_load})
+                         "zone_minutes": z, "hr_zone_minutes": hz, "climb_load": seg.climb_load,
+                         "descent_load": seg.descent_load})
     return {
         "id": activity_id, "name": row["name"], "day": day.isoformat(), "start_time": row["start_time"],
         "source": row["source"], "device_name": row["device_name"], "sport": streams.sport,
         "distance_mi": result.distance_mi, "gain_ft": result.gain_ft, "loss_ft": result.loss_ft,
         "effort_mi": result.effort_mi, "moving_time_s": result.moving_time_s,
         "elapsed_time_s": result.elapsed_time_s, "hike_share": result.hike_share,
-        "zone_minutes": result.zone_minutes, "gain_by_band_ft": result.gain_by_band_ft,
+        "zone_minutes": result.zone_minutes, "zone_model": _zone_model_json(zm),
+        "hr_zone_minutes": zones.minutes(result.hr_hist, zm["floors"]) if hr is not None else None,
+        "gain_by_band_ft": result.gain_by_band_ft,
         "loss_by_band_ft": result.loss_by_band_ft, "longest_climb_ft": result.longest_climb_ft,
         "longest_descent_ft": result.longest_descent_ft, "minutes_above_8000ft": result.minutes_above_8000ft,
         "cardio_estimated": result.cardio_estimated, "notes": result.notes,
@@ -297,13 +346,6 @@ def coach_feedback(log_id: int, body: Feedback) -> dict:
 
 # Settings. Keys stay in .env: the engine reports whether each one is set, never its value.
 
-def _zones(th: Thresholds) -> list[dict]:
-    """The three intensity zones the scorer uses: under AeT, AeT to AnT, over AnT."""
-    return [{"zone": 1, "low": None, "high": th.aet, "text": f"under {th.aet:.0f} bpm"},
-            {"zone": 2, "low": th.aet, "high": th.ant, "text": f"{th.aet:.0f} to {th.ant:.0f} bpm"},
-            {"zone": 3, "low": th.ant, "high": None, "text": f"over {th.ant:.0f} bpm"}]
-
-
 INFER_DAYS = 180
 _inferred_cache: dict = {}
 
@@ -353,7 +395,7 @@ def get_settings() -> dict:
         "thresholds": None if th is None else {
             "resting": th.resting, "aet": th.aet, "ant": th.ant, "max": th.max, "sex": th.sex,
             "threshold_pace_s_per_mi": th.threshold_pace_s_per_mi, "source": th.source,
-            "aet_provisional": "provisional" in th.source, "zones": _zones(th),
+            "aet_provisional": "provisional" in th.source, "zones": _zone_settings(store, th),
             "aerobic_gap": (th.ant - th.aet) / th.ant},
         "inferred": _inferred_thresholds(store),
         "source": {
@@ -383,6 +425,47 @@ def get_settings() -> dict:
         "readiness": dict(zip(("sleep_need_h", "sleep_need_source"), wellness.sleep_need(saved))),
         "units": {"distance": "mi", "vert": "ft"},
     }
+
+
+def _zone_settings(store: Store, th: Thresholds) -> dict:
+    saved = store.settings().get("hr_zones")
+    zm = zones.model(th, saved)
+    custom = (saved or {}).get("custom") or {}
+    return {**_zone_model_json(zm), "floors": zm["floors"], "derived": zm["derived"],
+            "options": {str(n): {"derived": zones.derived_floors(th, n),
+                                 "custom": custom.get(str(n)) if zones.valid_floors(custom.get(str(n)) or [], n) else None,
+                                 "names": zones.NAMES[n]} for n in zones.NAMES}}
+
+
+class ZonesIn(BaseModel):
+    zones: int = Field(ge=3, le=5)
+    floors: list[int] | None = None  # None keeps any earlier edits for this model
+    reset: bool = False  # back to the floors derived from the thresholds
+
+
+@app.put("/api/settings/zones")
+def put_zones(body: ZonesIn) -> dict:
+    """Pick 3 or 5 zones and optionally set each zone's starting bpm. Loads don't change."""
+    if body.zones not in zones.NAMES:
+        raise HTTPException(422, "Choose 3 or 5 zones.")
+    if body.floors is not None and not zones.valid_floors(body.floors, body.zones):
+        raise HTTPException(422, f"Give {body.zones - 1} zone starts in bpm, each higher than the one before.")
+    store = get_store()
+    th = store.thresholds()
+    if th is None:
+        raise HTTPException(409, "Set heart rate thresholds first.")
+    saved = store.settings().get("hr_zones") or {}
+    custom = dict(saved.get("custom") or {})
+    if body.reset or body.floors == zones.derived_floors(th, body.zones):
+        custom.pop(str(body.zones), None)
+    elif body.floors is not None:
+        custom[str(body.zones)] = body.floors
+    store.save_settings({"hr_zones": {"zones": body.zones, "custom": custom}})
+    # Activities scored before the heart-rate histogram existed need one rescore to show any model.
+    rescored = 0
+    if any(r["summary"] and "hr_hist" not in json.loads(r["summary"]) for r in store.activities()):
+        rescored = cli.rescore(store, th, log=lambda _: None)
+    return {"ok": True, "rescored": rescored, "zones": _zone_settings(store, th)}
 
 
 class ThresholdsIn(BaseModel):

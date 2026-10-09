@@ -23,6 +23,7 @@ Single-user prototype. Milestones 1 to 5 are here: sync from intervals.icu, file
 | `engine/talus/api.py` | HTTP API the web app reads (`talus serve`) |
 | `engine/talus/settings.py` | Coach settings and model prices for the Settings screen |
 | `engine/talus/explain.py` | Tap-a-number explanations: the inputs, formula and arithmetic behind each number |
+| `engine/talus/zones.py` | 3- and 5-zone heart rate models for display |
 | `engine/talus/demo.py` | Ten weeks of sample training for trying the app |
 | `web/` | Next.js web app: Today, Load, Activities, Settings |
 | `engine/talus/store.py` | SQLite plus raw files kept on disk for rescoring |
@@ -69,6 +70,7 @@ The map uses free OpenFreeMap tiles; set `NEXT_PUBLIC_MAP_STYLE` to switch provi
 The Settings screen (`/settings`) edits what the engine stores in SQLite:
 
 - **Heart rate and zones:** resting, AeT, AnT and max, with the zones they make. Leave AeT blank for 88% of AnT, marked provisional. Saving rescores every activity. Estimates from `talus infer` show beside your numbers with their confidence and source runs; **Use these** fills the form for you to check and save.
+- **Heart rate zones:** 3 zones (below AeT, AeT to AnT, above AnT) or 5 (recovery under 90% of AeT, aerobic base up to AeT, tempo to halfway to AnT, threshold to AnT, above AnT), with each zone's starting bpm editable and a reset. Zones set time in zone on Today, Load and Activity and what the coach reads. Cardio load, readiness and the 80% target always use AeT and AnT, so switching zones never changes a load. Activities keep a 1-bpm heart-rate histogram (`hr_hist`), so a new zone model needs no rescore; activities scored before it are rescored once on the first zone save.
 - **Data source:** whether the intervals.icu key is set, activity count, the last sync (from here or the CLI) and **Sync now**.
 - **AI coach:** on or off, the coaching style, and the model for the brief and for workout analysis, with an estimated cost per call and per month (from your own token usage once the coach has run).
 - **Units:** miles and feet.

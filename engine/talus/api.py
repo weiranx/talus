@@ -7,14 +7,17 @@ miles and all vert is feet.
 from __future__ import annotations
 
 import json
+import os
 from datetime import date, timedelta
 
 import numpy as np
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel, Field
 
-from . import coach, ledger
+from . import cli, coach, ledger
+from . import settings as app_settings
 from .config import data_dir, load_env
+from .models import Thresholds
 from .parse import parse
 from .readiness import daily_call, readiness
 from .score import MAX_DT_S, score
@@ -204,15 +207,26 @@ def activity(activity_id: int) -> dict:
     }
 
 
+def _coach_settings(store: Store) -> dict:
+    saved = store.settings()
+    return {k: saved.get(k, v) for k, v in app_settings.defaults().items()}
+
+
 def _coach(store: Store, mode: str, subject: str, packet: dict, fallback: dict, refresh: bool) -> dict:
-    """Reuse the logged reply for the same packet and prompt version, so reloading a page doesn't
-    call the API again. Only API calls are logged; with no key the rules are shown as is."""
-    h = coach.packet_hash(packet)
+    """Reuse the logged reply for the same packet, model and prompt version, so reloading a page
+    doesn't call the API again. Only API calls are logged; with no key or the coach off, the rules
+    are shown as is."""
+    cfg = _coach_settings(store)
+    if not cfg["coach_enabled"]:
+        return {"source": "rules", "reply": fallback, "log_id": None, "feedback": None,
+                "fallback_reason": "off", "model": None}
+    model_id = cfg[f"{mode}_model"]
+    h = coach.packet_hash({**packet, "_model": model_id})
     row = None if refresh else store.coach_entry(mode, subject, coach.PROMPT_VERSION, h)
     if row is not None and not (row["fallback_reason"] or "").startswith("api_error"):
         return {"source": row["source"], "reply": json.loads(row["reply"]), "log_id": row["id"],
                 "feedback": row["feedback"], "fallback_reason": row["fallback_reason"], "model": row["model"]}
-    result = coach.run(mode, packet, fallback, coach_client())
+    result = coach.run(mode, packet, fallback, coach_client(), model_id)
     log_id = None
     if result.fallback_reason != "no_key":
         log_id = store.log_coach(mode, subject, coach.PROMPT_VERSION, h, packet, result)
@@ -253,3 +267,146 @@ def coach_feedback(log_id: int, body: Feedback) -> dict:
     if not get_store().coach_feedback(log_id, body.rating or None):
         raise HTTPException(404, "No such coach reply")
     return {"ok": True}
+
+
+# Settings. Keys stay in .env: the engine reports whether each one is set, never its value.
+
+def _zones(th: Thresholds) -> list[dict]:
+    """The three intensity zones the scorer uses: under AeT, AeT to AnT, over AnT."""
+    return [{"zone": 1, "low": None, "high": th.aet, "text": f"under {th.aet:.0f} bpm"},
+            {"zone": 2, "low": th.aet, "high": th.ant, "text": f"{th.aet:.0f} to {th.ant:.0f} bpm"},
+            {"zone": 3, "low": th.ant, "high": None, "text": f"over {th.ant:.0f} bpm"}]
+
+
+INFER_DAYS = 180
+_inferred_cache: dict = {}
+
+
+def _inferred_thresholds(store: Store) -> dict | None:
+    """Thresholds estimated from the last 180 days of runs (talus infer), with how far to trust
+    each one and the runs it came from. Parsing every run is slow, so the result is kept until
+    the set of activities changes."""
+    from .infer import infer
+
+    rows = [r for r in store.activities() if r["start_time"]]
+    key = (str(store.dir), tuple(sorted(r["id"] for r in rows)), date.today())
+    if key not in _inferred_cache:
+        _inferred_cache.clear()
+        acts, _ = cli.infer_inputs(store, INFER_DAYS)
+        r = infer(acts)
+        if not r["runs_with_hr"]:
+            _inferred_cache[key] = None
+        else:
+            info = {row["id"]: {"id": row["id"], "day": row["start_time"][:10], "name": row["name"]} for row in rows}
+            _inferred_cache[key] = {
+                "days": INFER_DAYS, "runs_with_hr": r["runs_with_hr"],
+                **{k: {"value": e.value, "confidence": e.confidence, "method": e.method,
+                       "activities": [info[i] for i in e.activities if i in info]}
+                   for k, e in ((k, r[k]) for k in ("aet", "ant", "max"))}}
+    return _inferred_cache[key]
+
+
+def _usage_estimate(store: Store, mode: str, model_id: str, calls_per_month: int) -> dict:
+    avg_in, avg_out, n = store.coach_usage(mode)
+    tokens = (avg_in, avg_out) if n else app_settings.TYPICAL_TOKENS[mode]
+    per_call = app_settings.cost_per_call(model_id, tokens)
+    return {"per_call": per_call, "per_month": None if per_call is None else per_call * calls_per_month,
+            "calls_per_month": calls_per_month, "from_log": n > 0}
+
+
+@app.get("/api/settings")
+def get_settings() -> dict:
+    store = get_store()
+    th = store.thresholds()
+    saved = store.settings()
+    cfg = _coach_settings(store)
+    acts = [r for r in store.activities() if r["start_time"]]
+    month_ago = (date.today() - timedelta(days=30)).isoformat()
+    analyses = sum(1 for r in acts if r["start_time"][:10] >= month_ago)
+    return {
+        "thresholds": None if th is None else {
+            "resting": th.resting, "aet": th.aet, "ant": th.ant, "max": th.max, "sex": th.sex,
+            "threshold_pace_s_per_mi": th.threshold_pace_s_per_mi, "source": th.source,
+            "aet_provisional": "provisional" in th.source, "zones": _zones(th),
+            "aerobic_gap": (th.ant - th.aet) / th.ant},
+        "inferred": _inferred_thresholds(store),
+        "source": {
+            "name": "intervals.icu",
+            "key_set": bool(os.environ.get("INTERVALS_API_KEY")),
+            "athlete_id": os.environ.get("INTERVALS_ATHLETE_ID") or None,
+            "garmin_fallback_set": bool(os.environ.get("GARMIN_EMAIL")),
+            "activities": len(acts),
+            "latest_activity": max((r["start_time"][:10] for r in acts), default=None),
+            "last_sync": saved.get("last_sync"),
+        },
+        "coach": {
+            "enabled": cfg["coach_enabled"],
+            "key_set": bool(os.environ.get("ANTHROPIC_API_KEY")),
+            "brief_model": cfg["brief_model"],
+            "analysis_model": cfg["analysis_model"],
+            "models": [{"id": k, "label": v["label"], "input": v["input"], "output": v["output"]}
+                       for k, v in app_settings.MODELS.items()],
+            # Per model, so the screen can show what a switch would cost. Brief: one a day. Analysis:
+            # one per activity, at the last 30 days' rate.
+            "estimate": {mode: {m: _usage_estimate(store, mode, m, calls) for m in app_settings.MODELS}
+                         for mode, calls in (("brief", 30), ("analysis", analyses))},
+        },
+        "units": {"distance": "mi", "vert": "ft"},
+    }
+
+
+class ThresholdsIn(BaseModel):
+    resting: float = Field(ge=25, le=120)
+    aet: float | None = Field(default=None, ge=60, le=230)
+    ant: float = Field(ge=80, le=240)
+    max: float = Field(ge=100, le=250)
+    sex: str = Field(default="male", pattern="^(male|female)$")
+    threshold_pace_s_per_mi: float | None = Field(default=None, ge=180, le=1800)
+
+
+@app.put("/api/settings/thresholds")
+def put_thresholds(body: ThresholdsIn) -> dict:
+    """Same rules as `talus thresholds`: no AeT means 88% of AnT, marked provisional. Every stored
+    activity is rescored, since zones and cardio load depend on these numbers."""
+    aet = body.aet if body.aet is not None else round(body.ant * 0.88)
+    if not body.resting < aet < body.ant <= body.max:
+        raise HTTPException(422, "Heart rates must rise in order: resting, then AeT, then AnT, then max.")
+    th = Thresholds(body.resting, aet, body.ant, body.max, body.sex, body.threshold_pace_s_per_mi,
+                    "manual" if body.aet is not None else "manual, AeT provisional (88% of AnT)")
+    store = get_store()
+    store.set_thresholds(th)
+    n = cli.rescore(store, th, log=lambda _: None)
+    return {"ok": True, "rescored": n}
+
+
+class CoachIn(BaseModel):
+    enabled: bool
+    brief_model: str
+    analysis_model: str
+
+
+@app.put("/api/settings/coach")
+def put_coach(body: CoachIn) -> dict:
+    for m in (body.brief_model, body.analysis_model):
+        if m not in app_settings.MODELS:
+            raise HTTPException(422, f"Unknown model {m}")
+    get_store().save_settings({"coach_enabled": body.enabled, "brief_model": body.brief_model,
+                               "analysis_model": body.analysis_model})
+    return {"ok": True}
+
+
+class SyncIn(BaseModel):
+    days: int = Field(default=30, ge=1, le=730)
+
+
+@app.post("/api/sync")
+def sync_now(body: SyncIn) -> dict:
+    store = get_store()
+    if not os.environ.get("INTERVALS_API_KEY"):
+        raise HTTPException(409, "Add INTERVALS_API_KEY to the engine's .env, then restart the engine.")
+    lines: list[str] = []
+    try:
+        result = cli.sync(store, "intervals", date.today() - timedelta(days=body.days), log=lines.append)
+    except Exception:
+        result = store.settings()["last_sync"]
+    return result | {"log": lines}

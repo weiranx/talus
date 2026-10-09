@@ -70,21 +70,27 @@ def main(argv: list[str] | None = None) -> None:
      "demo": cmd_demo}[args.cmd](store, args)
 
 
-def cmd_infer(store: Store, args) -> None:
-    from .infer import infer
-
-    since = (date.today() - timedelta(days=args.days)).isoformat()
+def infer_inputs(store: Store, days: int) -> tuple[list, dict[int, str]]:
+    """(activity id, streams) for every parseable activity in the last `days`, plus a label for each."""
+    since = (date.today() - timedelta(days=days)).isoformat()
     acts, names = [], {}
     for row in store.activities():
         if not row["start_time"] or row["start_time"][:10] < since:
             continue
         try:
             st = parse(store.raw(row))
-        except ValueError:
+        except Exception:  # a damaged or truncated file leaves that run out, not the whole estimate
             continue
         st.sport = st.sport or row["sport"]
         acts.append((row["id"], st))
         names[row["id"]] = f"{row['start_time'][:10]} {row['name'] or ''}".strip()
+    return acts, names
+
+
+def cmd_infer(store: Store, args) -> None:
+    from .infer import infer
+
+    acts, names = infer_inputs(store, args.days)
     r = infer(acts)
     print(f"{r['runs_with_hr']} runs with heart rate in the last {args.days} days.\n")
     for key, label in (("ant", "AnT"), ("aet", "AeT"), ("max", "Max HR")):
@@ -129,28 +135,47 @@ def cmd_thresholds(store: Store, args) -> None:
 
 
 def cmd_sync(store: Store, args) -> None:
-    if args.source == "intervals":
-        from .sources.intervals import IntervalsSource
-        source = IntervalsSource()
-    else:
-        from .sources.garmin import GarminSource
-        source = GarminSource()
     since = args.since or date.today() - timedelta(days=args.days)
-    remote = source.list_activities(since)
-    new = [a for a in remote if not store.has(a.source, a.source_id)]
-    print(f"{len(remote)} activities since {since}, {len(new)} new")
-    th = store.thresholds()
-    for act in sorted(new, key=lambda a: a.start_time):
-        raw = source.fetch(act)
-        if raw is None:
-            print(f"  skip {act.start_time:%Y-%m-%d} {act.name}: no file or streams")
-            continue
-        activity_id = store.add(act, raw)
-        _score_and_save(store, activity_id, raw, th, act.sport, label=f"{act.start_time:%Y-%m-%d} {act.name}")
-    if th is None:
-        print("Set thresholds with `talus thresholds` to score these activities.")
-    else:
-        rebuild_ledgers(store)
+    sync(store, args.source, since)
+
+
+def sync(store: Store, source_name: str, since: date, log=print) -> dict:
+    """Pull new activities since a day, score them and rebuild the ledgers. The outcome is kept as
+    the last sync, so the Settings screen can show it whether the sync ran here or from the web."""
+    started = datetime.now().isoformat(timespec="seconds")
+    result = {"at": started, "source": source_name, "since": since.isoformat(), "listed": 0, "new": 0,
+              "saved": 0, "error": None}
+    try:
+        if source_name == "intervals":
+            from .sources.intervals import IntervalsSource
+            source = IntervalsSource()
+        else:
+            from .sources.garmin import GarminSource
+            source = GarminSource()
+        remote = source.list_activities(since)
+        new = [a for a in remote if not store.has(a.source, a.source_id)]
+        result.update(listed=len(remote), new=len(new))
+        log(f"{len(remote)} activities since {since}, {len(new)} new")
+        th = store.thresholds()
+        for act in sorted(new, key=lambda a: a.start_time):
+            raw = source.fetch(act)
+            if raw is None:
+                log(f"  skip {act.start_time:%Y-%m-%d} {act.name}: no file or streams")
+                continue
+            activity_id = store.add(act, raw)
+            result["saved"] += 1
+            _score_and_save(store, activity_id, raw, th, act.sport,
+                            label=f"{act.start_time:%Y-%m-%d} {act.name}", log=log)
+        if th is None:
+            log("Set thresholds with `talus thresholds` to score these activities.")
+        else:
+            rebuild_ledgers(store)
+    except Exception as e:  # recorded for the Settings screen, then raised as before
+        result["error"] = f"{type(e).__name__}: {e}"
+        raise
+    finally:
+        store.save_settings({"last_sync": result})
+    return result
 
 
 def cmd_import(store: Store, args) -> None:
@@ -189,12 +214,17 @@ def cmd_score(store: Store, args) -> None:
 
 
 def cmd_rescore(store: Store, args) -> None:
-    th = _require_thresholds(store)
+    n = rescore(store, _require_thresholds(store))
+    print(f"Rescored {n} activities and rebuilt the ledgers")
+
+
+def rescore(store: Store, th: Thresholds, log=print) -> int:
     rows = store.activities()
     for row in rows:
-        _score_and_save(store, row["id"], store.raw(row), th, row["sport"], label=f"{row['start_time'][:10]} {row['name']}")
+        _score_and_save(store, row["id"], store.raw(row), th, row["sport"],
+                        label=f"{row['start_time'][:10]} {row['name']}", log=log)
     rebuild_ledgers(store)
-    print(f"Rescored {len(rows)} activities and rebuilt the ledgers")
+    return len(rows)
 
 
 def cmd_list(store: Store, args) -> None:
@@ -276,19 +306,19 @@ def _require_thresholds(store: Store) -> Thresholds:
     return th
 
 
-def _score_and_save(store, activity_id, raw, th, sport, label) -> None:
+def _score_and_save(store, activity_id, raw, th, sport, label, log=print) -> None:
     if th is None:
-        print(f"  saved {label}")
+        log(f"  saved {label}")
         return
     try:
         streams = parse(raw)
         streams.sport = streams.sport or sport
         result = score(streams, th)
     except ValueError as e:
-        print(f"  saved {label}, not scored: {e}")
+        log(f"  saved {label}, not scored: {e}")
         return
     store.save_score(activity_id, result)
-    print(f"  {label}: {result.distance_mi:.1f} mi, {result.gain_ft:,.0f} ft up, {result.loss_ft:,.0f} ft down")
+    log(f"  {label}: {result.distance_mi:.1f} mi, {result.gain_ft:,.0f} ft up, {result.loss_ft:,.0f} ft down")
 
 
 def report(r: ActivityScore) -> str:

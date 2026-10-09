@@ -21,8 +21,9 @@ Single-user prototype. Milestones 1 to 5 are here: sync from intervals.icu, file
 | `engine/talus/ledger.py` | Cardio, climb and descent ledgers: daily load, fitness (42-day), fatigue (7-day), form and flags |
 | `engine/talus/readiness.py` | Engine and legs readiness, and the rule-based call for the day |
 | `engine/talus/api.py` | HTTP API the web app reads (`talus serve`) |
+| `engine/talus/settings.py` | Coach settings and model prices for the Settings screen |
 | `engine/talus/demo.py` | Ten weeks of sample training for trying the app |
-| `web/` | Next.js web app: Today, Load, Activities |
+| `web/` | Next.js web app: Today, Load, Activities, Settings |
 | `engine/talus/store.py` | SQLite plus raw files kept on disk for rescoring |
 
 ## Getting started
@@ -62,6 +63,17 @@ TALUS_DATA_DIR=./demo-data uv run talus serve
 
 The map uses free OpenFreeMap tiles; set `NEXT_PUBLIC_MAP_STYLE` to switch providers. If tiles cannot load, the track still draws on a blank background.
 
+### Settings
+
+The Settings screen (`/settings`) edits what the engine stores in SQLite:
+
+- **Heart rate and zones:** resting, AeT, AnT and max, with the zones they make. Leave AeT blank for 88% of AnT, marked provisional. Saving rescores every activity. Estimates from `talus infer` show beside your numbers with their confidence and source runs; **Use these** fills the form for you to check and save.
+- **Data source:** whether the intervals.icu key is set, activity count, the last sync (from here or the CLI) and **Sync now**.
+- **AI coach:** on or off, and the model for the brief and for workout analysis, with an estimated cost per call and per month (from your own token usage once the coach has run).
+- **Units:** miles and feet.
+
+API keys stay in `.env`. The engine reports only whether each one is set and never sends a key to the browser.
+
 ### AI coach
 
 Put an Anthropic API key in `.env` as `ANTHROPIC_API_KEY` to turn it on. Without one, Today and Activity show rule-based text, labeled as such.
@@ -70,7 +82,7 @@ Put an Anthropic API key in `.env` as `ANTHROPIC_API_KEY` to turn it on. Without
 - **What it sees:** a compact packet of engine numbers (`talus/coach.py`): loads, readiness, check-in, the rule-based call, the last 14 days. No GPS, no names.
 - **Number check:** every number in a reply must appear in the packet, rounded no finer than it appears there (within 5% when rounded to tens or more). One retry, then the rule-based text.
 - **Who decides what:** in the brief the coach picks the call and explains it, but the session is always the engine's. The call may be more cautious than the rule-based one, never less, and a more cautious call gets the engine's easier session.
-- **Model:** `claude-opus-5-5` by default, with low effort for the brief and medium for analysis; set `TALUS_COACH_MODEL` to change it. Requests opt in to server-side fallback, so a declined request is re-run on Anthropic's recommended substitute.
+- **Model:** `claude-opus-5-5` by default, with low effort for the brief and medium for analysis; change it per mode in Settings (`TALUS_COACH_MODEL` sets the default). Opus and Sonnet requests opt in to server-side fallback, so a declined request is re-run on Anthropic's recommended substitute; Haiku 5.5 doesn't support it and runs without.
 - **Log:** every call is stored whole in the `coach_log` table: packet, prompt version, model, reply, token usage, retries and your thumbs up or down.
 
 ### Thresholds from your own runs

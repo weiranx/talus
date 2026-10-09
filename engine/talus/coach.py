@@ -321,17 +321,23 @@ def model() -> str:
     return os.environ.get("TALUS_COACH_MODEL", MODEL)
 
 
-def _ask(client: Client, mode: str, packet: dict, problems: list[str]) -> tuple[Any, dict | None]:
+def _fallback_args(model_id: str) -> dict:
+    """Haiku has no server-side fallback, so its requests go without it."""
+    if model_id.startswith("claude-haiku"):
+        return {}
+    return {"betas": [FALLBACK_BETA], "fallbacks": "default"}
+
+
+def _ask(client: Client, mode: str, packet: dict, problems: list[str], model_id: str) -> tuple[Any, dict | None]:
     cfg = MODES[mode]
     text = f"Mode: {'daily brief' if mode == 'brief' else 'workout analysis'}.\nData:\n" + json.dumps(packet, sort_keys=True)
     if problems:
         text += ("\n\nYour last reply was rejected. " + " ".join(problems)
                  + " Write it again using only numbers that appear in the data.")
     resp = client.beta.messages.create(
-        model=model(),
+        model=model_id,
         max_tokens=cfg["max_tokens"],
-        betas=[FALLBACK_BETA],
-        fallbacks="default",
+        **_fallback_args(model_id),
         system=[{"type": "text", "text": SYSTEM, "cache_control": {"type": "ephemeral"}}],
         output_config={"effort": cfg["effort"], "format": {"type": "json_schema", "schema": cfg["schema"]}},
         messages=[{"role": "user", "content": text}],
@@ -350,8 +356,9 @@ def _usage(resp: Any) -> dict | None:
                                               "cache_creation_input_tokens")}
 
 
-def run(mode: str, packet: dict, fallback: dict, client: Client | None) -> Result:
+def run(mode: str, packet: dict, fallback: dict, client: Client | None, model_id: str | None = None) -> Result:
     """Ask the coach, check every number, retry once, then fall back to rules."""
+    model_id = model_id or model()
     if client is None:
         return Result("rules", fallback, fallback_reason="no_key")
     import anthropic
@@ -361,9 +368,9 @@ def run(mode: str, packet: dict, fallback: dict, client: Client | None) -> Resul
     usage = None
     for attempt in (1, 2):
         try:
-            resp, reply = _ask(client, mode, packet, problems)
+            resp, reply = _ask(client, mode, packet, problems, model_id)
         except (anthropic.APIError, json.JSONDecodeError) as e:
-            return Result("rules", fallback, model(), attempt, f"api_error: {type(e).__name__}", rejected, usage)
+            return Result("rules", fallback, model_id, attempt, f"api_error: {type(e).__name__}", rejected, usage)
         usage = _usage(resp)
         if reply is None:
             return Result("rules", fallback, resp.model, attempt, str(resp.stop_reason), rejected, usage)

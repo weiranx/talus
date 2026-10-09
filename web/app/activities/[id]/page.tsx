@@ -1,4 +1,6 @@
 import Link from "next/link";
+import { Suspense } from "react";
+import CoachRead, { CoachReadPending } from "@/components/CoachRead";
 import ActivityView from "@/components/ActivityView";
 import EngineDown from "@/components/EngineDown";
 import { engine, EngineError } from "@/lib/api";
@@ -72,6 +74,10 @@ export default async function ActivityPage({ params }: { params: Promise<{ id: s
         </div>
         {a.notes.length ? <div className="muted">{a.notes.join(" ")}</div> : null}
       </section>
+
+      <Suspense fallback={<CoachReadPending />}>
+        <CoachRead id={id} />
+      </Suspense>
 
       <ActivityView a={a} />
 

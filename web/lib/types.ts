@@ -111,3 +111,15 @@ export interface ActivityDetail extends Omit<ActivitySummary, "cardio_load" | "c
     lon: number[] | null;
   };
 }
+
+export type Call = { call: "go" | "modify" | "rest"; session: string; detail: string; why: string };
+export interface AnalysisReply { job: string; off: string; cost: string; changes: string; takeaway: string }
+
+export interface CoachReply<T> {
+  source: "coach" | "rules";
+  reply: T;
+  log_id: number | null;
+  feedback: number | null;
+  fallback_reason: string | null;
+  model: string | null;
+}

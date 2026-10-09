@@ -6,7 +6,7 @@ Spec: [Talus product design spec](https://claude.ai/artifact/VVYacLk1UGmNoBB4ds3
 
 ## Status
 
-Single-user prototype. Milestones 1 to 4 are here: sync from intervals.icu, file import, per-activity scoring, the three load ledgers, and the web app's Today, Load and Activity screens. The AI coach comes next; until then Today shows a rule-based call.
+Single-user prototype. Milestones 1 to 5 are here: sync from intervals.icu, file import, per-activity scoring, the three load ledgers, the web app's Today, Load and Activity screens, and the AI coach (daily brief and workout analysis).
 
 ## Layout
 
@@ -61,6 +61,16 @@ TALUS_DATA_DIR=./demo-data uv run talus serve
 ```
 
 The map uses free OpenFreeMap tiles; set `NEXT_PUBLIC_MAP_STYLE` to switch providers. If tiles cannot load, the track still draws on a blank background.
+
+### AI coach
+
+Put an Anthropic API key in `.env` as `ANTHROPIC_API_KEY` to turn it on. Without one, Today and Activity show rule-based text, labeled as such.
+
+- **When it calls:** the daily brief when you open Today, the workout analysis the first time you open an activity. Replies are saved and reused until the input changes (new day, check-in, new activity), so reloads are free. Nothing runs in the background.
+- **What it sees:** a compact packet of engine numbers (`talus/coach.py`): loads, readiness, check-in, the rule-based call, the last 14 days. No GPS, no names.
+- **Number check:** every number in a reply must trace to the packet, rounded no finer than it appears there. One retry, then the rule-based text. The brief may be more cautious than the rule-based call, never less.
+- **Model:** `claude-opus-5-5` by default, with low effort for the brief and medium for analysis; set `TALUS_COACH_MODEL` to change it. Requests opt in to server-side fallback, so a declined request is re-run on Anthropic's recommended substitute.
+- **Log:** every call is stored whole in the `coach_log` table: packet, prompt version, model, reply, token usage, retries and your thumbs up or down.
 
 Other commands: `talus import <files>` for FIT/GPX/TCX, `talus rescore` after changing thresholds or the model, `talus sync --source garmin` for the unofficial Garmin library (`uv sync --extra garmin`).
 

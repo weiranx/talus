@@ -151,28 +151,49 @@ def cmd_account(accounts: Accounts, args) -> None:
         sys.exit(str(e))
 
 
-def infer_inputs(store: Store, days: int) -> tuple[list, dict[int, str]]:
-    """(activity id, streams) for every parseable activity in the last `days`, plus a label for each."""
+def _infer_rows(store: Store, days: int) -> list:
     since = (date.today() - timedelta(days=days)).isoformat()
-    acts, names = [], {}
-    for row in store.activities():
-        if not row["start_time"] or row["start_time"][:10] < since:
+    return [r for r in store.activities() if r["start_time"] and r["start_time"][:10] >= since]
+
+
+def fill_infer_features(store: Store, days: int) -> int:
+    """Read every run in the last `days` that has no stored inference features yet and store
+    them. Returns how many were read. Slow on a first run over months of history; after that
+    only new activities are read."""
+    from .infer import FEATURES_VERSION, features
+
+    have = store.infer_features(FEATURES_VERSION)
+    n = 0
+    for row in _infer_rows(store, days):
+        if row["id"] in have:
             continue
         try:
             st = parse(store.raw(row))
         except Exception:  # a damaged or truncated file leaves that run out, not the whole estimate
-            continue
-        st.sport = st.sport or row["sport"]
-        acts.append((row["id"], st))
-        names[row["id"]] = f"{row['start_time'][:10]} {row['name'] or ''}".strip()
-    return acts, names
+            f = None
+        else:
+            st.sport = st.sport or row["sport"]
+            f = features(st)
+        store.save_infer_features(row["id"], FEATURES_VERSION, f)
+        n += 1
+    return n
+
+
+def inferred(store: Store, days: int) -> tuple[dict, list, int]:
+    """The estimates from the stored features of runs in the last `days`, the rows in that
+    window, and how many of them have no features stored yet."""
+    from .infer import FEATURES_VERSION, combine
+
+    have = store.infer_features(FEATURES_VERSION)
+    rows = _infer_rows(store, days)
+    return combine([(r["id"], have[r["id"]]) for r in rows if r["id"] in have]), rows, \
+        sum(1 for r in rows if r["id"] not in have)
 
 
 def cmd_infer(store: Store, args) -> None:
-    from .infer import infer
-
-    acts, names = infer_inputs(store, args.days)
-    r = infer(acts)
+    fill_infer_features(store, args.days)
+    r, rows, _ = inferred(store, args.days)
+    names = {row["id"]: f"{row['start_time'][:10]} {row['name'] or ''}".strip() for row in rows}
     print(f"{r['runs_with_hr']} runs with heart rate in the last {args.days} days.\n")
     for key, label in (("ant", "AnT"), ("aet", "AeT"), ("max", "Max HR")):
         e = r[key]

@@ -188,11 +188,16 @@ export interface Estimate {
 
 // Thresholds the engine estimates from the last 180 days of runs (talus infer).
 export interface InferredThresholds {
+  /** "computing" while runs are still being read in the background; the estimates then cover
+   * only the runs read so far, and are missing until the first ones are. */
+  status: "ready" | "computing";
+  runs_read: number;
+  runs_total: number;
   days: number;
   runs_with_hr: number;
-  aet: Estimate;
-  ant: Estimate;
-  max: Estimate;
+  aet?: Estimate;
+  ant?: Estimate;
+  max?: Estimate;
 }
 
 export interface LastSync {

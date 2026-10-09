@@ -113,6 +113,13 @@ def test_sync_now_records_the_last_sync(tmp_path, monkeypatch):
     assert used[0]["api_key"] == "secret-key-1234" and used[0]["athlete_id"] == "i42"
 
 
+def _wait_for_inference():
+    from talus import api
+    for t in list(api._inferring.values()):
+        t.join(timeout=60)
+    assert not api._inferring
+
+
 def test_settings_show_thresholds_inferred_from_runs(tmp_path, monkeypatch):
     monkeypatch.setenv("TALUS_DATA_DIR", str(tmp_path / "data"))
     files = []
@@ -123,7 +130,13 @@ def test_settings_show_thresholds_inferred_from_runs(tmp_path, monkeypatch):
         files.append(str(f))
     cli.main(["thresholds", "--resting", "45", "--aet", "150", "--ant", "172", "--max", "190"])
     cli.main(["import", *files])
-    inf = sign_in().get("/api/settings").json()["inferred"]
+    client = sign_in()
+    inf = client.get("/api/settings").json()["inferred"]
+    # Nothing read yet: Settings answers at once and the runs are read in the background.
+    assert inf["status"] == "computing" and (inf["runs_read"], inf["runs_total"]) == (0, 3)
+    _wait_for_inference()
+    inf = client.get("/api/settings").json()["inferred"]
+    assert inf["status"] == "ready" and inf["runs_read"] == 3
     assert (inf["runs_with_hr"], inf["days"]) == (3, 180)
     assert inf["ant"]["value"] == round(150 * 0.97) and inf["ant"]["confidence"] == "medium"
     assert inf["ant"]["activities"][0].keys() == {"id", "day", "name"}
@@ -140,3 +153,38 @@ def test_sleep_need_is_saved_and_read_by_today(tmp_path, monkeypatch):
     assert client.get("/api/settings").json()["readiness"] == {"sleep_need_h": 7.0, "sleep_need_source": "saved"}
     assert client.get("/api/today").json()["wellness"]["sleep"]["need_h"] == 7.0
     assert client.put("/api/settings/readiness", json={"sleep_need_h": 2}).status_code == 422
+
+
+def test_inference_reads_each_run_once(tmp_path, monkeypatch):
+    """Stored per-run features mean Settings never re-reads files: not on later visits, not after a
+    threshold change. A new activity is the only one read."""
+    monkeypatch.setenv("TALUS_DATA_DIR", str(tmp_path / "data"))
+    files = []
+    for k in range(1, 4):
+        d = datetime.combine(date.today() - timedelta(days=k), datetime.min.time()) + timedelta(hours=14)
+        f = tmp_path / f"run{k}.gpx"
+        f.write_bytes(_gpx(d, n=2400, hr=150 + k))
+        files.append(f)
+    cli.main(["thresholds", "--resting", "45", "--aet", "150", "--ant", "172", "--max", "190"])
+    cli.main(["import", "--no-coach", *map(str, files[:2])])
+    client = sign_in()
+    client.get("/api/settings")
+    _wait_for_inference()
+
+    reads = []
+    real = cli.parse
+    monkeypatch.setattr(cli, "parse", lambda raw: reads.append(1) or real(raw))
+    assert client.get("/api/settings").json()["inferred"]["status"] == "ready"
+    th = {"resting": 45, "aet": 150, "ant": 170, "max": 190}
+    assert client.put("/api/settings/thresholds", json=th).status_code == 200
+    reads.clear()  # the rescore reads files to score them; inference must not
+    assert client.get("/api/settings").json()["inferred"]["status"] == "ready"
+    assert reads == []
+
+    cli.main(["import", "--no-coach", str(files[2])])
+    reads.clear()
+    assert client.get("/api/settings").json()["inferred"]["status"] == "computing"
+    _wait_for_inference()
+    assert len(reads) == 1
+    inf = client.get("/api/settings").json()["inferred"]
+    assert inf["status"] == "ready" and inf["runs_with_hr"] == 3

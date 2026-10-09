@@ -18,7 +18,7 @@ from dataclasses import dataclass, field
 
 import numpy as np
 
-from . import elevation
+from . import MODEL_VERSION, elevation
 from .models import Streams
 from .score import MAX_DT_S, MOVING_MPS
 
@@ -34,6 +34,9 @@ WARMUP_S = 10 * 60
 FLAT_GRADE_PCT = 3.0
 STEADY_CV = 0.06  # heart rate must stay this steady (sd / mean) for drift to mean anything
 PROVISIONAL_AET = 0.88
+# Bump when `features` changes, so stored ones are read again. Elevation cleanup feeds the drift
+# reading, so a new scoring model reads them again too.
+FEATURES_VERSION = f"1-{MODEL_VERSION}"
 HARD_SHARE_OF_MAX = 0.93  # a best hour this close to the highest HR recorded looks like a real hard effort
 MAX_SPIKE_S = 5  # a max must be held this long to count
 
@@ -111,14 +114,30 @@ def drift(s: Streams) -> tuple[float, float, float] | None:
     return avg_hr, (e1 - e2) / e1, float(np.sum(dt[use]) / 60)
 
 
+def features(s: Streams) -> dict | None:
+    """What one run contributes to the estimates, so it can be stored and never re-read: the
+    highest held HR, the best hour and half hour, and the drift reading. None for anything that
+    isn't a run, walk or hike with heart rate."""
+    if s.heart_rate is None or (s.sport or "generic").lower() not in FOOT_SPORTS:
+        return None
+    d = drift(s)
+    return {"max": held_max(s.heart_rate, s.time),
+            "hour": best_average(s.heart_rate, s.time, ANT_HOLD_S),
+            "half": best_average(s.heart_rate, s.time, ANT_SHORT_S),
+            "drift": None if d is None else list(d)}
+
+
 def infer(activities: list[tuple[int, Streams]]) -> dict:
     """Estimates for max, AnT and AeT from (activity id, streams) pairs, plus the zones they
     imply and the drift reading of every run that had one."""
-    foot = [(i, s) for i, s in activities
-            if s.heart_rate is not None and (s.sport or "generic").lower() in FOOT_SPORTS]
+    return combine([(i, features(s)) for i, s in activities])
 
-    maxes = [(i, held_max(s.heart_rate, s.time)) for i, s in foot]
-    maxes = [(i, v) for i, v in maxes if v is not None]
+
+def combine(runs: list[tuple[int, dict | None]]) -> dict:
+    """The estimates from each run's stored `features`."""
+    foot = [(i, f) for i, f in runs if f is not None]
+
+    maxes = [(i, f["max"]) for i, f in foot if f["max"] is not None]
     if maxes:
         top_id, top = max(maxes, key=lambda x: x[1])
         mx = Estimate(round(top), "medium" if len(foot) >= 10 else "low",
@@ -127,10 +146,9 @@ def infer(activities: list[tuple[int, Streams]]) -> dict:
         mx = Estimate(None, "none", "no runs with heart rate")
 
     efforts = []
-    for i, s in foot:
-        hour = best_average(s.heart_rate, s.time, ANT_HOLD_S)
-        half = best_average(s.heart_rate, s.time, ANT_SHORT_S)
-        cands = [v for v in (hour, None if half is None else half * ANT_SHORT_FACTOR) if v is not None]
+    for i, f in foot:
+        cands = [v for v in (f["hour"], None if f["half"] is None else f["half"] * ANT_SHORT_FACTOR)
+                 if v is not None]
         if cands:
             efforts.append((i, max(cands)))
     if efforts:
@@ -146,11 +164,8 @@ def infer(activities: list[tuple[int, Streams]]) -> dict:
     else:
         ant = Estimate(None, "none", "no run with 30 min of heart rate")
 
-    drifts = []
-    for i, s in foot:
-        d = drift(s)
-        if d is not None:
-            drifts.append(Drift(i, round(d[0], 1), round(d[1], 4), round(d[2], 1)))
+    drifts = [Drift(i, round(f["drift"][0], 1), round(f["drift"][1], 4), round(f["drift"][2], 1))
+              for i, f in foot if f["drift"] is not None]
     steady = [d for d in drifts if d.decoupling < DRIFT_MAX and (ant.value is None or d.avg_hr < ant.value)]
     drifted = [d for d in drifts if d.decoupling >= DRIFT_MAX]
     if steady:

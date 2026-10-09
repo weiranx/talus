@@ -257,3 +257,48 @@ def test_upload_files_zip_batches_and_health_export(tmp_path, monkeypatch):
     assert w["hrv"] == 61 and w["resting_hr"] == 50  # a watch's night is never replaced
     sources = client.get("/api/settings").json()["sources"]
     assert sources["upload"]["last_import"]["source"] == "apple_health"
+
+
+def _tcx(day: str, hr: int = 145, n: int = 600) -> str:
+    pts = "".join(
+        f"<Trackpoint><Time>{day}T15:{i // 60:02d}:{i % 60:02d}Z</Time><Position><LatitudeDegrees>{37 + i * 0.00003:.6f}"
+        f"</LatitudeDegrees><LongitudeDegrees>-118.0</LongitudeDegrees></Position><AltitudeMeters>{2000 + i * 0.3:.1f}"
+        f"</AltitudeMeters><DistanceMeters>{i * 3.3:.1f}</DistanceMeters><HeartRateBpm><Value>{hr}</Value></HeartRateBpm>"
+        "</Trackpoint>" for i in range(n))
+    return ('<?xml version="1.0"?><TrainingCenterDatabase xmlns="http://www.garmin.com/xmlschemas/TrainingCenterDatabase/v2">'
+            f'<Activities><Activity Sport="Running"><Lap><Track>{pts}</Track></Lap></Activity></Activities></TrainingCenterDatabase>')
+
+
+def test_healthkit_endpoint_for_the_ios_app(tmp_path, monkeypatch):
+    monkeypatch.setenv("TALUS_DATA_DIR", str(tmp_path / "data"))
+    cli.main(["thresholds", "--resting", "45", "--ant", "172", "--max", "190"])
+    client = sign_in()
+    client.post("/api/import?name=run.gpx", content=_gpx().replace(b"2026-10-01", b"2026-10-05"))
+    store = Store(cli.default_user_dir(Accounts(data_dir())))
+    store.db.execute("UPDATE activity SET start_time = '2026-10-05T08:00:00'")
+    store.db.commit()
+    store.save_wellness([WellnessDay("intervals", date(2026, 10, 2), hrv=61, resting_hr=50, sleep_s=25000)])
+
+    body = {
+        "workouts": [
+            {"uuid": "A1", "sport": "trail_run", "name": "Ridge", "start": "2026-10-01T08:00:00-07:00",
+             "end": "2026-10-01T08:10:00-07:00", "device_name": "Apple Watch", "tcx": _tcx("2026-10-01")},
+            # The run already uploaded as a file, now from HealthKit too.
+            {"uuid": "A2", "sport": "run", "start": "2026-10-05T08:00:30-07:00", "end": "2026-10-05T08:10:00-07:00",
+             "tcx": _tcx("2026-10-05")},
+            {"uuid": "A3", "sport": "walk", "start": "2026-10-06T08:00:00-07:00", "end": "2026-10-06T08:10:00-07:00",
+             "tcx": "<TrainingCenterDatabase/>"},
+        ],
+        "wellness": [{"day": "2026-10-02", "hrv_sdnn_ms": 48.2, "resting_hr": 47, "sleep_s": 26400},
+                     {"day": "2026-10-03", "hrv_sdnn_ms": 51.0, "resting_hr": 46, "sleep_s": 27000}],
+    }
+    r = client.post("/api/import/healthkit", json=body).json()
+    assert (r["workouts_added"], r["workouts_skipped"], r["wellness_days"]) == (1, 2, 2)
+    assert client.post("/api/import/healthkit", json=body).json()["workouts_added"] == 0  # re-upload
+
+    row = [a for a in store.activities() if a["source"] == "healthkit"][0]
+    assert (row["source_id"], row["sport"], row["start_time"], row["name"]) == ("A1", "trail_running", "2026-10-01T08:00:00", "Ridge")
+    w = store.wellness(date(2026, 10, 2), date(2026, 10, 3))
+    assert w[date(2026, 10, 2)]["hrv"] == 61  # the watch's night stays
+    assert w[date(2026, 10, 3)] == {"hrv": None, "resting_hr": 46, "sleep_s": 27000, "sleep_score": None}
+    assert client.post("/api/import/healthkit", json={"workouts": [{"uuid": "x", "sport": "swim"}]}).status_code == 422

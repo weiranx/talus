@@ -133,3 +133,72 @@ export interface CoachReply<T> {
   fallback_reason: string | null;
   model: string | null;
 }
+
+// Settings. Keys stay in the engine's .env; the engine only says whether each one is set.
+export interface Zone { zone: 1 | 2 | 3; low: number | null; high: number | null; text: string }
+
+export interface SettingsThresholds {
+  resting: number;
+  aet: number;
+  ant: number;
+  max: number;
+  sex: "male" | "female";
+  threshold_pace_s_per_mi: number | null;
+  source: string;
+  aet_provisional: boolean;
+  zones: Zone[];
+  aerobic_gap: number;
+}
+
+export type Confidence = "high" | "medium" | "low" | "provisional" | "none";
+
+export interface Estimate {
+  value: number | null;
+  confidence: Confidence;
+  method: string;
+  activities: { id: number; day: string; name: string | null }[];
+}
+
+// Thresholds the engine estimates from the last 180 days of runs (talus infer).
+export interface InferredThresholds {
+  days: number;
+  runs_with_hr: number;
+  aet: Estimate;
+  ant: Estimate;
+  max: Estimate;
+}
+
+export interface LastSync {
+  at: string;
+  source: string;
+  since: string;
+  listed: number;
+  new: number;
+  saved: number;
+  error: string | null;
+}
+
+export interface CostEstimate { per_call: number | null; per_month: number | null; calls_per_month: number; from_log: boolean }
+
+export interface Settings {
+  thresholds: SettingsThresholds | null;
+  inferred: InferredThresholds | null;
+  source: {
+    name: string;
+    key_set: boolean;
+    athlete_id: string | null;
+    garmin_fallback_set: boolean;
+    activities: number;
+    latest_activity: string | null;
+    last_sync: LastSync | null;
+  };
+  coach: {
+    enabled: boolean;
+    key_set: boolean;
+    brief_model: string;
+    analysis_model: string;
+    models: { id: string; label: string; input: number; output: number }[];
+    estimate: { brief: Record<string, CostEstimate>; analysis: Record<string, CostEstimate> };
+  };
+  units: { distance: "mi"; vert: "ft" };
+}

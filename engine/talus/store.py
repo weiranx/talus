@@ -90,6 +90,11 @@ CREATE TABLE IF NOT EXISTS coach_log (
     usage TEXT,
     feedback INTEGER
 );
+CREATE TABLE IF NOT EXISTS setting (
+    key TEXT PRIMARY KEY,
+    value TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
 """
 
 EXT = {"fit": "fit", "gpx": "gpx", "tcx": "tcx", "icu-streams": "json"}
@@ -117,6 +122,16 @@ class Store:
             (th.resting, th.aet, th.ant, th.max, th.sex, th.threshold_pace_s_per_mi, th.source,
              datetime.now().isoformat(timespec="seconds")),
         )
+        self.db.commit()
+
+    # Settings: small JSON values by key. Keys and secrets never go here; they stay in .env.
+    def settings(self) -> dict:
+        return {r["key"]: json.loads(r["value"]) for r in self.db.execute("SELECT key, value FROM setting")}
+
+    def save_settings(self, values: dict) -> None:
+        now = datetime.now().isoformat(timespec="seconds")
+        self.db.executemany("INSERT OR REPLACE INTO setting VALUES (?, ?, ?)",
+                            [(k, json.dumps(v), now) for k, v in values.items()])
         self.db.commit()
 
     # Activities
@@ -239,6 +254,19 @@ class Store:
         return self.db.execute(
             "SELECT * FROM coach_log WHERE mode = ? AND subject = ? AND prompt_version = ? AND packet_hash = ?"
             " ORDER BY id DESC LIMIT 1", (mode, subject, prompt_version, packet_hash)).fetchone()
+
+    def coach_usage(self, mode: str, last: int = 50) -> tuple[float, float, int]:
+        """Average input and output tokens over the last coach calls in this mode that reached the API."""
+        rows = self.db.execute("SELECT usage FROM coach_log WHERE mode = ? AND usage IS NOT NULL AND usage != 'null'"
+                               " ORDER BY id DESC LIMIT ?", (mode, last)).fetchall()
+        ins, outs = [], []
+        for r in rows:
+            u = json.loads(r["usage"])
+            ins.append(sum(u.get(k) or 0 for k in ("input_tokens", "cache_read_input_tokens",
+                                                   "cache_creation_input_tokens")))
+            outs.append(u.get("output_tokens") or 0)
+        n = len(ins)
+        return (sum(ins) / n, sum(outs) / n, n) if n else (0.0, 0.0, 0)
 
     def coach_feedback(self, log_id: int, rating: int | None) -> bool:
         cur = self.db.execute("UPDATE coach_log SET feedback = ? WHERE id = ?", (rating, log_id))

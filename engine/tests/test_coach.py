@@ -161,7 +161,8 @@ def test_coach_reply_is_logged_reused_and_rated(tmp_path, monkeypatch):
     assert client.get("/api/coach/brief").json()["feedback"] == 1
     assert client.post("/api/coach/feedback/9999", json={"rating": 1}).status_code == 404
     row = api.get_store().coach_entry("brief", t["date"], coach.PROMPT_VERSION, coach.packet_hash(
-        json.loads(api.get_store().db.execute("SELECT packet FROM coach_log").fetchone()[0])))
+        {**json.loads(api.get_store().db.execute("SELECT packet FROM coach_log").fetchone()[0]),
+         "_model": coach.model()}))
     assert json.loads(row["packet"])["rule_call"]["call"] == t["call"]["call"]
     assert json.loads(row["usage"])["input_tokens"] == 900
 

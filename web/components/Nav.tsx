@@ -7,6 +7,7 @@ const LINKS = [
   { href: "/", label: "Today" },
   { href: "/load", label: "Load" },
   { href: "/activities", label: "Activities" },
+  { href: "/settings", label: "Settings" },
 ];
 
 export default function Nav() {

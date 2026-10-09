@@ -49,10 +49,21 @@ def main(argv: list[str] | None = None) -> None:
     ld = sub.add_parser("load", help="cardio, climb and descent ledgers: today and recent days")
     ld.add_argument("--days", type=int, default=14)
 
+    dm = sub.add_parser("demo", help="fill an empty data dir with 10 weeks of sample training")
+    dm.add_argument("--weeks", type=int, default=10)
+
+    sv = sub.add_parser("serve", help="run the engine API for the web app")
+    sv.add_argument("--port", type=int, default=8000)
+
     args = p.parse_args(argv)
+    if args.cmd == "serve":
+        import uvicorn
+        uvicorn.run("talus.api:app", host="127.0.0.1", port=args.port)
+        return
     store = Store(data_dir())
     {"thresholds": cmd_thresholds, "sync": cmd_sync, "import": cmd_import, "score": cmd_score,
-     "rescore": cmd_rescore, "list": cmd_list, "load": cmd_load}[args.cmd](store, args)
+     "rescore": cmd_rescore, "list": cmd_list, "load": cmd_load,
+     "demo": cmd_demo}[args.cmd](store, args)
 
 
 def cmd_thresholds(store: Store, args) -> None:
@@ -176,6 +187,22 @@ def cmd_load(store: Store, args) -> None:
         flags = ", ".join(f"{k} {f}" for k, v in row.items() for f in v.flags)
         print(f"{day}  {row['cardio'].load:6,.0f}  {row['climb'].load:6,.0f}  {row['descent'].load:7,.0f}  {flags}")
     print("\nLoads: cardio 100 = 1 hour at threshold HR; climb and descent 1 = one foot on a moderate grade.")
+
+
+def cmd_demo(store: Store, args) -> None:
+    from . import demo
+    if any(row["source"] != "demo" for row in store.activities()):
+        sys.exit(f"{store.dir} holds real activities. Point TALUS_DATA_DIR at an empty folder for the demo.")
+    if store.thresholds() is None:
+        store.set_thresholds(Thresholds(45, 150, 172, 190, source="demo athlete"))
+    th = store.thresholds()
+    for start, name, data in demo.sessions(date.today(), args.weeks):
+        raw = RawFile(data, "gpx")
+        act = RemoteActivity(source="demo", source_id=f"{start:%Y%m%d}", start_time=start, name=name,
+                             sport="hiking" if "hike" in name.lower() else "running")
+        _score_and_save(store, store.add(act, raw), raw, th, act.sport, label=f"{start:%Y-%m-%d} {name}")
+    rebuild_ledgers(store)
+    print(f"Demo data in {store.dir}. Run `talus serve` and open the web app.")
 
 
 def rebuild_ledgers(store: Store) -> None:

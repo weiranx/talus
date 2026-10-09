@@ -57,6 +57,13 @@ CREATE TABLE IF NOT EXISTS daily_load (
     model_version TEXT NOT NULL,
     PRIMARY KEY (day, ledger)
 );
+CREATE TABLE IF NOT EXISTS daily_health (
+    day TEXT PRIMARY KEY,
+    soreness INTEGER,
+    energy INTEGER,
+    pain INTEGER,
+    updated_at TEXT NOT NULL
+);
 """
 
 EXT = {"fit": "fit", "gpx": "gpx", "tcx": "tcx", "icu-streams": "json"}
@@ -165,3 +172,13 @@ class Store:
                                ((since or date.min).isoformat(),)).fetchall()
         return [LedgerDay(date.fromisoformat(r["day"]), r["ledger"], r["load"], r["fitness"], r["fatigue"],
                           json.loads(r["flags"])) for r in rows]
+
+    # Daily health: the 10-second morning check-in
+    def save_checkin(self, day: date, soreness: int, energy: int, pain: int) -> None:
+        self.db.execute("INSERT OR REPLACE INTO daily_health VALUES (?, ?, ?, ?, ?)",
+                        (day.isoformat(), soreness, energy, pain, datetime.now().isoformat(timespec="seconds")))
+        self.db.commit()
+
+    def checkin(self, day: date) -> dict | None:
+        r = self.db.execute("SELECT * FROM daily_health WHERE day = ?", (day.isoformat(),)).fetchone()
+        return None if r is None else {"soreness": r["soreness"], "energy": r["energy"], "pain": r["pain"]}

@@ -200,5 +200,6 @@ export interface Settings {
     models: { id: string; label: string; input: number; output: number }[];
     estimate: { brief: Record<string, CostEstimate>; analysis: Record<string, CostEstimate> };
   };
+  readiness: { sleep_need_h: number; sleep_need_source: "saved" | "env" | "default" };
   units: { distance: "mi"; vert: "ft" };
 }

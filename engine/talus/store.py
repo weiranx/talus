@@ -238,6 +238,11 @@ class Store:
         self.db.commit()
         return activity_id
 
+    @_writes
+    def set_start_time(self, activity_id: int, start: datetime) -> None:
+        self.db.execute("UPDATE activity SET start_time = ? WHERE id = ?", (start.isoformat(), activity_id))
+        self._ledgers_changed()
+
     def activity(self, activity_id: int) -> sqlite3.Row | None:
         return self.db.execute("SELECT * FROM activity WHERE id = ?", (activity_id,)).fetchone()
 

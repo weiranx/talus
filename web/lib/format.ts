@@ -40,3 +40,12 @@ export function ledgerBadge(d: { flags: { key: string; text: string }[]; vs_norm
   if (d.vs_normal < -0.1) return { text: "Recovering", tone: "neutral" } as const;
   return { text: "Steady", tone: "good" } as const;
 }
+
+// Light to dark: zone 1 easiest. The 3-zone ramp matches the --z1..--z3 colors.
+const ZONE_RAMPS: Record<number, string[]> = {
+  3: ["#a9bdb5", "#52605a", "#15211d"],
+  5: ["#c4d2cb", "#93a9a0", "#68796f", "#3c4842", "#15211d"],
+};
+
+export const zoneColors = (n: number) => ZONE_RAMPS[n] ?? ZONE_RAMPS[3];
+export const zoneKeys = (n: number) => Array.from({ length: n }, (_, i) => `z${i + 1}`);

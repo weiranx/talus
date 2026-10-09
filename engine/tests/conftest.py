@@ -34,6 +34,13 @@ def make_streams(legs, hr=140.0, cadence=165.0, barometric=True, noise_m=0.0, se
     )
 
 
+@pytest.fixture(autouse=True)
+def no_real_coach(monkeypatch):
+    """Never call the Claude API from tests, even with a key in .env. Tests that want the coach
+    patch in a fake client."""
+    from talus import api
+    monkeypatch.setattr(api, "coach_client", lambda: None)
+
 
 OWNER = {"email": "owner@example.com", "password": "correct horse battery"}
 

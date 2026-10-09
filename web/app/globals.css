@@ -98,6 +98,11 @@ tr.hl td { background: #fff7ec; }
 code { font-family: var(--mono); font-size: 13px; background: var(--bg); padding: 1px 5px; border-radius: 4px; }
 .zone-list { display: flex; flex-direction: column; border-top: 1px solid var(--line); }
 .zone-row { display: flex; align-items: center; gap: 10px; padding: 9px 0; border-bottom: 1px solid var(--line); }
+.zone-start input { width: 72px; min-height: 40px; border: 1px solid var(--line); border-radius: 10px; padding: 0 10px; font: inherit; font-family: var(--mono); text-align: right; color: var(--ink); background: #fff; }
+.zone-start input:focus { outline: 2px solid var(--link); outline-offset: 1px; }
+.zone-start input[aria-invalid="true"] { border-color: var(--bad-ink); }
+.zone-range { min-width: 92px; text-align: left; font-size: 14px; }
+.visually-hidden { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
 .inferred { border: 1px dashed var(--line); border-radius: 12px; padding: 14px; display: flex; flex-direction: column; gap: 10px; }
 .method-list { margin: 0; padding-left: 18px; display: flex; flex-direction: column; gap: 4px; font-size: 13px; color: var(--muted); }
 .method-list span[style] { color: var(--ink); }
@@ -123,3 +128,14 @@ code { font-family: var(--mono); font-size: 13px; background: var(--bg); padding
 
 .link-btn { background: none; border: 0; padding: 0; color: var(--link); font: inherit; font-size: 12px; cursor: pointer; text-align: left; min-height: 24px; }
 .btn.danger { background: var(--bad-ink); }
+
+.explain { position: relative; display: inline; }
+.explain-num { font: inherit; color: inherit; background: none; border: 0; padding: 0; cursor: pointer; letter-spacing: inherit;
+  text-decoration: underline dotted; text-decoration-color: var(--muted); text-underline-offset: 3px; }
+.explain-num:hover, .explain-num[aria-expanded="true"] { text-decoration-style: solid; }
+.explain-pop { position: absolute; z-index: 20; top: calc(100% + 6px); left: 0; width: min(340px, calc(100vw - 32px));
+  display: flex; flex-direction: column; gap: 8px; padding: 14px 16px; border-radius: 12px; background: var(--surface);
+  color: var(--ink); border: 1px solid var(--line); box-shadow: 0 8px 24px rgba(21, 33, 29, 0.14);
+  font-size: 13px; font-weight: 400; font-family: var(--font-sans), system-ui, sans-serif; line-height: 1.4; letter-spacing: 0; text-align: left; white-space: normal; }
+.explain-inputs { display: grid; grid-template-columns: 1fr auto; gap: 4px 12px; }
+.explain-step { background: var(--bg); border-radius: 6px; padding: 4px 8px; overflow-wrap: anywhere; }

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import numpy as np
 
-from . import MODEL_VERSION, elevation, loads
+from . import MODEL_VERSION, elevation, loads, zones as hr_zones
 from .models import ActivityScore, Segment, Streams, Thresholds
 from .units import ft, m_from_ft, mi
 
@@ -57,9 +57,11 @@ def score(s: Streams, th: Thresholds) -> ActivityScore:
 
     cardio, estimated = None, False
     zones = {"z1": 0.0, "z2": 0.0, "z3": 0.0}
+    hist = None
     if s.heart_rate is not None:
         cardio = loads.cardio_load(s.heart_rate, dt, th)
         zones = loads.zone_minutes(s.heart_rate, dt, th)
+        hist = hr_zones.hr_hist(s.heart_rate, dt)
     elif th.threshold_pace_s_per_mi:
         cardio = loads.estimated_cardio_load(speed * moving, grade, dt, th.threshold_pace_s_per_mi)
         estimated = True
@@ -90,9 +92,11 @@ def score(s: Streams, th: Thresholds) -> ActivityScore:
         longest_climb_ft=ft(max(climbs, default=0.0)),
         longest_descent_ft=ft(max(descents, default=0.0)),
         minutes_above_8000ft=float(np.sum(dt[alt > ALTITUDE_EXPOSURE_M]) / 60) if alt is not None else 0.0,
+        hike_loss_by_band_ft={b: ft(v) for b, v in hike_loss.items()},
         segments=segments(s, grade, gain, loss, hiking & moving, dt, moving, bands, hiking),
         notes=notes,
         model_version=MODEL_VERSION,
+        hr_hist=hist,
     )
 
 

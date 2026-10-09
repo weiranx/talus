@@ -4,6 +4,7 @@ import CallCard from "@/components/CallCard";
 import CoachCall from "@/components/CoachCall";
 import CheckIn from "@/components/CheckIn";
 import EngineDown from "@/components/EngineDown";
+import Explain from "@/components/Explain";
 import Overnight from "@/components/Overnight";
 import Pill, { statePill } from "@/components/Pill";
 import Sparkline from "@/components/Sparkline";
@@ -78,10 +79,12 @@ export default async function TodayPage() {
                 <Pill tone={badge.tone}>{badge.text}</Pill>
               </div>
               <div>
-                <div className="big">{d.vs_normal_text.replace(/^./, (c) => c.toUpperCase())}</div>
+                <div className="big">
+                  <Explain path={`ledger/${name}/vs_normal`}>{d.vs_normal_text.replace(/^./, (c) => c.toUpperCase())}</Explain>
+                </div>
                 <div className="muted">
-                  Last 7 days <span className="mono" style={{ color: "var(--ink)" }}>{n0(d.fatigue)}</span> a day. Your normal{" "}
-                  <span className="mono" style={{ color: "var(--ink)" }}>{n0(d.fitness)}</span>.
+                  Last 7 days <span className="mono" style={{ color: "var(--ink)" }}><Explain path={`ledger/${name}/fatigue`}>{n0(d.fatigue)}</Explain></span> a day. Your normal{" "}
+                  <span className="mono" style={{ color: "var(--ink)" }}><Explain path={`ledger/${name}/fitness`}>{n0(d.fitness)}</Explain></span>.
                 </div>
               </div>
               <Sparkline data={d.spark} color={`var(--${name})`} label={LEDGER_LABEL[name]} />
@@ -132,9 +135,10 @@ export default async function TodayPage() {
           <section className="card">
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 8 }}>
               <h2 className="label">Intensity, 28 days</h2>
-              <div className="muted" style={{ fontSize: 12 }}>Target 80% Zone 1</div>
+              <div className="muted" style={{ fontSize: 12 }}>Target 80% below AeT</div>
             </div>
-            <ZoneBar share={t.intensity_28d.share} />
+            <ZoneBar share={t.zones_28d?.share ?? { ...t.intensity_28d.share }} model={t.zone_model}
+              belowAet={t.intensity_28d.share.z1} />
           </section>
           {t.checkin ? <CheckIn initial={t.checkin} /> : null}
         </div>

@@ -1,8 +1,10 @@
 import AccountCard from "@/components/AccountCard";
 import CoachSettings from "@/components/CoachSettings";
 import EngineDown from "@/components/EngineDown";
+import ReadinessSettings from "@/components/ReadinessSettings";
 import SourceCard from "@/components/SourceCard";
 import ThresholdsCard from "@/components/ThresholdsCard";
+import ZonesCard from "@/components/ZonesCard";
 import { engine, EngineError } from "@/lib/api";
 import type { Account, Settings } from "@/lib/types";
 
@@ -23,9 +25,11 @@ export default async function SettingsPage() {
         <h1 className="title">Settings</h1>
       </header>
       <ThresholdsCard current={s.thresholds} inferred={s.inferred} />
+      {s.thresholds ? <ZonesCard zones={s.thresholds.zones} /> : null}
       <div className="row">
         <div style={{ flex: "1 1 380px", minWidth: 0, display: "flex", flexDirection: "column", gap: 16 }}>
           <SourceCard source={s.source} />
+          <ReadinessSettings readiness={s.readiness} />
           <section className="card">
             <h2 className="label">Units</h2>
             <dl className="kv">

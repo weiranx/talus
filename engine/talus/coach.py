@@ -19,11 +19,32 @@ from datetime import date
 from typing import Any, Protocol
 
 PROMPT_VERSION = "coach-v0.3"
-MODEL = "claude-opus-5-5"
+# The daily brief is short and mostly explains the engine's call, so it runs on Haiku; the
+# workout analysis has more to read and judge, so it stays on Opus. Both can be changed in
+# Settings, and TALUS_COACH_MODEL overrides both defaults.
+BRIEF_MODEL = "claude-haiku-5-5"
+ANALYSIS_MODEL = "claude-opus-5-5"
+MODEL = ANALYSIS_MODEL
 # Server-side fallback: if the model declines, the API re-runs the request on Anthropic's
 # recommended substitute inside the same call.
 FALLBACK_BETA = "server-side-fallback-2026-07-01"
 CALL_ORDER = ("go", "modify", "rest")
+
+# Coaching styles change the voice, never the rules: the same number check and the same
+# engine-owned session apply to every style. Style text holds no numbers on purpose.
+STYLES = {
+    "plain": {"label": "Plain", "description": "Calm and factual. The default.", "prompt": ""},
+    "blunt": {"label": "Blunt", "description": "Fewest words. Verdict first, no softening.",
+              "prompt": "Style: blunt. Lead with the verdict. Use the fewest words that carry the reasoning. "
+                        "No softening or reassurance."},
+    "encouraging": {"label": "Encouraging", "description": "Warm. Says what went well before what to change.",
+                    "prompt": "Style: encouraging. Be warm, and say what went well before what to change. "
+                              "Never soften a rest or modify call or the pain rule."},
+    "teaching": {"label": "Teaching", "description": "Adds a short why behind each point.",
+                 "prompt": "Style: teaching. Add a short plain-language reason for how the body responds, "
+                           "for example why descent soreness lags a day or two. Stay within the sentence limits."},
+}
+DEFAULT_STYLE = "plain"
 ROUNDING_SLACK = 0.05  # "4,500" may stand for 4,512, but "10" may not stand for 12
 MAX_SEGMENTS = 40
 
@@ -99,9 +120,24 @@ def _zones(z: dict | None) -> dict | None:
     return None if z is None else {k: _r(v) for k, v in z.items()}
 
 
-def _athlete(th: dict) -> dict:
+ENGINE_SPLIT = ("below_aet", "aet_to_ant", "above_ant")
+
+
+def _split(z: dict | None) -> dict | None:
+    """The engine's own intensity split (zone_minutes z1-z3), named for what it is."""
+    return None if z is None else {name: _r(z[f"z{k + 1}"]) for k, name in enumerate(ENGINE_SPLIT)}
+
+
+def _zone_text(zone_model: dict | None) -> str:
+    if zone_model is None:
+        return "zone 1 below AeT, zone 2 AeT to AnT, zone 3 above AnT"
+    return ", ".join(f"zone {z['zone']} {z['text']} ({z['name'].lower()})" for z in zone_model["list"])
+
+
+def _athlete(th: dict, zone_model: dict | None = None) -> dict:
+    """zones describes the zone model the athlete chose in Settings; zone_minutes use it."""
     return {"hr_resting": _r(th["resting"]), "hr_aet": _r(th["aet"]), "hr_ant": _r(th["ant"]),
-            "hr_max": _r(th["max"]), "zones": "zone 1 below AeT, zone 2 AeT to AnT, zone 3 above AnT"}
+            "hr_max": _r(th["max"]), "zones": _zone_text(zone_model)}
 
 
 def _ledger(d: dict) -> dict:
@@ -113,7 +149,7 @@ def _ledger(d: dict) -> dict:
 def _activity_line(a: dict) -> dict:
     return {"day": a["day"], "sport": a["sport"], "distance_mi": _r(a["distance_mi"], 1),
             "gain_ft": _r(a["gain_ft"]), "loss_ft": _r(a["loss_ft"]), "effort_mi": _r(a["effort_mi"], 1),
-            "moving_time": _hm(a["moving_time_s"]), "zone_minutes": _zones(a["zone_minutes"]),
+            "moving_time": _hm(a["moving_time_s"]), "zone_minutes": _zones(a.get("hr_zone_minutes", a["zone_minutes"])),
             "cardio_load": _r(a["cardio_load"]), "climb_load": _r(a["climb_load"]),
             "descent_load": _r(a["descent_load"])}
 
@@ -139,7 +175,7 @@ def brief_packet(today: dict, last_14_days: list[dict]) -> dict:
     week = today["week"]
     return {
         "date": today["date"],
-        "athlete": _athlete(today["thresholds"]),
+        "athlete": _athlete(today["thresholds"], today.get("zone_model")),
         "checkin": today["checkin"],
         "overnight": _overnight(today.get("wellness")),
         "readiness": {"engine": {k: ready["engine"][k] for k in ("state", "reason")},
@@ -149,7 +185,8 @@ def brief_packet(today: dict, last_14_days: list[dict]) -> dict:
         "week_so_far": {"start": week["start"], "activities": len(week["activities"]),
                         "distance_mi": _r(week["distance_mi"], 1), "gain_ft": _r(week["gain_ft"]),
                         "loss_ft": _r(week["loss_ft"])},
-        "intensity_28d_pct": {k: _r(v * 100) for k, v in today["intensity_28d"]["share"].items()},
+        "intensity_28d_pct": {name: _r(today["intensity_28d"]["share"][f"z{k + 1}"] * 100)
+                              for k, name in enumerate(ENGINE_SPLIT)},
         "last_14_days": [_activity_line(a) for a in sorted(last_14_days, key=lambda a: a["start_time"])],
     }
 
@@ -166,11 +203,11 @@ def segment_labels(segments: list[dict]) -> list[str]:
 def analysis_packet(a: dict, thresholds: dict, ledgers_now: dict, today: date) -> dict:
     """Compact context for a workout analysis, built from the /api/activities/{id} payload.
     Streams and GPS are left out; segments carry the shape of the effort."""
-    zm = a["zone_minutes"]
+    zm = a.get("hr_zone_minutes", a["zone_minutes"])
     total_z = sum(zm.values()) if zm else 0
     segs = a["segments"][:MAX_SEGMENTS]
     return {
-        "athlete": _athlete(thresholds),
+        "athlete": _athlete(thresholds, a.get("zone_model")),
         "activity": {
             "day": a["day"], "days_ago": (today - date.fromisoformat(a["day"])).days, "sport": a["sport"],
             "distance_mi": _r(a["distance_mi"], 1), "gain_ft": _r(a["gain_ft"]), "loss_ft": _r(a["loss_ft"]),
@@ -178,6 +215,7 @@ def analysis_packet(a: dict, thresholds: dict, ledgers_now: dict, today: date) -
             "elapsed_time": _hm(a["elapsed_time_s"]), "hike_share_pct": _r(a["hike_share"] * 100),
             "zone_minutes": _zones(zm),
             "zone_pct": None if not total_z else {k: _r(v / total_z * 100) for k, v in zm.items()},
+            "intensity_minutes": _split(a["zone_minutes"]) if total_z else None,
             "gain_by_grade_ft": {k: _r(v) for k, v in a["gain_by_band_ft"].items()},
             "loss_by_grade_ft": {k: _r(v) for k, v in a["loss_by_band_ft"].items()},
             "longest_climb_ft": _r(a["longest_climb_ft"]), "longest_descent_ft": _r(a["longest_descent_ft"]),
@@ -189,7 +227,9 @@ def analysis_packet(a: dict, thresholds: dict, ledgers_now: dict, today: date) -
         "segments": [{"label": label, "distance_mi": _r(s["distance_mi"], 2), "gain_ft": _r(s["gain_ft"]),
                       "loss_ft": _r(s["loss_ft"]), "avg_grade_pct": _r(s["avg_grade"], 1),
                       "time": _hm(s["time_s"]), "hike_share_pct": _r(s["hike_share"] * 100),
-                      "zone_minutes": _zones(s["zone_minutes"]), "climb_load": _r(s["climb_load"]),
+                      "zone_minutes": _zones(s.get("hr_zone_minutes", s["zone_minutes"])),
+                      "above_ant_min": None if s["zone_minutes"] is None else _r(s["zone_minutes"]["z3"]),
+                      "climb_load": _r(s["climb_load"]),
                       "descent_load": _r(s["descent_load"])}
                      for label, s in zip(segment_labels(segs), segs)],
         "ledgers_now": {name: _ledger(d) for name, d in ledgers_now.items()},
@@ -283,11 +323,12 @@ def rules_analysis(packet: dict) -> dict:
     zp = act["zone_pct"]
     job = f"{act['distance_mi']} mi with {act['gain_ft']:,} ft up and {act['loss_ft']:,} ft down."
     if zp:
-        job += f" {zp['z1']}% of the time in Zone 1, {zp['z2']}% in Zone 2 and {zp['z3']}% in Zone 3."
-    hot = [s for s in packet["segments"] if s["zone_minutes"] and s["zone_minutes"]["z3"] >= 1]
+        parts = [f"{v}% in Zone {k[1:]}" for k, v in zp.items()]
+        job += " Time in zone: " + ", ".join(parts[:-1]) + f" and {parts[-1]}."
+    hot = [s for s in packet["segments"] if s["above_ant_min"] is not None and s["above_ant_min"] >= 1]
     if hot:
-        worst = max(hot, key=lambda s: s["zone_minutes"]["z3"])
-        off = f"{worst['label']} had the most time above AnT: {worst['zone_minutes']['z3']} min."
+        worst = max(hot, key=lambda s: s["above_ant_min"])
+        off = f"{worst['label']} had the most time above AnT: {worst['above_ant_min']} min."
     else:
         off = "Nothing stood out: no segment spent a minute above AnT." if zp else "No heart rate, so no zone data."
     scored = {k: v for k, v in loads.items() if v["times_usual_day"] is not None}
@@ -334,8 +375,14 @@ def default_client() -> Client | None:
     return anthropic.Anthropic()
 
 
-def model() -> str:
-    return os.environ.get("TALUS_COACH_MODEL", MODEL)
+def default_model(mode: str) -> str:
+    return os.environ.get("TALUS_COACH_MODEL") or (BRIEF_MODEL if mode == "brief" else ANALYSIS_MODEL)
+
+
+def cache_key(packet: dict, model_id: str, style: str = DEFAULT_STYLE) -> str:
+    """A reply is reused only for the same data, model and style."""
+    extra = {"_model": model_id} | ({} if style == DEFAULT_STYLE else {"_style": style})
+    return packet_hash({**packet, **extra})
 
 
 def _fallback_args(model_id: str) -> dict:
@@ -345,9 +392,13 @@ def _fallback_args(model_id: str) -> dict:
     return {"betas": [FALLBACK_BETA], "fallbacks": "default"}
 
 
-def _ask(client: Client, mode: str, packet: dict, problems: list[str], model_id: str) -> tuple[Any, dict | None]:
+def _ask(client: Client, mode: str, packet: dict, problems: list[str], model_id: str,
+         style: str = DEFAULT_STYLE) -> tuple[Any, dict | None]:
     cfg = MODES[mode]
-    text = f"Mode: {'daily brief' if mode == 'brief' else 'workout analysis'}.\nData:\n" + json.dumps(packet, sort_keys=True)
+    text = f"Mode: {'daily brief' if mode == 'brief' else 'workout analysis'}.\n"
+    if STYLES.get(style, STYLES[DEFAULT_STYLE])["prompt"]:
+        text += STYLES[style]["prompt"] + "\n"  # after the cached system prompt, so every style shares it
+    text += "Data:\n" + json.dumps(packet, sort_keys=True)
     if problems:
         text += ("\n\nYour last reply was rejected. " + " ".join(problems)
                  + " Write it again using only numbers that appear in the data.")
@@ -373,9 +424,10 @@ def _usage(resp: Any) -> dict | None:
                                               "cache_creation_input_tokens")}
 
 
-def run(mode: str, packet: dict, fallback: dict, client: Client | None, model_id: str | None = None) -> Result:
+def run(mode: str, packet: dict, fallback: dict, client: Client | None, model_id: str | None = None,
+        style: str = DEFAULT_STYLE) -> Result:
     """Ask the coach, check every number, retry once, then fall back to rules."""
-    model_id = model_id or model()
+    model_id = model_id or default_model(mode)
     if client is None:
         return Result("rules", fallback, fallback_reason="no_key")
     import anthropic
@@ -385,7 +437,7 @@ def run(mode: str, packet: dict, fallback: dict, client: Client | None, model_id
     usage = None
     for attempt in (1, 2):
         try:
-            resp, reply = _ask(client, mode, packet, problems, model_id)
+            resp, reply = _ask(client, mode, packet, problems, model_id, style)
         except (anthropic.APIError, json.JSONDecodeError) as e:
             return Result("rules", fallback, model_id, attempt, f"api_error: {type(e).__name__}", rejected, usage)
         usage = _usage(resp)

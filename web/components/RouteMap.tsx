@@ -8,7 +8,6 @@ const STYLE = process.env.NEXT_PUBLIC_MAP_STYLE ?? "https://tiles.openfreemap.or
 // Used when the tile style cannot load, so the track still draws.
 const BLANK = { version: 8 as const, sources: {}, layers: [{ id: "bg", type: "background" as const, paint: { "background-color": "#eef1ef" } }] };
 
-export const ZONE_COLORS = ["#a9bdb5", "#52605a", "#15211d"];
 const GRADE_STOPS: [number, string][] = [[-20, "#6e3c9e"], [-8, "#b89bd6"], [0, "#d9dfdc"], [8, "#f0b25a"], [20, "#c96a00"]];
 
 export function gradeColor(g: number): string {

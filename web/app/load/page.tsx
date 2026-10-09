@@ -4,7 +4,7 @@ import IntensityChart from "@/components/IntensityChart";
 import LedgerChart from "@/components/LedgerChart";
 import Pill from "@/components/Pill";
 import { engine, EngineError } from "@/lib/api";
-import { dayLabel, duration, LEDGER_LABEL, LEDGER_UNIT, ledgerBadge, mi, n0, pct } from "@/lib/format";
+import { dayLabel, duration, LEDGER_LABEL, LEDGER_UNIT, ledgerBadge, mi, n0, pct, zoneColors, zoneKeys } from "@/lib/format";
 import { LEDGERS, type LoadData } from "@/lib/types";
 
 export const dynamic = "force-dynamic";
@@ -78,13 +78,13 @@ export default async function LoadPage({ searchParams }: { searchParams: Promise
         <section className="card" style={{ flex: "1 1 380px" }}>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 8 }}>
             <h2 className="label">Intensity by week</h2>
-            <div className="muted" style={{ fontSize: 12 }}>Red line: 80% Zone 1 target</div>
+            <div className="muted" style={{ fontSize: 12 }}>Red line: 80% below AeT target</div>
           </div>
-          <IntensityChart weeks={data.intensity_by_week} />
+          <IntensityChart weeks={data.intensity_by_week} model={data.zone_model} />
           <div style={{ display: "flex", gap: 14, fontSize: 13 }}>
-            {(["z1", "z2", "z3"] as const).map((z, i) => (
+            {zoneKeys(data.zone_model?.zones ?? 3).map((z, i) => (
               <div key={z} style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                <span className="swatch" style={{ background: `var(--${z})` }} />Zone {i + 1}
+                <span className="swatch" style={{ background: zoneColors(data.zone_model?.zones ?? 3)[i] }} />Zone {i + 1}
               </div>
             ))}
           </div>

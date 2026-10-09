@@ -22,6 +22,8 @@ Single-user prototype. Milestones 1 to 5 are here: sync from intervals.icu, file
 | `engine/talus/readiness.py` | Engine and legs readiness, and the rule-based call for the day |
 | `engine/talus/api.py` | HTTP API the web app reads (`talus serve`) |
 | `engine/talus/settings.py` | Coach settings and model prices for the Settings screen |
+| `engine/talus/explain.py` | Tap-a-number explanations: the inputs, formula and arithmetic behind each number |
+| `engine/talus/zones.py` | 3- and 5-zone heart rate models for display |
 | `engine/talus/demo.py` | Ten weeks of sample training for trying the app |
 | `web/` | Next.js web app: Today, Load, Activities, Settings |
 | `engine/talus/store.py` | SQLite plus raw files kept on disk for rescoring |
@@ -63,27 +65,48 @@ TALUS_DATA_DIR=./demo-data uv run talus serve
 
 The map uses free OpenFreeMap tiles; set `NEXT_PUBLIC_MAP_STYLE` to switch providers. If tiles cannot load, the track still draws on a blank background.
 
+### Accounts
+
+Talus has sign-in. Each account has its own folder, `data/users/<id>/`, with its own `talus.db` and raw files, so accounts never share activities, thresholds, settings or coach history. `data/accounts.db` holds emails, scrypt password hashes, sessions (30 days, only a hash of each token is stored) and each account's intervals.icu key, encrypted with `TALUS_SECRET_KEY` (or `data/secret.key`, made on first use).
+
+- **First launch after upgrading:** the engine backs up `data/talus.db` to `data/backups/talus-before-accounts-<time>.db`, then moves `talus.db` and `raw/` into `data/users/1/`. The web app opens on **Set up Talus**; the account you create there is the owner and gets that data, plus the `.env` intervals.icu key.
+- **Owner:** the first account. It has no coach spending ceiling, and `talus` commands work on its data unless `--user EMAIL` names another account.
+- **Other accounts:** sign up at `/login`. Each adds its own intervals.icu key under Settings, Data source. The coach runs on the server's Anthropic key, capped at `TALUS_COACH_CAP_USD` a month per account (default $5); each account can set a lower cap. Set `TALUS_SIGNUP=closed` to stop new sign-ups.
+- **Export and delete:** Settings, Account. Export is a zip of the account's database and raw files, without keys. Delete needs the password and removes the folder.
+- **CLI:** `talus account list`, `talus account create EMAIL`, `talus account password EMAIL` (resets a forgotten password and signs out its sessions).
+- **Serving beyond localhost:** put it behind HTTPS and set `TALUS_SECURE_COOKIE=1`.
+
+SQLite per account is fine for one machine and a handful of people. Postgres is worth it once the engine runs as more than one process or host, or accounts need querying together.
+
 ### Settings
 
 The Settings screen (`/settings`) edits what the engine stores in SQLite:
 
 - **Heart rate and zones:** resting, AeT, AnT and max, with the zones they make. Leave AeT blank for 88% of AnT, marked provisional. Saving rescores every activity. Estimates from `talus infer` show beside your numbers with their confidence and source runs; **Use these** fills the form for you to check and save.
-- **Data source:** whether the intervals.icu key is set, activity count, the last sync (from here or the CLI) and **Sync now**.
-- **AI coach:** on or off, and the model for the brief and for workout analysis, with an estimated cost per call and per month (from your own token usage once the coach has run).
+- **Heart rate zones:** 3 zones (below AeT, AeT to AnT, above AnT) or 5 (recovery under 90% of AeT, aerobic base up to AeT, tempo to halfway to AnT, threshold to AnT, above AnT), with each zone's starting bpm editable and a reset. Zones set time in zone on Today, Load and Activity and what the coach reads. Cardio load, readiness and the 80% target always use AeT and AnT, so switching zones never changes a load. Activities keep a 1-bpm heart-rate histogram (`hr_hist`), so a new zone model needs no rescore; activities scored before it are rescored once on the first zone save.
+- **Data source:** add or replace this account's intervals.icu key and athlete id, activity count, the last sync (from here or the CLI) and **Sync now**.
+- **AI coach:** on or off, the coaching style, and the model for the brief and for workout analysis, with an estimated cost per call and per month (from your own token usage once the coach has run).
 - **Units:** miles and feet.
 
-API keys stay in `.env`. The engine reports only whether each one is set and never sends a key to the browser.
+- **Account:** change password, export, delete.
+
+The Anthropic key stays in `.env`; intervals.icu keys are per account and encrypted. The engine reports only whether a key is set and never sends one to the browser.
 
 ### AI coach
 
 Put an Anthropic API key in `.env` as `ANTHROPIC_API_KEY` to turn it on. Without one, Today and Activity show rule-based text, labeled as such.
 
-- **When it calls:** the daily brief when you open Today, the workout analysis the first time you open an activity. Replies are saved and reused until the input changes (new day, check-in, new activity), so reloads are free. Nothing runs in the background.
+- **When it calls:** right after each sync or import (`talus sync`, `talus import` or **Sync now**), it writes today's brief and a read of each new activity from the last 14 days, so the pages open with them ready. It also runs when you open a page whose input changed since (your check-in, a new day, an older activity). Replies are saved and reused until the input changes, so reloads are free. `--no-coach` skips the run after a sync or import.
 - **What it sees:** a compact packet of engine numbers (`talus/coach.py`): loads, readiness, check-in, the rule-based call, the last 14 days. No GPS, no names.
 - **Number check:** every number in a reply must appear in the packet, rounded no finer than it appears there (within 5% when rounded to tens or more). One retry, then the rule-based text.
 - **Who decides what:** in the brief the coach picks the call and explains it, but the session is always the engine's. The call may be more cautious than the rule-based one, never less, and a more cautious call gets the engine's easier session.
-- **Model:** `claude-opus-5-5` by default, with low effort for the brief and medium for analysis; change it per mode in Settings (`TALUS_COACH_MODEL` sets the default). Opus and Sonnet requests opt in to server-side fallback, so a declined request is re-run on Anthropic's recommended substitute; Haiku 5.5 doesn't support it and runs without.
+- **Model:** `claude-haiku-5-5` for the brief (low effort) and `claude-opus-5-5` for workout analysis (medium effort) by default; change either in Settings (`TALUS_COACH_MODEL` sets both defaults). Opus and Sonnet requests opt in to server-side fallback, so a declined request is re-run on Anthropic's recommended substitute; Haiku 5.5 doesn't support it and runs without.
+- **Style:** plain, blunt, encouraging or teaching, set in Settings. Style changes the voice only: the same rules, number check and engine-owned session apply to every style.
 - **Log:** every call is stored whole in the `coach_log` table: packet, prompt version, model, reply, token usage, retries and your thumbs up or down.
+
+### Where a number comes from
+
+Numbers with a dotted underline open their working when tapped: on Today, each ledger's "vs your normal", last 7 days and normal; on an activity, effort miles, each load and each "x a usual day". The panel shows the inputs, the formula and the arithmetic, all from the engine (`/api/explain/...`, `talus/explain.py`), in miles and feet.
 
 ### Thresholds from your own runs
 
@@ -106,4 +129,4 @@ Other commands: `talus import <files>` for FIT/GPX/TCX, `talus rescore` after ch
 
 ## Data source notes
 
-intervals.icu is used with a personal API key, which covers one athlete. Strava-sourced activities are skipped. intervals.icu said on 2026-10-09 that Garmin data via its API will likely be blocked soon; if that happens, switch to `--source garmin` or file import.
+intervals.icu is used with a personal API key per account. intervals.icu asks apps used by more than one person to use OAuth (register at intervals.icu/settings/apps; 100 requests per user per day, 500 users by default). `IntervalsSource.from_credential` already accepts an OAuth access token, so adding it needs the app registration plus authorize and token routes. Strava-sourced activities are skipped. intervals.icu said on 2026-10-09 that Garmin data via its API will likely be blocked soon; if that happens, switch to `--source garmin` or file import.

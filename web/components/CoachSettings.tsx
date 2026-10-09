@@ -13,24 +13,27 @@ function money(v: number | null): string {
 
 function costLine(e: CostEstimate | undefined): string {
   if (!e) return "";
-  return `About ${money(e.per_call)} a call, ${money(e.per_month)} a month at ${e.calls_per_month} calls${e.from_log ? "" : ", from a typical reply size until the coach has run"}`;
+  const call = money(e.per_call);
+  return `${call.startsWith("under") ? "Under 1¢" : `About ${call}`} a call, ${money(e.per_month)} a month at ${e.calls_per_month} calls${e.from_log ? "" : ", from a typical reply size until the coach has run"}`;
 }
 
 const MODES = [
-  { key: "brief_model", mode: "brief", label: "Daily brief", when: "once a day, when you open Today" },
-  { key: "analysis_model", mode: "analysis", label: "Workout analysis", when: "once per activity, when you first open it" },
+  { key: "brief_model", mode: "brief", label: "Daily brief", when: "after each sync and after your check-in" },
+  { key: "analysis_model", mode: "analysis", label: "Workout analysis", when: "once per activity, right after it syncs" },
 ] as const;
 
 export default function CoachSettings({ coach }: { coach: Settings["coach"] }) {
   const router = useRouter();
   const [enabled, setEnabled] = useState(coach.enabled);
   const [models, setModels] = useState({ brief_model: coach.brief_model, analysis_model: coach.analysis_model });
+  const [style, setStyle] = useState(coach.style);
   const [cap, setCap] = useState(coach.cap.limit == null ? "" : String(coach.cap.limit));
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState<{ ok: boolean; text: string } | null>(null);
   const capValue = cap.trim() === "" ? null : Number(cap);
   const capDirty = capValue !== coach.cap.limit;
-  const dirty = capDirty || enabled !== coach.enabled || models.brief_model !== coach.brief_model || models.analysis_model !== coach.analysis_model;
+  const dirty = capDirty || enabled !== coach.enabled || style !== coach.style ||
+    models.brief_model !== coach.brief_model || models.analysis_model !== coach.analysis_model;
   const capped = coach.cap.limit != null && coach.cap.spent >= coach.cap.limit;
   const haiku = coach.models.find((m) => m.id.startsWith("claude-haiku"));
 
@@ -40,7 +43,7 @@ export default function CoachSettings({ coach }: { coach: Settings["coach"] }) {
     const res = await fetch("/api/settings/coach", {
       method: "PUT",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ enabled, ...models, ...(capDirty ? { monthly_cap_usd: capValue } : {}) }),
+      body: JSON.stringify({ enabled, ...models, style, ...(capDirty ? { monthly_cap_usd: capValue } : {}) }),
     }).catch(() => null);
     setSaving(false);
     if (!res?.ok) return setMessage({ ok: false, text: "Could not save. Is the engine running?" });
@@ -73,6 +76,15 @@ export default function CoachSettings({ coach }: { coach: Settings["coach"] }) {
       ) : null}
 
       <div className="form-grid">
+        <label className="field">
+          <span className="field-label">Coaching style</span>
+          <select value={style} disabled={!enabled} onChange={(e) => setStyle(e.target.value)}>
+            {coach.styles.map((o) => <option key={o.key} value={o.key}>{o.label}</option>)}
+          </select>
+          <span className="muted">
+            {coach.styles.find((o) => o.key === style)?.description} Style changes the voice only: the call, the session and the number check stay the same.
+          </span>
+        </label>
         {MODES.map((m) => {
           const est = coach.estimate[m.mode][models[m.key]];
           return (

@@ -44,8 +44,6 @@ const FIELDS: { key: "resting" | "aet" | "ant" | "max"; label: string; hint: str
   { key: "max", label: "Max", hint: "highest you have seen" },
 ];
 
-const ZONE_NAME = { 1: "Zone 1, easy aerobic", 2: "Zone 2, the gap", 3: "Zone 3, threshold and up" } as const;
-
 export default function ThresholdsCard({ current, inferred }: { current: SettingsThresholds | null; inferred: InferredThresholds | null }) {
   const router = useRouter();
   const [form, setForm] = useState<Form>(toForm(current));
@@ -102,7 +100,7 @@ export default function ThresholdsCard({ current, inferred }: { current: Setting
   return (
     <section className="card">
       <div style={{ display: "flex", flexWrap: "wrap", justifyContent: "space-between", alignItems: "center", gap: 8 }}>
-        <h2 className="label">Heart rate and zones</h2>
+        <h2 className="label">Heart rate thresholds</h2>
         {current ? (
           current.aet_provisional
             ? <Pill tone="warn">AeT provisional</Pill>
@@ -117,15 +115,6 @@ export default function ThresholdsCard({ current, inferred }: { current: Setting
               <div key={f.key} className="stat">
                 <div className="muted">{f.key === "aet" ? "AeT" : f.key === "ant" ? "AnT" : f.label}</div>
                 <div className="v">{n0(current[f.key])}</div>
-              </div>
-            ))}
-          </div>
-          <div className="zone-list">
-            {current.zones.map((z) => (
-              <div key={z.zone} className="zone-row">
-                <span className="swatch" style={{ background: `var(--z${z.zone})` }} />
-                <span>{ZONE_NAME[z.zone]}</span>
-                <span className="mono" style={{ marginLeft: "auto" }}>{z.text}</span>
               </div>
             ))}
           </div>

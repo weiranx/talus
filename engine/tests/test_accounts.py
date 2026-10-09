@@ -247,3 +247,19 @@ def test_cli_works_on_the_owner_or_a_named_account(tmp_path, monkeypatch, capsys
     assert "friend@example.com" in capsys.readouterr().out
     with pytest.raises(SystemExit):
         cli.main(["--user", "nobody@example.com", "list"])
+
+
+def test_sync_and_its_coach_follow_up_run_as_the_signed_in_account(tmp_path, monkeypatch):
+    from tests.test_intervals import source
+
+    sign_in()
+    friend = sign_in(**FRIEND)
+    friend.put("/api/settings/source", json={"api_key": "friend-secret-key", "athlete_id": "i42"})
+    monkeypatch.setattr("talus.sources.intervals.IntervalsSource.from_credential", lambda cred: source())
+    seen = []
+    monkeypatch.setattr(api, "warm_coach", lambda ids: seen.append((api._account.get().email, len(ids))))
+    days = (date.today() - date(2026, 9, 1)).days
+    assert friend.post("/api/sync", json={"days": days}).json()["saved"] == 2
+    assert seen == [(FRIEND["email"], 2)]  # the background coach run still knows whose data it is
+    assert len(Store(tmp_path / "data" / "users" / "2").activities()) == 2
+    assert Store(tmp_path / "data" / "users" / "1").activities() == []

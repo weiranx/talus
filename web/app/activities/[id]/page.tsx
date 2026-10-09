@@ -1,8 +1,9 @@
 import Link from "next/link";
-import { Suspense } from "react";
+import { Suspense, type ReactNode } from "react";
 import CoachRead, { CoachReadPending } from "@/components/CoachRead";
 import ActivityView from "@/components/ActivityView";
 import EngineDown from "@/components/EngineDown";
+import Explain from "@/components/Explain";
 import { engine, EngineError } from "@/lib/api";
 import { dayLabel, duration, LEDGER_LABEL, mi, n0, pct } from "@/lib/format";
 import { LEDGERS, type ActivityDetail } from "@/lib/types";
@@ -19,12 +20,12 @@ export default async function ActivityPage({ params }: { params: Promise<{ id: s
   } catch (e) {
     return <EngineDown message={e instanceof EngineError ? e.message : "Could not reach the engine."} />;
   }
-  const stats: [string, string][] = [
+  const stats: [string, ReactNode][] = [
     ["Distance", `${mi(a.distance_mi)} mi`],
     ["Gain", `${n0(a.gain_ft)} ft`],
     ["Descent", `${n0(a.loss_ft)} ft`],
     ["Time", duration(a.moving_time_s, true)],
-    ["Effort miles", mi(a.effort_mi)],
+    ["Effort miles", <Explain key="e" path={`activity/${a.id}/effort_mi`}>{mi(a.effort_mi)}</Explain>],
     ["Hike share", pct(a.hike_share)],
   ];
 
@@ -61,10 +62,12 @@ export default async function ActivityPage({ params }: { params: Promise<{ id: s
                 <span className="swatch" style={{ background: `var(--${name})`, marginTop: 5 }} />
                 <div>
                   <div style={{ fontWeight: 600 }}>{LEDGER_LABEL[name]}</div>
-                  <div className="big mono">{l.times_usual_day == null ? "n/a" : `${l.times_usual_day.toFixed(1)}x`}</div>
+                  <div className="big mono">
+                    {l.times_usual_day == null ? "n/a" : <Explain path={`activity/${a.id}/times_usual_${name}`}>{`${l.times_usual_day.toFixed(1)}x`}</Explain>}
+                  </div>
                   <div className="muted">
                     {l.load == null ? "not scored, no heart rate" : (
-                      <>{l.times_usual_day == null ? "" : "a usual day, "}{l.six_week_high ? "6-week high, " : ""}load {n0(l.load)}{name === "cardio" && a.cardio_estimated ? ", estimated" : ""}</>
+                      <>{l.times_usual_day == null ? "" : "a usual day, "}{l.six_week_high ? "6-week high, " : ""}load <Explain path={`activity/${a.id}/${name}_load`}>{n0(l.load)}</Explain>{name === "cardio" && a.cardio_estimated ? ", estimated" : ""}</>
                     )}
                   </div>
                 </div>

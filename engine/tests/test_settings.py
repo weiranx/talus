@@ -12,7 +12,8 @@ from tests.test_intervals import source
 
 @pytest.fixture(autouse=True)
 def no_keys(monkeypatch):
-    for k in ("INTERVALS_API_KEY", "INTERVALS_ATHLETE_ID", "ANTHROPIC_API_KEY", "GARMIN_EMAIL", "TALUS_COACH_MODEL"):
+    for k in ("INTERVALS_API_KEY", "INTERVALS_ATHLETE_ID", "ANTHROPIC_API_KEY", "GARMIN_EMAIL", "TALUS_COACH_MODEL",
+              "TALUS_SLEEP_NEED_H"):
         monkeypatch.delenv(k, raising=False)
     monkeypatch.setattr(api, "load_env", lambda: None)
 
@@ -25,7 +26,8 @@ def test_settings_before_anything_is_set(tmp_path, monkeypatch):
                            "updated_at": None, "garmin_fallback_set": False, "activities": 0,
                            "latest_activity": None, "last_sync": None}
     assert s["coach"]["enabled"] and not s["coach"]["key_set"]
-    assert s["coach"]["brief_model"] == s["coach"]["analysis_model"] == coach.MODEL
+    assert (s["coach"]["brief_model"], s["coach"]["analysis_model"]) == ("claude-haiku-5-5", "claude-opus-5-5")
+    assert s["coach"]["style"] == "plain" and {x["key"] for x in s["coach"]["styles"]} == set(coach.STYLES)
     assert s["units"] == {"distance": "mi", "vert": "ft"}
 
 
@@ -47,7 +49,7 @@ def test_thresholds_save_rescore_and_follow_the_cli_rules(tmp_path, monkeypatch)
     assert r.json() == {"ok": True, "rescored": 30}
     th = client.get("/api/settings").json()["thresholds"]
     assert (th["aet"], th["aet_provisional"]) == (141, True)  # 88% of 160
-    assert [z["text"] for z in th["zones"]] == ["under 141 bpm", "141 to 160 bpm", "over 160 bpm"]
+    assert [z["text"] for z in th["zones"]["list"]] == ["under 141 bpm", "141 to 160 bpm", "161 bpm and up"]
     after = client.get("/api/activities").json()[0]
     assert after["cardio_load"] != before["cardio_load"]  # same runs, new anchors
     client.put("/api/settings/thresholds", json={"resting": 50, "aet": 145, "ant": 160, "max": 175})
@@ -74,15 +76,15 @@ def test_coach_uses_the_chosen_model_per_mode(tmp_path, monkeypatch):
     fake = FakeClient({"call": "rest", "why": f"Your {t['readiness']['legs']['limiter']} load is high."},
                       {"call": "rest", "why": f"Your {t['readiness']['legs']['limiter']} load is high."})
     monkeypatch.setattr(api, "coach_client", lambda: fake)
-    client.get("/api/coach/brief")
-    client.put("/api/settings/coach", json={"enabled": True, "brief_model": "claude-haiku-5-5",
+    client.get("/api/coach/brief")  # the brief runs on Haiku unless changed
+    client.put("/api/settings/coach", json={"enabled": True, "brief_model": "claude-opus-5-5",
                                             "analysis_model": "claude-opus-5-5"})
     client.get("/api/coach/brief")  # a new model is a new reply, not the cached one
-    assert [c["model"] for c in fake.calls] == ["claude-opus-5-5", "claude-haiku-5-5"]
-    assert "fallbacks" in fake.calls[0] and "fallbacks" not in fake.calls[1]  # Haiku has no fallback
+    assert [c["model"] for c in fake.calls] == ["claude-haiku-5-5", "claude-opus-5-5"]
+    assert "fallbacks" not in fake.calls[0] and "fallbacks" in fake.calls[1]  # Haiku has no fallback
     est = client.get("/api/settings").json()["coach"]["estimate"]
     haiku, opus = est["brief"]["claude-haiku-5-5"], est["brief"]["claude-opus-5-5"]
-    assert haiku["from_log"] and haiku["per_call"] < opus["per_call"] / 30 and haiku["calls_per_month"] == 30
+    assert haiku["from_log"] and haiku["per_call"] < opus["per_call"] / 30 and haiku["calls_per_month"] == 60
     assert est["analysis"]["claude-opus-5-5"]["calls_per_month"] == 30 and not est["analysis"]["claude-opus-5-5"]["from_log"]
     assert client.put("/api/settings/coach", json={"enabled": True, "brief_model": "gpt",
                                                    "analysis_model": "claude-opus-5-5"}).status_code == 422
@@ -97,11 +99,14 @@ def test_sync_now_records_the_last_sync(tmp_path, monkeypatch):
     used = []
     monkeypatch.setattr("talus.sources.intervals.IntervalsSource.from_credential",
                         lambda cred: used.append(cred) or source())
+    warmed = []
+    monkeypatch.setattr(api, "warm_coach", warmed.append)  # the coach writes after the response
     days = (date.today() - date(2026, 9, 1)).days  # the mock serves activities from 2026-09-01
     r = client.post("/api/sync", json={"days": days})
     assert r.status_code == 200
     out = r.json()
     assert (out["listed"], out["new"], out["saved"], out["error"]) == (2, 2, 2, None)
+    assert "added_ids" not in out and len(warmed) == 1 and len(warmed[0]) == 2
     last = client.get("/api/settings").json()["source"]["last_sync"]
     assert last["new"] == 2 and last["since"] == out["since"]
     assert json.dumps(last).count("secret") == 0
@@ -123,3 +128,15 @@ def test_settings_show_thresholds_inferred_from_runs(tmp_path, monkeypatch):
     assert inf["ant"]["value"] == round(150 * 0.97) and inf["ant"]["confidence"] == "medium"
     assert inf["ant"]["activities"][0].keys() == {"id", "day", "name"}
     assert inf["max"]["value"] == 150 and inf["aet"]["method"]
+
+
+def test_sleep_need_is_saved_and_read_by_today(tmp_path, monkeypatch):
+    client = _demo(tmp_path, monkeypatch)
+    s = client.get("/api/settings").json()
+    assert s["readiness"] == {"sleep_need_h": 8.0, "sleep_need_source": "default"}
+    monkeypatch.setenv("TALUS_SLEEP_NEED_H", "7.5")
+    assert client.get("/api/settings").json()["readiness"]["sleep_need_source"] == "env"
+    assert client.put("/api/settings/readiness", json={"sleep_need_h": 6.9}).json() == {"ok": True}
+    assert client.get("/api/settings").json()["readiness"] == {"sleep_need_h": 7.0, "sleep_need_source": "saved"}
+    assert client.get("/api/today").json()["wellness"]["sleep"]["need_h"] == 7.0
+    assert client.put("/api/settings/readiness", json={"sleep_need_h": 2}).status_code == 422

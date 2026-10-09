@@ -2,8 +2,8 @@
 
 import { useMemo, useState } from "react";
 import ElevationProfile from "@/components/ElevationProfile";
-import RouteMap, { gradeColor, ZONE_COLORS } from "@/components/RouteMap";
-import { duration, mi, n0 } from "@/lib/format";
+import RouteMap, { gradeColor } from "@/components/RouteMap";
+import { duration, mi, n0, zoneColors, zoneKeys } from "@/lib/format";
 import type { ActivityDetail } from "@/lib/types";
 
 type Mode = "zone" | "grade";
@@ -22,14 +22,17 @@ function grades(distance: number[], altitude: number[]): number[] {
 export default function ActivityView({ a }: { a: ActivityDetail }) {
   const s = a.streams;
   const hasZone = s.zone != null;
+  const n = a.zone_model.zones;
+  const zColors = zoneColors(n);
+  const zMinutes = a.hr_zone_minutes ?? {};
   const [mode, setMode] = useState<Mode>(hasZone ? "zone" : "grade");
   const [selected, setSelected] = useState<number | null>(null);
 
   const colors = useMemo(() => {
-    if (mode === "zone" && s.zone) return s.zone.map((z) => ZONE_COLORS[z - 1]);
+    if (mode === "zone" && s.zone) return s.zone.map((z) => zColors[z - 1]);
     if (s.altitude_ft) return grades(s.distance_mi, s.altitude_ft).map(gradeColor);
-    return s.distance_mi.map(() => ZONE_COLORS[1]);
-  }, [mode, s]);
+    return s.distance_mi.map(() => zColors[1]);
+  }, [mode, s, zColors]);
 
   const highlight = useMemo<[number, number] | null>(() => {
     if (selected == null) return null;
@@ -70,10 +73,11 @@ export default function ActivityView({ a }: { a: ActivityDetail }) {
         ) : null}
         <div style={{ display: "flex", flexWrap: "wrap", gap: "4px 14px", fontSize: 13 }}>
           {mode === "zone"
-            ? (["z1", "z2", "z3"] as const).map((z, i) => (
-                <div key={z} style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                  <span className="swatch" style={{ background: ZONE_COLORS[i] }} />
-                  Zone {i + 1}, {duration(a.zone_minutes[z] * 60)}
+            ? zoneKeys(n).map((z, i) => (
+                <div key={z} style={{ display: "flex", alignItems: "center", gap: 6 }}
+                  title={`${a.zone_model.list[i].name}, ${a.zone_model.list[i].text}`}>
+                  <span className="swatch" style={{ background: zColors[i] }} />
+                  Zone {i + 1}, {duration((zMinutes[z] ?? 0) * 60)}
                 </div>
               ))
             : [["Steep down", "#6e3c9e"], ["Down", "#b89bd6"], ["Flat", "#d9dfdc"], ["Up", "#f0b25a"], ["Steep up", "#c96a00"]].map(([l, c]) => (
@@ -103,8 +107,8 @@ export default function ActivityView({ a }: { a: ActivityDetail }) {
             <tbody>
               {a.segments.map((seg) => {
                 const vert = seg.kind === "climb" ? `+${n0(seg.gain_ft)}` : seg.kind === "descent" ? `−${n0(seg.loss_ft)}` : `+${n0(seg.gain_ft)} / −${n0(seg.loss_ft)}`;
-                const zm = seg.zone_minutes;
-                const zones = zm ? (["z1", "z2", "z3"] as const).filter((z) => zm[z] >= 1).map((z) => `Z${z[1]} ${Math.round(zm[z])}`).join(", ") : "–";
+                const zm = seg.hr_zone_minutes;
+                const zones = zm ? zoneKeys(n).filter((z) => zm[z] >= 1).map((z) => `Z${z.slice(1)} ${Math.round(zm[z])}`).join(", ") : "–";
                 const modeText = seg.hike_share > 0.8 ? "Hike" : seg.hike_share > 0.2 ? "Run and hike" : "Run";
                 return (
                   <tr key={seg.index} className={selected === seg.index ? "hl" : undefined}>

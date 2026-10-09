@@ -1,13 +1,24 @@
 "use client";
 
 import { Bar, BarChart, CartesianGrid, ReferenceLine, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
-import { dayLabel, pct } from "@/lib/format";
-import type { LoadData } from "@/lib/types";
+import { dayLabel, pct, zoneColors, zoneKeys } from "@/lib/format";
+import type { LoadData, ZoneModel } from "@/lib/types";
 
-export default function IntensityChart({ weeks }: { weeks: LoadData["intensity_by_week"] }) {
-  const data = weeks.map((w) => ({ start: w.start, z1: w.share.z1 * 100, z2: w.share.z2 * 100, z3: w.share.z3 * 100, minutes: w.minutes }));
+// Stacked time in each zone of the chosen model. The red line is the 80% target, judged on time below AeT.
+export default function IntensityChart({ weeks, model }: { weeks: LoadData["intensity_by_week"]; model: ZoneModel | null }) {
+  const n = model?.zones ?? 3;
+  const keys = zoneKeys(n);
+  const colors = zoneColors(n);
+  const data = weeks.map((w) => {
+    const z = w.zones ?? w;
+    return {
+      start: w.start, belowAet: w.share.z1,
+      minutes: keys.map((k) => z.minutes[k as keyof typeof z.minutes] ?? 0),
+      ...Object.fromEntries(keys.map((k) => [k, (z.share[k as keyof typeof z.share] ?? 0) * 100])),
+    } as { start: string; belowAet: number; minutes: number[] } & Record<string, number>;
+  });
   return (
-    <div role="img" aria-label="Share of time in each zone by week, against an 80% Zone 1 target" style={{ height: 200 }}>
+    <div role="img" aria-label="Share of time in each zone by week, against an 80% below-AeT target" style={{ height: 200 }}>
       <ResponsiveContainer width="100%" height="100%">
         <BarChart data={data} margin={{ top: 8, right: 8, bottom: 0, left: 0 }} barCategoryGap="25%">
           <CartesianGrid vertical={false} stroke="#e3e8e5" />
@@ -20,20 +31,26 @@ export default function IntensityChart({ weeks }: { weeks: LoadData["intensity_b
             content={({ active, payload }) => {
               if (!active || !payload?.length) return null;
               const d = payload[0].payload as (typeof data)[number];
-              const total = d.minutes.z1 + d.minutes.z2 + d.minutes.z3;
+              const total = d.minutes.reduce((a, b) => a + b, 0);
               return (
                 <div className="tip">
                   <div style={{ fontWeight: 600 }}>Week of {dayLabel(d.start, { month: "short", day: "numeric" })}</div>
-                  {total === 0 ? <div>No heart-rate time</div> : (["z1", "z2", "z3"] as const).map((z, i) => (
-                    <div key={z}>Zone {i + 1} <span className="mono">{pct(d[z] / 100)}</span>, {Math.round(d.minutes[z])} min</div>
-                  ))}
+                  {total === 0 ? <div>No heart-rate time</div> : (
+                    <>
+                      {keys.map((k, i) => (
+                        <div key={k}>Zone {i + 1} <span className="mono">{pct(d[k] / 100)}</span>, {Math.round(d.minutes[i])} min</div>
+                      ))}
+                      <div>Below AeT <span className="mono">{pct(d.belowAet)}</span></div>
+                    </>
+                  )}
                 </div>
               );
             }}
           />
-          <Bar dataKey="z1" stackId="z" fill="var(--z1)" stroke="#fff" strokeWidth={1} isAnimationActive={false} />
-          <Bar dataKey="z2" stackId="z" fill="var(--z2)" stroke="#fff" strokeWidth={1} isAnimationActive={false} />
-          <Bar dataKey="z3" stackId="z" fill="var(--z3)" stroke="#fff" strokeWidth={1} radius={[4, 4, 0, 0]} isAnimationActive={false} />
+          {keys.map((k, i) => (
+            <Bar key={k} dataKey={k} stackId="z" fill={colors[i]} stroke="#fff" strokeWidth={1}
+              radius={i === n - 1 ? [4, 4, 0, 0] : undefined} isAnimationActive={false} />
+          ))}
           <ReferenceLine y={80} stroke="var(--target)" strokeWidth={2} />
         </BarChart>
       </ResponsiveContainer>

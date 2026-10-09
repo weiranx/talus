@@ -19,11 +19,32 @@ from datetime import date
 from typing import Any, Protocol
 
 PROMPT_VERSION = "coach-v0.3"
-MODEL = "claude-opus-5-5"
+# The daily brief is short and mostly explains the engine's call, so it runs on Haiku; the
+# workout analysis has more to read and judge, so it stays on Opus. Both can be changed in
+# Settings, and TALUS_COACH_MODEL overrides both defaults.
+BRIEF_MODEL = "claude-haiku-5-5"
+ANALYSIS_MODEL = "claude-opus-5-5"
+MODEL = ANALYSIS_MODEL
 # Server-side fallback: if the model declines, the API re-runs the request on Anthropic's
 # recommended substitute inside the same call.
 FALLBACK_BETA = "server-side-fallback-2026-07-01"
 CALL_ORDER = ("go", "modify", "rest")
+
+# Coaching styles change the voice, never the rules: the same number check and the same
+# engine-owned session apply to every style. Style text holds no numbers on purpose.
+STYLES = {
+    "plain": {"label": "Plain", "description": "Calm and factual. The default.", "prompt": ""},
+    "blunt": {"label": "Blunt", "description": "Fewest words. Verdict first, no softening.",
+              "prompt": "Style: blunt. Lead with the verdict. Use the fewest words that carry the reasoning. "
+                        "No softening or reassurance."},
+    "encouraging": {"label": "Encouraging", "description": "Warm. Says what went well before what to change.",
+                    "prompt": "Style: encouraging. Be warm, and say what went well before what to change. "
+                              "Never soften a rest or modify call or the pain rule."},
+    "teaching": {"label": "Teaching", "description": "Adds a short why behind each point.",
+                 "prompt": "Style: teaching. Add a short plain-language reason for how the body responds, "
+                           "for example why descent soreness lags a day or two. Stay within the sentence limits."},
+}
+DEFAULT_STYLE = "plain"
 ROUNDING_SLACK = 0.05  # "4,500" may stand for 4,512, but "10" may not stand for 12
 MAX_SEGMENTS = 40
 
@@ -334,8 +355,14 @@ def default_client() -> Client | None:
     return anthropic.Anthropic()
 
 
-def model() -> str:
-    return os.environ.get("TALUS_COACH_MODEL", MODEL)
+def default_model(mode: str) -> str:
+    return os.environ.get("TALUS_COACH_MODEL") or (BRIEF_MODEL if mode == "brief" else ANALYSIS_MODEL)
+
+
+def cache_key(packet: dict, model_id: str, style: str = DEFAULT_STYLE) -> str:
+    """A reply is reused only for the same data, model and style."""
+    extra = {"_model": model_id} | ({} if style == DEFAULT_STYLE else {"_style": style})
+    return packet_hash({**packet, **extra})
 
 
 def _fallback_args(model_id: str) -> dict:
@@ -345,9 +372,13 @@ def _fallback_args(model_id: str) -> dict:
     return {"betas": [FALLBACK_BETA], "fallbacks": "default"}
 
 
-def _ask(client: Client, mode: str, packet: dict, problems: list[str], model_id: str) -> tuple[Any, dict | None]:
+def _ask(client: Client, mode: str, packet: dict, problems: list[str], model_id: str,
+         style: str = DEFAULT_STYLE) -> tuple[Any, dict | None]:
     cfg = MODES[mode]
-    text = f"Mode: {'daily brief' if mode == 'brief' else 'workout analysis'}.\nData:\n" + json.dumps(packet, sort_keys=True)
+    text = f"Mode: {'daily brief' if mode == 'brief' else 'workout analysis'}.\n"
+    if STYLES.get(style, STYLES[DEFAULT_STYLE])["prompt"]:
+        text += STYLES[style]["prompt"] + "\n"  # after the cached system prompt, so every style shares it
+    text += "Data:\n" + json.dumps(packet, sort_keys=True)
     if problems:
         text += ("\n\nYour last reply was rejected. " + " ".join(problems)
                  + " Write it again using only numbers that appear in the data.")
@@ -373,9 +404,10 @@ def _usage(resp: Any) -> dict | None:
                                               "cache_creation_input_tokens")}
 
 
-def run(mode: str, packet: dict, fallback: dict, client: Client | None, model_id: str | None = None) -> Result:
+def run(mode: str, packet: dict, fallback: dict, client: Client | None, model_id: str | None = None,
+        style: str = DEFAULT_STYLE) -> Result:
     """Ask the coach, check every number, retry once, then fall back to rules."""
-    model_id = model_id or model()
+    model_id = model_id or default_model(mode)
     if client is None:
         return Result("rules", fallback, fallback_reason="no_key")
     import anthropic
@@ -385,7 +417,7 @@ def run(mode: str, packet: dict, fallback: dict, client: Client | None, model_id
     usage = None
     for attempt in (1, 2):
         try:
-            resp, reply = _ask(client, mode, packet, problems, model_id)
+            resp, reply = _ask(client, mode, packet, problems, model_id, style)
         except (anthropic.APIError, json.JSONDecodeError) as e:
             return Result("rules", fallback, model_id, attempt, f"api_error: {type(e).__name__}", rejected, usage)
         usage = _usage(resp)

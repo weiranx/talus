@@ -71,6 +71,7 @@ class ActivityScore:
     longest_climb_ft: float
     longest_descent_ft: float
     minutes_above_8000ft: float
+    hike_loss_by_band_ft: dict[str, float] = field(default_factory=dict)  # the hiked part of loss_by_band_ft
     segments: list[Segment] = field(default_factory=list)
     notes: list[str] = field(default_factory=list)
     model_version: str = ""

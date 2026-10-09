@@ -41,9 +41,11 @@ def main(argv: list[str] | None = None) -> None:
     s.add_argument("--source", choices=["intervals", "garmin"], default="intervals")
     s.add_argument("--days", type=int, default=180)
     s.add_argument("--since", type=date.fromisoformat)
+    s.add_argument("--no-coach", action="store_true", help="skip writing the coach brief and reads after the sync")
 
     i = sub.add_parser("import", help="import FIT, GPX or TCX files")
     i.add_argument("files", nargs="+", type=Path)
+    i.add_argument("--no-coach", action="store_true", help="skip writing the coach brief and reads after the import")
 
     sc = sub.add_parser("score", help="score a stored activity id or a file and print it")
     sc.add_argument("target")
@@ -139,7 +141,9 @@ def cmd_thresholds(store: Store, args) -> None:
 
 def cmd_sync(store: Store, args) -> None:
     since = args.since or date.today() - timedelta(days=args.days)
-    sync(store, args.source, since)
+    result = sync(store, args.source, since)
+    if not args.no_coach and store.thresholds() is not None:
+        warm_coach(result["added_ids"])
 
 
 def sync(store: Store, source_name: str, since: date, log=print) -> dict:
@@ -148,6 +152,7 @@ def sync(store: Store, source_name: str, since: date, log=print) -> dict:
     started = datetime.now().isoformat(timespec="seconds")
     result = {"at": started, "source": source_name, "since": since.isoformat(), "listed": 0, "new": 0,
               "saved": 0, "error": None}
+    added: list[int] = []
     try:
         if source_name == "intervals":
             from .sources.intervals import IntervalsSource
@@ -166,6 +171,7 @@ def sync(store: Store, source_name: str, since: date, log=print) -> dict:
                 log(f"  skip {act.start_time:%Y-%m-%d} {act.name}: no file or streams")
                 continue
             activity_id = store.add(act, raw)
+            added.append(activity_id)
             result["saved"] += 1
             _score_and_save(store, activity_id, raw, th, act.sport,
                             label=f"{act.start_time:%Y-%m-%d} {act.name}", log=log)
@@ -189,11 +195,12 @@ def sync(store: Store, source_name: str, since: date, log=print) -> dict:
         raise
     finally:
         store.save_settings({"last_sync": result})
-    return result
+    return result | {"added_ids": added}
 
 
 def cmd_import(store: Store, args) -> None:
     th = store.thresholds()
+    added = []
     for path in args.files:
         data = unwrap(path.read_bytes())
         raw = RawFile(data, sniff_format(data))
@@ -202,9 +209,19 @@ def cmd_import(store: Store, args) -> None:
                              start_time=streams.start_time or datetime.fromtimestamp(path.stat().st_mtime),
                              name=path.stem, sport=streams.sport)
         activity_id = store.add(act, raw)
+        added.append(activity_id)
         _score_and_save(store, activity_id, raw, th, act.sport, label=path.name)
     if th is not None:
         rebuild_ledgers(store)
+        if not args.no_coach:
+            warm_coach(added)
+
+
+def warm_coach(activity_ids: list[int], log=print) -> None:
+    """Run the coach right after new data lands, so Today and Activity open with it ready."""
+    from . import api
+    for line in api.warm_coach(activity_ids):
+        log(line)
 
 
 def cmd_score(store: Store, args) -> None:

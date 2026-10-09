@@ -5,8 +5,6 @@ API keys are not settings: they stay in .env, and the engine only ever reports w
 
 from __future__ import annotations
 
-import os
-
 from . import coach
 
 # Per-MTok prices, input and output. Haiku has no server-side fallback, so it runs without it.
@@ -19,12 +17,12 @@ MODELS = {
 # Typical tokens per call, used for the cost estimate until the coach log has real usage.
 TYPICAL_TOKENS = {"brief": (2500, 500), "analysis": (5000, 1000)}
 
-COACH_KEYS = ("coach_enabled", "brief_model", "analysis_model")
+COACH_KEYS = ("coach_enabled", "brief_model", "analysis_model", "coach_style")
 
 
 def defaults() -> dict:
-    model = os.environ.get("TALUS_COACH_MODEL", coach.MODEL)
-    return {"coach_enabled": True, "brief_model": model, "analysis_model": model}
+    return {"coach_enabled": True, "brief_model": coach.default_model("brief"),
+            "analysis_model": coach.default_model("analysis"), "coach_style": coach.DEFAULT_STYLE}
 
 
 def cost_per_call(model: str, tokens: tuple[float, float]) -> float | None:

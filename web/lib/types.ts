@@ -199,8 +199,20 @@ export interface Settings {
     key_set: boolean;
     brief_model: string;
     analysis_model: string;
+    style: string;
+    styles: { key: string; label: string; description: string }[];
     models: { id: string; label: string; input: number; output: number }[];
     estimate: { brief: Record<string, CostEstimate>; analysis: Record<string, CostEstimate> };
   };
   units: { distance: "mi"; vert: "ft" };
+}
+
+export interface Explanation {
+  title: string;
+  value: number | null;
+  unit: string | null;
+  formula: string;
+  inputs: { label: string; value: string }[];
+  steps: string[];
+  note: string | null;
 }

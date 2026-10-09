@@ -11,10 +11,10 @@ import os
 from datetime import date, timedelta
 
 import numpy as np
-from fastapi import FastAPI, HTTPException
+from fastapi import BackgroundTasks, FastAPI, HTTPException
 from pydantic import BaseModel, Field
 
-from . import cli, coach, ledger, wellness
+from . import cli, coach, explain, ledger, wellness
 from . import settings as app_settings
 from .config import data_dir, load_env
 from .models import Thresholds
@@ -243,13 +243,15 @@ def _coach(store: Store, mode: str, subject: str, packet: dict, fallback: dict, 
     if not cfg["coach_enabled"]:
         return {"source": "rules", "reply": fallback, "log_id": None, "feedback": None,
                 "fallback_reason": "off", "model": None}
-    model_id = cfg[f"{mode}_model"]
-    h = coach.packet_hash({**packet, "_model": model_id})
+    model_id, style = cfg[f"{mode}_model"], cfg["coach_style"]
+    if style not in coach.STYLES:
+        style = coach.DEFAULT_STYLE
+    h = coach.cache_key(packet, model_id, style)
     row = None if refresh else store.coach_entry(mode, subject, coach.PROMPT_VERSION, h)
     if row is not None and not (row["fallback_reason"] or "").startswith("api_error"):
         return {"source": row["source"], "reply": json.loads(row["reply"]), "log_id": row["id"],
                 "feedback": row["feedback"], "fallback_reason": row["fallback_reason"], "model": row["model"]}
-    result = coach.run(mode, packet, fallback, coach_client(), model_id)
+    result = coach.run(mode, packet, fallback, coach_client(), model_id, style)
     log_id = None
     if result.fallback_reason != "no_key":
         log_id = store.log_coach(mode, subject, coach.PROMPT_VERSION, h, packet, result)
@@ -367,12 +369,15 @@ def get_settings() -> dict:
             "key_set": bool(os.environ.get("ANTHROPIC_API_KEY")),
             "brief_model": cfg["brief_model"],
             "analysis_model": cfg["analysis_model"],
+            "style": cfg["coach_style"],
+            "styles": [{"key": k, "label": v["label"], "description": v["description"]}
+                       for k, v in coach.STYLES.items()],
             "models": [{"id": k, "label": v["label"], "input": v["input"], "output": v["output"]}
                        for k, v in app_settings.MODELS.items()],
-            # Per model, so the screen can show what a switch would cost. Brief: one a day. Analysis:
-            # one per activity, at the last 30 days' rate.
+            # Per model, so the screen can show what a switch would cost. Brief: about two a day,
+            # after the sync and after the check-in. Analysis: one per activity, at the last 30 days' rate.
             "estimate": {mode: {m: _usage_estimate(store, mode, m, calls) for m in app_settings.MODELS}
-                         for mode, calls in (("brief", 30), ("analysis", analyses))},
+                         for mode, calls in (("brief", 60), ("analysis", analyses))},
         },
         "units": {"distance": "mi", "vert": "ft"},
     }
@@ -406,6 +411,7 @@ class CoachIn(BaseModel):
     enabled: bool
     brief_model: str
     analysis_model: str
+    style: str | None = None  # left out keeps the saved style
 
 
 @app.put("/api/settings/coach")
@@ -413,8 +419,11 @@ def put_coach(body: CoachIn) -> dict:
     for m in (body.brief_model, body.analysis_model):
         if m not in app_settings.MODELS:
             raise HTTPException(422, f"Unknown model {m}")
+    if body.style is not None and body.style not in coach.STYLES:
+        raise HTTPException(422, f"Unknown style {body.style}")
     get_store().save_settings({"coach_enabled": body.enabled, "brief_model": body.brief_model,
-                               "analysis_model": body.analysis_model})
+                               "analysis_model": body.analysis_model}
+                              | ({} if body.style is None else {"coach_style": body.style}))
     return {"ok": True}
 
 
@@ -423,7 +432,7 @@ class SyncIn(BaseModel):
 
 
 @app.post("/api/sync")
-def sync_now(body: SyncIn) -> dict:
+def sync_now(body: SyncIn, background: BackgroundTasks) -> dict:
     store = get_store()
     if not os.environ.get("INTERVALS_API_KEY"):
         raise HTTPException(409, "Add INTERVALS_API_KEY to the engine's .env, then restart the engine.")
@@ -431,5 +440,78 @@ def sync_now(body: SyncIn) -> dict:
     try:
         result = cli.sync(store, "intervals", date.today() - timedelta(days=body.days), log=lines.append)
     except Exception:
-        result = store.settings()["last_sync"]
+        return store.settings()["last_sync"] | {"log": lines}
+    # The coach writes after the response, so the sync button doesn't wait on it.
+    background.add_task(warm_coach, result.pop("added_ids"))
     return result | {"log": lines}
+
+
+# The analysis is written right after a sync only for recent activities: a first sync of a
+# year of history shouldn't pay for a read of every old run. Older ones get theirs when opened.
+WARM_ANALYSIS_DAYS = 14
+
+
+def warm_coach(activity_ids: list[int]) -> list[str]:
+    """Write today's brief and each new recent activity's read right after a sync, so the pages
+    open with them ready. Replies are cached as usual, so opening a page doesn't pay again."""
+    try:
+        b = coach_brief()
+    except HTTPException as e:
+        return [f"Coach skipped: {e.detail}"]
+    if b["fallback_reason"] in ("no_key", "off"):
+        return ["Coach skipped: " + ("no ANTHROPIC_API_KEY" if b["fallback_reason"] == "no_key" else "turned off in Settings")]
+    lines = [f"Coach brief: {b['reply']['call']} ({b['source']})"]
+    store = get_store()
+    recent = (date.today() - timedelta(days=WARM_ANALYSIS_DAYS)).isoformat()
+    for aid in dict.fromkeys(activity_ids):
+        row = store.activity(aid)
+        if row is None or (row["start_time"] or "") < recent:
+            continue
+        try:
+            r = coach_activity(aid)
+        except (HTTPException, ValueError):  # unreadable file: the activity page says why
+            continue
+        lines.append(f"Coach read for activity {aid}: {r['source']}")
+    return lines
+
+
+# Tap-a-number explanations
+
+@app.get("/api/explain/ledger/{name}/{metric}")
+def explain_ledger(name: str, metric: str, day: date | None = None) -> dict:
+    if name not in ledger.LEDGERS or metric not in explain.LEDGER_METRICS:
+        raise HTTPException(404, "Unknown ledger or number")
+    store = get_store()
+    _ledgers_through_today(store)
+    day = day or date.today()
+    rows = {(d.day, d.ledger): d for d in store.ledger_days(day - timedelta(days=1)) if d.day <= day}
+    now = rows.get((day, name))
+    if now is None:
+        raise HTTPException(404, "No ledger for that day")
+    acts = [(a["name"] or a["sport"] or "Activity", a[f"{name}_load"])
+            for a in _activities(store, day) if a["day"] == day.isoformat()]
+    return explain.ledger_metric(name, metric, now, rows.get((day - timedelta(days=1), name)), acts)
+
+
+@app.get("/api/explain/activity/{activity_id}/{metric}")
+def explain_activity(activity_id: int, metric: str) -> dict:
+    if metric not in explain.ACTIVITY_METRICS:
+        raise HTTPException(404, "Unknown number")
+    store = get_store()
+    row = store.activity(activity_id)
+    th = store.thresholds()
+    if row is None or th is None:
+        raise HTTPException(404, "No such activity, or thresholds not set")
+    streams = parse(store.raw(row))
+    streams.sport = streams.sport or row["sport"]
+    r = score(streams, th)
+    if metric.startswith("times_usual_"):
+        name = metric.removeprefix("times_usual_")
+        day = date.fromisoformat(row["start_time"][:10])
+        before = {d.ledger: d.fitness for d in store.ledger_days(day - timedelta(days=1))
+                  if d.day == day - timedelta(days=1)}
+        return explain.times_usual(name, getattr(r, f"{name}_load"), before.get(name))
+    if metric == "cardio_load":
+        dt = np.minimum(np.diff(streams.time, prepend=streams.time[0]), MAX_DT_S)
+        return explain.cardio_load(r, streams, dt, th)
+    return getattr(explain, metric)(r)

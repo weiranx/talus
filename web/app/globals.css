@@ -91,3 +91,8 @@ tr.hl td { background: #fff7ec; }
   .main { padding: 20px 16px 32px; }
   .title { font-size: 26px; }
 }
+
+@media (max-width: 560px) {
+  .coach-read { grid-template-columns: 1fr !important; gap: 2px 0 !important; }
+  .coach-read dd { margin-bottom: 10px !important; }
+}

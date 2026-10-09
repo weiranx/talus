@@ -1,4 +1,7 @@
 import Link from "next/link";
+import { Suspense } from "react";
+import CallCard from "@/components/CallCard";
+import CoachCall from "@/components/CoachCall";
 import CheckIn from "@/components/CheckIn";
 import EngineDown from "@/components/EngineDown";
 import Pill, { statePill } from "@/components/Pill";
@@ -9,9 +12,6 @@ import { dayLabel, LEDGER_LABEL, ledgerBadge, mi, n0, stateLabel } from "@/lib/f
 import { LEDGERS, type Today } from "@/lib/types";
 
 export const dynamic = "force-dynamic";
-
-const CALL_TONE = { go: "good", modify: "warn", rest: "bad" } as const;
-const CALL_TEXT = { go: "Go", modify: "Modify", rest: "Rest" } as const;
 
 export default async function TodayPage() {
   let t: Today;
@@ -35,16 +35,9 @@ export default async function TodayPage() {
 
       <div className="row">
         <div style={{ flex: "2 1 420px", minWidth: 0, display: "flex", flexDirection: "column", gap: 16 }}>
-        <section className="card dark" style={{ padding: "22px 24px 18px" }}>
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-            <h2 className="label">Today&apos;s call</h2>
-            <Pill tone={CALL_TONE[t.call.call]}>{CALL_TEXT[t.call.call]}</Pill>
-          </div>
-          <div style={{ fontSize: 28, lineHeight: "33px", fontWeight: 700, letterSpacing: "-0.01em" }}>{t.call.session}</div>
-          <div style={{ color: "#e4eae7", maxWidth: 620 }}>{t.call.detail}</div>
-          <div style={{ color: "#b9c6c0", fontSize: 14, maxWidth: 620 }}>Why: {t.call.why}</div>
-          <div style={{ color: "#b9c6c0", fontSize: 12 }}>Rule-based call from your load data. The AI coach replaces it in a later milestone.</div>
-        </section>
+        <Suspense fallback={<CallCard call={t.call} note="Rule-based call. The AI coach is writing today's brief." />}>
+          <CoachCall rules={t.call} />
+        </Suspense>
         {t.checkin ? null : <CheckIn initial={null} />}
         </div>
 

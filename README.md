@@ -73,6 +73,7 @@ Talus has sign-in. Each account has its own folder, `data/users/<id>/`, with its
 - **Owner:** the first account. It has no coach spending ceiling, and `talus` commands work on its data unless `--user EMAIL` names another account.
 - **Other accounts:** sign up at `/login`. Each adds its own intervals.icu key under Settings, Data source. The coach runs on the server's Anthropic key, capped at `TALUS_COACH_CAP_USD` a month per account (default $5); each account can set a lower cap. Set `TALUS_SIGNUP=closed` to stop new sign-ups.
 - **Export and delete:** Settings, Account. Export is a zip of the account's database and raw files, without keys. Delete needs the password and removes the folder.
+- **Google sign-in:** set `GOOGLE_CLIENT_ID` and `GOOGLE_CLIENT_SECRET` (a Google Cloud OAuth client of type Web application, redirect URI `http://localhost:3000/api/auth/google/callback`, or `TALUS_PUBLIC_URL` plus that path when served elsewhere). **Continue with Google** then shows on the sign-in screen. A Google account whose verified email matches a Talus account signs into it and is linked; otherwise it makes a new account (unless sign-ups are closed) with no password until one is set. Link or unlink Google under Settings, Account.
 - **CLI:** `talus account list`, `talus account create EMAIL`, `talus account password EMAIL` (resets a forgotten password and signs out its sessions).
 - **Serving beyond localhost:** put it behind HTTPS and set `TALUS_SECURE_COOKIE=1`.
 

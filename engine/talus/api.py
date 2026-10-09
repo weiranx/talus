@@ -9,6 +9,7 @@ from __future__ import annotations
 import io
 import json
 import os
+import secrets
 import sqlite3
 import threading
 import time
@@ -17,12 +18,13 @@ from contextvars import ContextVar
 from datetime import date, datetime, timedelta
 from http.cookies import SimpleCookie
 
+import httpx
 import numpy as np
 from fastapi import BackgroundTasks, FastAPI, HTTPException, Request, Response
-from fastapi.responses import JSONResponse, StreamingResponse
+from fastapi.responses import JSONResponse, RedirectResponse, StreamingResponse
 from pydantic import BaseModel, Field
 
-from . import cli, coach, explain, ledger, wellness, zones
+from . import cli, coach, explain, google_auth, ledger, wellness, zones
 from . import settings as app_settings
 from .accounts import SESSION_DAYS, Account, AccountError, Accounts
 from .config import data_dir, load_env
@@ -765,7 +767,8 @@ def auth_status(request: Request) -> dict:
     accounts = get_accounts()
     account = accounts.session_account(request.cookies.get(COOKIE))
     return {"account": account and _account_json(account), "has_accounts": accounts.count() > 0,
-            "signup_open": _signup_open(accounts), "existing_data": accounts.legacy_data_waiting()}
+            "signup_open": _signup_open(accounts), "existing_data": accounts.legacy_data_waiting(),
+            "google": google_auth.enabled()}
 
 
 @app.post("/api/auth/signup")
@@ -801,7 +804,11 @@ def logout(request: Request, response: Response) -> dict:
 
 @app.get("/api/account")
 def get_account() -> dict:
-    return _account_json(current_account())
+    accounts = get_accounts()
+    account = current_account()
+    return _account_json(account) | {"has_password": accounts.has_password(account.id),
+                                     "google": accounts.identity(account.id, "google"),
+                                     "google_available": google_auth.enabled()}
 
 
 class PasswordIn(BaseModel):
@@ -814,7 +821,8 @@ def change_password(body: PasswordIn, response: Response) -> dict:
     """Changing the password signs out every session, this one included, then signs this one back in."""
     accounts = get_accounts()
     account = current_account()
-    if accounts.authenticate(account.email, body.current) is None:
+    # An account made with Google has no password yet; it can set one without the old one.
+    if accounts.has_password(account.id) and accounts.authenticate(account.email, body.current) is None:
         raise HTTPException(403, "Your current password is wrong.")
     try:
         accounts.set_password(account.id, body.new)
@@ -857,11 +865,112 @@ class DeleteIn(BaseModel):
 
 @app.post("/api/account/delete")
 def delete_account(body: DeleteIn, response: Response) -> dict:
-    """Delete the account and all its data. Needs the password again; cannot be undone."""
+    """Delete the account and all its data. Needs the password again (or, for an account with no
+    password, its email typed out); cannot be undone."""
     accounts = get_accounts()
     account = current_account()
-    if accounts.authenticate(account.email, body.password) is None:
-        raise HTTPException(403, "Your password is wrong.")
+    if accounts.has_password(account.id):
+        if accounts.authenticate(account.email, body.password) is None:
+            raise HTTPException(403, "Your password is wrong.")
+    elif body.password.strip().lower() != account.email.lower():
+        raise HTTPException(403, "Type your email exactly to confirm.")
     accounts.delete(account.id)
     response.delete_cookie(COOKIE, path="/")
+    return {"ok": True}
+
+
+# Sign in with Google. The state, nonce and where to go next ride in a short-lived encrypted
+# cookie, so a callback only completes in the browser that started it.
+
+OAUTH_COOKIE = "talus_oauth"
+OAUTH_TTL_S = 600
+
+
+def _safe_next(path: str | None) -> str:
+    return path if path and path.startswith("/") and not path.startswith("//") else "/"
+
+
+def _back(path: str, error: str | None = None) -> RedirectResponse:
+    from urllib.parse import urlencode
+
+    target = path if error is None else f"{path}?{urlencode({'google_error': error})}"
+    response = RedirectResponse(target, status_code=303)
+    response.delete_cookie(OAUTH_COOKIE, path="/")
+    return response
+
+
+@app.get("/api/auth/google/start")
+def google_start(request: Request, next: str | None = None, link: bool = False) -> RedirectResponse:
+    """Send the browser to Google. With link=1, a signed-in account adds Google to itself."""
+    if not google_auth.enabled():
+        return _back("/login", "Google sign-in isn't set up on this Talus.")
+    accounts = get_accounts()
+    link_to = None
+    if link:
+        account = accounts.session_account(request.cookies.get(COOKIE))
+        if account is None:
+            return _back("/login", "Sign in first.")
+        link_to = account.id
+    state, nonce = secrets.token_urlsafe(24), secrets.token_urlsafe(24)
+    sealed = accounts._cipher().encrypt(json.dumps(
+        {"state": state, "nonce": nonce, "next": _safe_next(next), "link": link_to}).encode()).decode()
+    response = RedirectResponse(google_auth.authorize_url(state, nonce), status_code=303)
+    response.set_cookie(OAUTH_COOKIE, sealed, max_age=OAUTH_TTL_S, httponly=True, samesite="lax", path="/",
+                        secure=os.environ.get("TALUS_SECURE_COOKIE", "") == "1")
+    return response
+
+
+@app.get(google_auth.CALLBACK_PATH)
+def google_callback(request: Request, code: str | None = None, state: str | None = None,
+                    error: str | None = None) -> RedirectResponse:
+    """Google sends the browser back here. A Google account already linked signs in; one whose
+    verified email matches a Talus account links to it and signs in; otherwise a new account is
+    made, if sign-ups are open."""
+    accounts = get_accounts()
+    try:
+        flow = json.loads(accounts._cipher().decrypt(request.cookies.get(OAUTH_COOKIE, "").encode(),
+                                                     ttl=OAUTH_TTL_S))
+    except Exception:
+        return _back("/login", "The Google sign-in timed out. Try again.")
+    home = "/settings" if flow["link"] else "/login"
+    if error or not code:
+        return _back(home, "Google sign-in was cancelled.")
+    if not state or not secrets.compare_digest(state, flow["state"]):
+        return _back(home, "The sign-in didn't match this browser. Try again.")
+    try:
+        subject, email = google_auth.check_claims(google_auth.exchange_code(code), flow["nonce"])
+    except google_auth.GoogleError as e:
+        return _back(home, str(e))
+    except httpx.HTTPError:
+        return _back(home, "Couldn't reach Google. Try again.")
+
+    if flow["link"]:
+        current = accounts.session_account(request.cookies.get(COOKIE))
+        if current is None or current.id != flow["link"]:
+            return _back("/login", "Sign in first.")
+        try:
+            accounts.link_identity(current.id, "google", subject, email)
+        except AccountError as e:
+            return _back("/settings", str(e))
+        return _back("/settings")
+
+    account = accounts.identity_account("google", subject)
+    if account is None:
+        account = accounts.by_email(email)
+        if account is None:
+            if not _signup_open(accounts):
+                return _back("/login", "New accounts are closed on this Talus. Ask its owner.")
+            account = accounts.create(email, None)
+        accounts.link_identity(account.id, "google", subject, email)
+    response = _back(flow["next"])
+    _signed_in(response, accounts, account)
+    return response
+
+
+@app.post("/api/account/google/unlink")
+def google_unlink() -> dict:
+    try:
+        get_accounts().unlink_identity(current_account().id, "google")
+    except AccountError as e:
+        raise HTTPException(409, str(e))
     return {"ok": True}

@@ -4,6 +4,7 @@ import CallCard from "@/components/CallCard";
 import CoachCall from "@/components/CoachCall";
 import CheckIn from "@/components/CheckIn";
 import EngineDown from "@/components/EngineDown";
+import Overnight from "@/components/Overnight";
 import Pill, { statePill } from "@/components/Pill";
 import Sparkline from "@/components/Sparkline";
 import ZoneBar from "@/components/ZoneBar";
@@ -41,7 +42,8 @@ export default async function TodayPage() {
         {t.checkin ? null : <CheckIn initial={null} />}
         </div>
 
-        <section className="card" style={{ flex: "1 1 300px", gap: 14, alignSelf: "flex-start" }}>
+        <div style={{ flex: "1 1 300px", minWidth: 0, display: "flex", flexDirection: "column", gap: 16, alignSelf: "flex-start" }}>
+        <section className="card" style={{ gap: 14 }}>
           <h2 className="label">Readiness</h2>
           {(["engine", "legs"] as const).map((k, i) => (
             <div key={k} style={{ display: "flex", flexDirection: "column", gap: 14 }}>
@@ -56,6 +58,8 @@ export default async function TodayPage() {
             </div>
           ))}
         </section>
+        <Overnight w={t.wellness} />
+        </div>
       </div>
 
       <div className="row">

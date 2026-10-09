@@ -15,6 +15,9 @@ from .parse import parse
 from .score import score
 from .sources.base import RawFile, RemoteActivity, sniff_format, unwrap
 from .store import Store
+from .wellness import BASELINE_DAYS
+
+WELLNESS_DAYS = BASELINE_DAYS + 6
 
 
 def main(argv: list[str] | None = None) -> None:
@@ -30,7 +33,7 @@ def main(argv: list[str] | None = None) -> None:
     t.add_argument("--sex", choices=["male", "female"], default="male")
     t.add_argument("--threshold-pace", help="threshold pace per mile, e.g. 7:30, for runs without HR")
 
-    s = sub.add_parser("sync", help="pull new activities from a platform")
+    s = sub.add_parser("sync", help="pull new activities, plus overnight HRV, resting HR and sleep, from a platform")
     s.add_argument("--source", choices=["intervals", "garmin"], default="intervals")
     s.add_argument("--days", type=int, default=180)
     s.add_argument("--since", type=date.fromisoformat)
@@ -97,6 +100,11 @@ def cmd_sync(store: Store, args) -> None:
             continue
         activity_id = store.add(act, raw)
         _score_and_save(store, activity_id, raw, th, act.sport, label=f"{act.start_time:%Y-%m-%d} {act.name}")
+    if hasattr(source, "list_wellness"):
+        # Readiness reads overnight signals against a 60-day baseline, so always pull that far back.
+        wellness = source.list_wellness(min(since, date.today() - timedelta(days=WELLNESS_DAYS)))
+        store.save_wellness(wellness)
+        print(f"{len(wellness)} days of HRV, resting HR and sleep")
     if th is None:
         print("Set thresholds with `talus thresholds` to score these activities.")
     else:
@@ -201,6 +209,7 @@ def cmd_demo(store: Store, args) -> None:
         act = RemoteActivity(source="demo", source_id=f"{start:%Y%m%d}", start_time=start, name=name,
                              sport="hiking" if "hike" in name.lower() else "running")
         _score_and_save(store, store.add(act, raw), raw, th, act.sport, label=f"{start:%Y-%m-%d} {name}")
+    store.save_wellness(demo.wellness(date.today(), args.weeks))
     rebuild_ledgers(store)
     print(f"Demo data in {store.dir}. Run `talus serve` and open the web app.")
 

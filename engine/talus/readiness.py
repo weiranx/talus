@@ -1,6 +1,7 @@
 """Readiness by system, and a rule-based call for the day until the coach is built.
 
 Engine readiness comes from the cardio ledger; legs from the worse of climb and descent.
+Overnight HRV, resting HR and sleep (see wellness.py) can raise the engine, never the legs.
 The morning check-in can only make a state worse, never better: it is the only ground truth
 for leg damage. Thresholds are starting values.
 """
@@ -8,6 +9,7 @@ for leg damage. Thresholds are starting values.
 from __future__ import annotations
 
 from .ledger import LedgerDay, describe_vs_normal
+from .wellness import engine_effect
 
 STATES = ("fresh", "loaded", "overreached")
 LOADED_ABOVE_NORMAL = 0.15  # last 7 days more than 15% above normal reads as loaded
@@ -27,9 +29,10 @@ def _worse(a: str, b: str) -> str:
     return max(a, b, key=STATES.index)
 
 
-def readiness(today: dict[str, LedgerDay], checkin: dict | None) -> dict:
+def readiness(today: dict[str, LedgerDay], checkin: dict | None, wellness: dict | None = None) -> dict:
     """Each system gets a state and a `reason`: a sentence fragment naming what set that state,
-    load or check-in, so the call for the day never blames load for what the check-in raised."""
+    load, an overnight signal or the check-in, so the call for the day never blames load for
+    what something else raised. `wellness` is wellness.evaluate() for today, or None."""
     engine = ledger_state(today.get("cardio"))
     climb, descent = ledger_state(today.get("climb")), ledger_state(today.get("descent"))
     legs = _worse(climb, descent)
@@ -41,6 +44,11 @@ def readiness(today: dict[str, LedgerDay], checkin: dict | None) -> dict:
 
     engine_reason = f"cardio load is {vs('cardio')}"
     legs_reason = f"{limiter} load is {vs(limiter)}"
+    overnight = engine_effect(wellness)
+    if overnight:
+        raised = _worse(engine, overnight[0])
+        if raised != engine:
+            engine, engine_reason = raised, overnight[1]
     checkin = checkin or {}
     soreness, energy, pain = checkin.get("soreness"), checkin.get("energy"), checkin.get("pain")
     if soreness and soreness >= 4:
@@ -54,7 +62,8 @@ def readiness(today: dict[str, LedgerDay], checkin: dict | None) -> dict:
         if raised != engine:
             engine, engine_reason = raised, f"you rated energy {energy} of 5"
 
-    engine_detail = f"Cardio load {vs('cardio')}." + (f" Energy {energy} of 5." if energy else "")
+    engine_detail = (f"Cardio load {vs('cardio')}." + (f" {_sentence(overnight[1])}" if overnight else "")
+                     + (f" Energy {energy} of 5." if energy else ""))
     legs_detail = f"{limiter.capitalize()} load {vs(limiter)}." + (f" Soreness {soreness} of 5." if soreness else "")
     return {"engine": {"state": engine, "detail": engine_detail, "reason": engine_reason},
             "legs": {"state": legs, "detail": legs_detail, "limiter": limiter, "reason": legs_reason}}

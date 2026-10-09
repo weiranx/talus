@@ -22,6 +22,19 @@ class RemoteActivity:
 
 
 @dataclass
+class WellnessDay:
+    """One morning's overnight record. Platforms file last night's sleep and HRV under the day
+    you woke up, and so does Talus."""
+
+    source: str
+    day: date
+    hrv: float | None = None  # overnight rMSSD, ms
+    resting_hr: float | None = None  # bpm
+    sleep_s: float | None = None  # seconds asleep
+    sleep_score: float | None = None  # the platform's own 0 to 100 score, kept but not used
+
+
+@dataclass
 class RawFile:
     data: bytes
     fmt: str  # "fit", "gpx", "tcx" or "icu-streams" (intervals.icu streams JSON)
@@ -33,6 +46,9 @@ class Source(Protocol):
     def list_activities(self, since: date, until: date | None = None) -> list[RemoteActivity]: ...
 
     def fetch(self, activity: RemoteActivity) -> RawFile | None: ...
+
+    # Optional: sources that also serve overnight health data define
+    # list_wellness(since, until=None) -> list[WellnessDay].
 
 
 def unwrap(data: bytes) -> bytes:

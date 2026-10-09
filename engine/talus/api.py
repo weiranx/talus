@@ -13,7 +13,7 @@ import numpy as np
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel, Field
 
-from . import coach, ledger
+from . import coach, ledger, wellness
 from .config import data_dir, load_env
 from .parse import parse
 from .readiness import daily_call, readiness
@@ -85,12 +85,14 @@ def today() -> dict:
     recent = store.ledger_days(day - timedelta(days=41))
     now = {d.ledger: d for d in recent if d.day == day}
     checkin = store.checkin(day)
-    ready = readiness(now, checkin)
+    overnight = wellness.evaluate(store.wellness(day - timedelta(days=wellness.BASELINE_DAYS - 1), day), day)
+    ready = readiness(now, checkin, overnight)
     week_start = day - timedelta(days=day.weekday())
     week = sorted(_activities(store, week_start), key=lambda a: a["start_time"])
     return {
         "date": day.isoformat(),
         "checkin": checkin,
+        "wellness": overnight,
         "readiness": ready,
         "call": daily_call(ready, checkin, th.aet) | {"source": "rules"},
         "ledgers": {name: _ledger_json(now[name]) | {"spark": [

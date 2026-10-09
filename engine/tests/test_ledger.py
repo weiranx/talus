@@ -84,3 +84,38 @@ def test_plain_language():
     assert ledger.describe_vs_normal(None) == "no history yet"
     assert ledger.times_usual_day(3300, 1000) == pytest.approx(3.3)
     assert ledger.times_usual_day(100, 0) is None
+
+
+def _steady(start, days, every=1, load=100.0):
+    return [(start + timedelta(days=k), {"cardio": load, "climb": load * 10, "descent": load * 8})
+            for k in range(0, days, every)]
+
+
+def test_long_gap_is_missing_data_not_rest():
+    from talus import ledger
+    spring = _steady(date(2026, 3, 1), 40)
+    autumn = _steady(date(2026, 9, 1), 39)
+    days = ledger.build(spring + autumn, until=date(2026, 10, 9))
+    assert not [d for d in days if date(2026, 4, 10) < d.day < date(2026, 9, 1)]  # no rows for the gap
+    last = [d for d in days if d.ledger == "cardio"][-1]
+    # Same load every day after the gap: normal is that load, not dragged toward zero by summer.
+    assert abs(last.fitness - 100) < 1 and abs(last.vs_normal) < 0.01 and not last.flags
+    assert ledger.segments([d for d, _ in spring + autumn]) == [
+        (date(2026, 3, 1), date(2026, 4, 9)), (date(2026, 9, 1), date(2026, 10, 9))]
+
+
+def test_a_rest_fortnight_still_counts_as_rest():
+    from talus import ledger
+    acts = _steady(date(2026, 8, 1), 40) + _steady(date(2026, 9, 24), 10)  # 14 days off between
+    days = [d for d in ledger.build(acts, until=date(2026, 10, 3)) if d.ledger == "cardio"]
+    assert len(ledger.segments([d for d, _ in acts])) == 1
+    assert len(days) == (date(2026, 10, 3) - date(2026, 8, 1)).days + 1  # every day kept
+    rest_end = [d for d in days if d.day == date(2026, 9, 23)][0]
+    assert rest_end.fitness < 80  # the fortnight off lowered fitness, as rest should
+
+
+def test_current_span_starts_after_the_last_gap():
+    from talus import ledger
+    days = ledger.build(_steady(date(2026, 3, 1), 10) + _steady(date(2026, 9, 1), 5), until=date(2026, 9, 10))
+    span = ledger.current_span(days)
+    assert min(d.day for d in span) == date(2026, 9, 1)

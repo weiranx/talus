@@ -15,6 +15,9 @@ from .parse import parse
 from .score import score
 from .sources.base import RawFile, RemoteActivity, sniff_format, unwrap
 from .store import Store
+from .wellness import BASELINE_DAYS
+
+WELLNESS_DAYS = BASELINE_DAYS + 6
 
 
 def main(argv: list[str] | None = None) -> None:
@@ -34,7 +37,7 @@ def main(argv: list[str] | None = None) -> None:
     inf.add_argument("--days", type=int, default=180)
     inf.add_argument("--apply", action="store_true", help="save the AeT and AnT estimates as your thresholds")
 
-    s = sub.add_parser("sync", help="pull new activities from a platform")
+    s = sub.add_parser("sync", help="pull new activities, plus overnight HRV, resting HR and sleep, from a platform")
     s.add_argument("--source", choices=["intervals", "garmin"], default="intervals")
     s.add_argument("--days", type=int, default=180)
     s.add_argument("--since", type=date.fromisoformat)
@@ -172,6 +175,17 @@ def sync(store: Store, source_name: str, since: date, log=print) -> dict:
             result["saved"] += 1
             _score_and_save(store, activity_id, raw, th, act.sport,
                             label=f"{act.start_time:%Y-%m-%d} {act.name}", log=log)
+        if hasattr(source, "list_wellness"):
+            # Readiness reads overnight signals against a 60-day baseline, so always pull that far back.
+            # Best effort: activities are already saved, and readiness works without overnight data.
+            try:
+                days = source.list_wellness(min(since, date.today() - timedelta(days=WELLNESS_DAYS)))
+            except Exception as e:
+                log(f"  HRV, resting HR and sleep not pulled: {type(e).__name__}: {e}")
+            else:
+                store.save_wellness(days)
+                result["wellness_days"] = len(days)
+                log(f"{len(days)} days of HRV, resting HR and sleep")
         if th is None:
             log("Set thresholds with `talus thresholds` to score these activities.")
         else:
@@ -298,6 +312,7 @@ def cmd_demo(store: Store, args) -> None:
         act = RemoteActivity(source="demo", source_id=f"{start:%Y%m%d}", start_time=start, name=name,
                              sport="hiking" if "hike" in name.lower() else "running")
         _score_and_save(store, store.add(act, raw), raw, th, act.sport, label=f"{start:%Y-%m-%d} {name}")
+    store.save_wellness(demo.wellness(date.today(), args.weeks))
     rebuild_ledgers(store)
     print(f"Demo data in {store.dir}. Run `talus serve` and open the web app.")
 

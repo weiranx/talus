@@ -8,6 +8,7 @@ import math
 import random
 from datetime import date, datetime, timedelta
 
+from .sources.base import WellnessDay
 from .units import M_PER_MI, m_from_ft
 
 # (name, miles, feet up and down, max grade %, easy pace min/mi on the flat)
@@ -74,3 +75,19 @@ def sessions(today: date, weeks: int = 10, seed: int = 7):
             start = datetime.combine(day, datetime.min.time()) + timedelta(hours=14)
             yield start, name, gpx(start, miles * scale, gain * scale, grade, pace, rng)
         day += timedelta(days=1)
+
+
+def wellness(today: date, weeks: int = 10, seed: int = 7) -> list[WellnessDay]:
+    """Overnight HRV, resting HR and sleep for every morning, with a dip after the big ridge day
+    that the 7-day HRV average absorbs, so the engine still reads fresh. One night is missing."""
+    rng = random.Random(seed)
+    out = []
+    for k in range(weeks * 7, -1, -1):
+        day = today - timedelta(days=k)
+        if k == 4:
+            continue  # watch not worn
+        dip = 1 if k in (0, 1) else 0
+        out.append(WellnessDay(source="demo", day=day, hrv=round(rng.gauss(62, 4) * (1 - 0.12 * dip), 1),
+                               resting_hr=round(rng.gauss(46, 1.2) + 2 * dip),
+                               sleep_s=round(rng.gauss(7.6, 0.4) * 3600 - 1200 * dip)))
+    return out

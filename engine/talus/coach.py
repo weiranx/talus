@@ -18,7 +18,7 @@ from dataclasses import dataclass, field
 from datetime import date
 from typing import Any, Protocol
 
-PROMPT_VERSION = "coach-v0.2"
+PROMPT_VERSION = "coach-v0.3"
 # The daily brief is short and mostly explains the engine's call, so it runs on Haiku; the
 # workout analysis has more to read and judge, so it stays on Opus. Both can be changed in
 # Settings, and TALUS_COACH_MODEL overrides both defaults.
@@ -55,6 +55,7 @@ Talus tracks three separate loads, because mountain training stresses three syst
 - climb: feet gained, weighted by grade band (under 8%, 8 to 20%, over 20%).
 - descent: feet lost, weighted by grade band; steep, fast descending costs the most. Descent load is what makes quads sore for days.
 For each load, "normal" is the 42-day average per day and "last 7 days" is the 7-day average per day. "vs_normal_pct" is how far last 7 days sits above or below normal. Readiness says whether the engine (cardio) and the legs (worse of climb and descent) are fresh, loaded or overreached, and why. The morning check-in (soreness, energy and pain, each 1 to 5) can only make readiness worse.
+Overnight signals from the watch can only make the engine worse, never the legs: HRV is the 7-day average against a 60-day baseline, resting heart rate is last night against a 60-day baseline, and sleep is last night and the 7-day average against the athlete's stated need. A signal with status "no_data" or "building" is missing or has too little history: say so if it matters, and never guess its value.
 
 Your reader is the athlete. They use miles and feet, never km or meters, and they always weigh distance and vert together.
 
@@ -65,7 +66,7 @@ Rules:
 4. Ground every claim in a load, a state, a flag, a segment or the check-in, and name it.
 5. Pain above 3 of 5 means rest and, if it persists, see a clinician. Never talk an athlete into training through pain.
 
-Daily brief: you get today's readiness, the three loads, the last 14 days of activities, this week's totals, 28-day intensity and the rule-based call. The engine sets the session; you make the call and explain it:
+Daily brief: you get today's readiness, the overnight signals, the three loads, the last 14 days of activities, this week's totals, 28-day intensity and the rule-based call. The engine sets the session; you make the call and explain it:
 - call: go, modify or rest. Keep rule_call's call unless something in the data argues for more caution; never be less cautious. If you keep it, the athlete gets rule_call's session; if you choose a more cautious call, they get an easier one.
 - why: two or three sentences on what in the data drives the call, naming the loads, states or check-in behind it. Do not prescribe a different session.
 
@@ -138,6 +139,21 @@ def _activity_line(a: dict) -> dict:
             "descent_load": _r(a["descent_load"])}
 
 
+def _overnight(w: dict | None) -> dict | None:
+    if w is None:
+        return None
+    hrv, rhr, sleep = w["hrv"], w["resting_hr"], w["sleep"]
+    return {
+        "hrv_ms": {"status": hrv["status"], "last_night": _r(hrv["last_night"]), "avg_7d": _r(hrv["avg_7d"]),
+                   "baseline_60d": _r(hrv["baseline"]),
+                   "vs_baseline_pct": None if hrv["vs_baseline"] is None else _r(hrv["vs_baseline"] * 100)},
+        "resting_hr_bpm": {"status": rhr["status"], "last_night": _r(rhr["last_night"]),
+                           "baseline_60d": _r(rhr["baseline"]), "vs_baseline": _r(rhr["vs_baseline_bpm"])},
+        "sleep_hours": {"status": sleep["status"], "last_night": _r(sleep["last_night_h"], 1),
+                        "avg_7d": _r(sleep["avg_7d_h"], 1), "need": _r(sleep["need_h"], 1)},
+    }
+
+
 def brief_packet(today: dict, last_14_days: list[dict]) -> dict:
     """Compact context for the daily brief, built from the /api/today payload."""
     ready = today["readiness"]
@@ -146,6 +162,7 @@ def brief_packet(today: dict, last_14_days: list[dict]) -> dict:
         "date": today["date"],
         "athlete": _athlete(today["thresholds"]),
         "checkin": today["checkin"],
+        "overnight": _overnight(today.get("wellness")),
         "readiness": {"engine": {k: ready["engine"][k] for k in ("state", "reason")},
                       "legs": {k: ready["legs"][k] for k in ("state", "reason", "limiter")}},
         "rule_call": {k: today["call"][k] for k in ("call", "session", "detail", "why")},

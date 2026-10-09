@@ -11,7 +11,7 @@ from pathlib import Path
 from . import MODEL_VERSION
 from .ledger import LedgerDay
 from .models import ActivityScore, Thresholds
-from .sources.base import RawFile, RemoteActivity
+from .sources.base import RawFile, RemoteActivity, WellnessDay
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS athlete (
@@ -62,6 +62,15 @@ CREATE TABLE IF NOT EXISTS daily_health (
     soreness INTEGER,
     energy INTEGER,
     pain INTEGER,
+    updated_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS wellness (
+    day TEXT PRIMARY KEY,
+    hrv REAL,
+    resting_hr REAL,
+    sleep_s REAL,
+    sleep_score REAL,
+    source TEXT NOT NULL,
     updated_at TEXT NOT NULL
 );
 CREATE TABLE IF NOT EXISTS coach_log (
@@ -214,6 +223,20 @@ class Store:
     def checkin(self, day: date) -> dict | None:
         r = self.db.execute("SELECT * FROM daily_health WHERE day = ?", (day.isoformat(),)).fetchone()
         return None if r is None else {"soreness": r["soreness"], "energy": r["energy"], "pain": r["pain"]}
+
+    # Wellness: overnight HRV, resting HR and sleep from the watch platform, one row per morning
+    def save_wellness(self, days: list[WellnessDay]) -> None:
+        now = datetime.now().isoformat(timespec="seconds")
+        self.db.executemany(
+            "INSERT OR REPLACE INTO wellness VALUES (?, ?, ?, ?, ?, ?, ?)",
+            [(d.day.isoformat(), d.hrv, d.resting_hr, d.sleep_s, d.sleep_score, d.source, now) for d in days])
+        self.db.commit()
+
+    def wellness(self, since: date, until: date) -> dict[date, dict]:
+        rows = self.db.execute("SELECT * FROM wellness WHERE day BETWEEN ? AND ?",
+                               (since.isoformat(), until.isoformat())).fetchall()
+        return {date.fromisoformat(r["day"]): {k: r[k] for k in ("hrv", "resting_hr", "sleep_s", "sleep_score")}
+                for r in rows}
 
     # Coach log: every call kept whole, so replies can be audited and prompts compared
     def log_coach(self, mode: str, subject: str, prompt_version: str, packet_hash: str, packet: dict,

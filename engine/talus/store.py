@@ -14,7 +14,7 @@ from pathlib import Path
 from . import MODEL_VERSION, ledger
 from .ledger import LedgerDay
 from .models import ActivityScore, Thresholds
-from .sources.base import RawFile, RemoteActivity, WellnessDay
+from .sources.base import RawFile, RemoteActivity, WellnessDay, local_naive
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS athlete (
@@ -107,6 +107,8 @@ CREATE TABLE IF NOT EXISTS setting (
 
 EXT = {"fit": "fit", "gpx": "gpx", "tcx": "tcx", "icu-streams": "json"}
 BUSY_TIMEOUT_S = 30
+DUP_START_S = 180
+DUP_DISTANCE = 0.15
 
 # The API opens a Store per request on a thread pool. Writes within one process take this lock,
 # one per database file, so they queue instead of colliding; WAL lets reads run alongside them,
@@ -194,6 +196,27 @@ class Store:
     def has(self, source: str, source_id: str) -> bool:
         return self.db.execute("SELECT 1 FROM activity WHERE source = ? AND source_id = ?",
                                (source, source_id)).fetchone() is not None
+
+    def duplicate_of(self, start_time: datetime | None, distance_m: float | None = None) -> int | None:
+        """The stored activity this one repeats, if any: the same workout reaching Talus from a
+        second source (Garmin and intervals.icu, or a file you also synced). Same start within
+        DUP_START_S, and the same distance within DUP_DISTANCE when both know it."""
+        if start_time is None:
+            return None
+        start = local_naive(start_time)
+        lo, hi = (start - timedelta(days=1)).date().isoformat(), (start + timedelta(days=2)).date().isoformat()
+        rows = self.db.execute(
+            "SELECT id, start_time, platform_distance_m FROM activity WHERE start_time BETWEEN ? AND ?",
+            (lo, hi)).fetchall()
+        for r in rows:
+            other = local_naive(datetime.fromisoformat(r["start_time"]))
+            if abs((other - start).total_seconds()) > DUP_START_S:
+                continue
+            d = r["platform_distance_m"]
+            if distance_m and d and abs(distance_m - d) > DUP_DISTANCE * max(distance_m, d):
+                continue
+            return r["id"]
+        return None
 
     @_writes
     def add(self, act: RemoteActivity, raw: RawFile) -> int:
@@ -339,10 +362,12 @@ class Store:
 
     # Wellness: overnight HRV, resting HR and sleep from the watch platform, one row per morning
     @_writes
-    def save_wellness(self, days: list[WellnessDay]) -> None:
+    def save_wellness(self, days: list[WellnessDay], fill_only: bool = False) -> None:
+        """fill_only keeps days already stored, for a source that would otherwise overwrite a
+        fuller record (Apple Health has no rMSSD HRV, so it never replaces a watch's night)."""
         now = datetime.now().isoformat(timespec="seconds")
         self.db.executemany(
-            "INSERT OR REPLACE INTO wellness VALUES (?, ?, ?, ?, ?, ?, ?)",
+            f"INSERT OR {'IGNORE' if fill_only else 'REPLACE'} INTO wellness VALUES (?, ?, ?, ?, ?, ?, ?)",
             [(d.day.isoformat(), d.hrv, d.resting_hr, d.sleep_s, d.sleep_score, d.source, now) for d in days])
         self.db.commit()
 

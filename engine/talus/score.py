@@ -90,6 +90,7 @@ def score(s: Streams, th: Thresholds) -> ActivityScore:
         longest_climb_ft=ft(max(climbs, default=0.0)),
         longest_descent_ft=ft(max(descents, default=0.0)),
         minutes_above_8000ft=float(np.sum(dt[alt > ALTITUDE_EXPOSURE_M]) / 60) if alt is not None else 0.0,
+        hike_loss_by_band_ft={b: ft(v) for b, v in hike_loss.items()},
         segments=segments(s, grade, gain, loss, hiking & moving, dt, moving, bands, hiking),
         notes=notes,
         model_version=MODEL_VERSION,

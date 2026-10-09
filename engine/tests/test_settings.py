@@ -25,7 +25,8 @@ def test_settings_before_anything_is_set(tmp_path, monkeypatch):
                            "garmin_fallback_set": False, "activities": 0, "latest_activity": None,
                            "last_sync": None}
     assert s["coach"]["enabled"] and not s["coach"]["key_set"]
-    assert s["coach"]["brief_model"] == s["coach"]["analysis_model"] == coach.MODEL
+    assert (s["coach"]["brief_model"], s["coach"]["analysis_model"]) == ("claude-haiku-5-5", "claude-opus-5-5")
+    assert s["coach"]["style"] == "plain" and {x["key"] for x in s["coach"]["styles"]} == set(coach.STYLES)
     assert s["units"] == {"distance": "mi", "vert": "ft"}
 
 
@@ -74,15 +75,15 @@ def test_coach_uses_the_chosen_model_per_mode(tmp_path, monkeypatch):
     fake = FakeClient({"call": "rest", "why": f"Your {t['readiness']['legs']['limiter']} load is high."},
                       {"call": "rest", "why": f"Your {t['readiness']['legs']['limiter']} load is high."})
     monkeypatch.setattr(api, "coach_client", lambda: fake)
-    client.get("/api/coach/brief")
-    client.put("/api/settings/coach", json={"enabled": True, "brief_model": "claude-haiku-5-5",
+    client.get("/api/coach/brief")  # the brief runs on Haiku unless changed
+    client.put("/api/settings/coach", json={"enabled": True, "brief_model": "claude-opus-5-5",
                                             "analysis_model": "claude-opus-5-5"})
     client.get("/api/coach/brief")  # a new model is a new reply, not the cached one
-    assert [c["model"] for c in fake.calls] == ["claude-opus-5-5", "claude-haiku-5-5"]
-    assert "fallbacks" in fake.calls[0] and "fallbacks" not in fake.calls[1]  # Haiku has no fallback
+    assert [c["model"] for c in fake.calls] == ["claude-haiku-5-5", "claude-opus-5-5"]
+    assert "fallbacks" not in fake.calls[0] and "fallbacks" in fake.calls[1]  # Haiku has no fallback
     est = client.get("/api/settings").json()["coach"]["estimate"]
     haiku, opus = est["brief"]["claude-haiku-5-5"], est["brief"]["claude-opus-5-5"]
-    assert haiku["from_log"] and haiku["per_call"] < opus["per_call"] / 30 and haiku["calls_per_month"] == 30
+    assert haiku["from_log"] and haiku["per_call"] < opus["per_call"] / 30 and haiku["calls_per_month"] == 60
     assert est["analysis"]["claude-opus-5-5"]["calls_per_month"] == 30 and not est["analysis"]["claude-opus-5-5"]["from_log"]
     assert client.put("/api/settings/coach", json={"enabled": True, "brief_model": "gpt",
                                                    "analysis_model": "claude-opus-5-5"}).status_code == 422
@@ -94,11 +95,14 @@ def test_sync_now_records_the_last_sync(tmp_path, monkeypatch):
     assert client.post("/api/sync", json={"days": 30}).status_code == 409
     monkeypatch.setenv("INTERVALS_API_KEY", "k")
     monkeypatch.setattr("talus.sources.intervals.IntervalsSource", lambda: source())
+    warmed = []
+    monkeypatch.setattr(api, "warm_coach", warmed.append)  # the coach writes after the response
     days = (date.today() - date(2026, 9, 1)).days  # the mock serves activities from 2026-09-01
     r = client.post("/api/sync", json={"days": days})
     assert r.status_code == 200
     out = r.json()
     assert (out["listed"], out["new"], out["saved"], out["error"]) == (2, 2, 2, None)
+    assert "added_ids" not in out and len(warmed) == 1 and len(warmed[0]) == 2
     last = client.get("/api/settings").json()["source"]["last_sync"]
     assert last["new"] == 2 and last["since"] == out["since"]
     assert json.dumps(last).count("secret") == 0

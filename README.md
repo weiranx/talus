@@ -22,6 +22,7 @@ Single-user prototype. Milestones 1 to 5 are here: sync from intervals.icu, file
 | `engine/talus/readiness.py` | Engine and legs readiness, and the rule-based call for the day |
 | `engine/talus/api.py` | HTTP API the web app reads (`talus serve`) |
 | `engine/talus/settings.py` | Coach settings and model prices for the Settings screen |
+| `engine/talus/explain.py` | Tap-a-number explanations: the inputs, formula and arithmetic behind each number |
 | `engine/talus/demo.py` | Ten weeks of sample training for trying the app |
 | `web/` | Next.js web app: Today, Load, Activities, Settings |
 | `engine/talus/store.py` | SQLite plus raw files kept on disk for rescoring |
@@ -69,7 +70,7 @@ The Settings screen (`/settings`) edits what the engine stores in SQLite:
 
 - **Heart rate and zones:** resting, AeT, AnT and max, with the zones they make. Leave AeT blank for 88% of AnT, marked provisional. Saving rescores every activity. Estimates from `talus infer` show beside your numbers with their confidence and source runs; **Use these** fills the form for you to check and save.
 - **Data source:** whether the intervals.icu key is set, activity count, the last sync (from here or the CLI) and **Sync now**.
-- **AI coach:** on or off, and the model for the brief and for workout analysis, with an estimated cost per call and per month (from your own token usage once the coach has run).
+- **AI coach:** on or off, the coaching style, and the model for the brief and for workout analysis, with an estimated cost per call and per month (from your own token usage once the coach has run).
 - **Units:** miles and feet.
 
 API keys stay in `.env`. The engine reports only whether each one is set and never sends a key to the browser.
@@ -78,12 +79,17 @@ API keys stay in `.env`. The engine reports only whether each one is set and nev
 
 Put an Anthropic API key in `.env` as `ANTHROPIC_API_KEY` to turn it on. Without one, Today and Activity show rule-based text, labeled as such.
 
-- **When it calls:** the daily brief when you open Today, the workout analysis the first time you open an activity. Replies are saved and reused until the input changes (new day, check-in, new activity), so reloads are free. Nothing runs in the background.
+- **When it calls:** right after each sync or import (`talus sync`, `talus import` or **Sync now**), it writes today's brief and a read of each new activity from the last 14 days, so the pages open with them ready. It also runs when you open a page whose input changed since (your check-in, a new day, an older activity). Replies are saved and reused until the input changes, so reloads are free. `--no-coach` skips the run after a sync or import.
 - **What it sees:** a compact packet of engine numbers (`talus/coach.py`): loads, readiness, check-in, the rule-based call, the last 14 days. No GPS, no names.
 - **Number check:** every number in a reply must appear in the packet, rounded no finer than it appears there (within 5% when rounded to tens or more). One retry, then the rule-based text.
 - **Who decides what:** in the brief the coach picks the call and explains it, but the session is always the engine's. The call may be more cautious than the rule-based one, never less, and a more cautious call gets the engine's easier session.
-- **Model:** `claude-opus-5-5` by default, with low effort for the brief and medium for analysis; change it per mode in Settings (`TALUS_COACH_MODEL` sets the default). Opus and Sonnet requests opt in to server-side fallback, so a declined request is re-run on Anthropic's recommended substitute; Haiku 5.5 doesn't support it and runs without.
+- **Model:** `claude-haiku-5-5` for the brief (low effort) and `claude-opus-5-5` for workout analysis (medium effort) by default; change either in Settings (`TALUS_COACH_MODEL` sets both defaults). Opus and Sonnet requests opt in to server-side fallback, so a declined request is re-run on Anthropic's recommended substitute; Haiku 5.5 doesn't support it and runs without.
+- **Style:** plain, blunt, encouraging or teaching, set in Settings. Style changes the voice only: the same rules, number check and engine-owned session apply to every style.
 - **Log:** every call is stored whole in the `coach_log` table: packet, prompt version, model, reply, token usage, retries and your thumbs up or down.
+
+### Where a number comes from
+
+Numbers with a dotted underline open their working when tapped: on Today, each ledger's "vs your normal", last 7 days and normal; on an activity, effort miles, each load and each "x a usual day". The panel shows the inputs, the formula and the arithmetic, all from the engine (`/api/explain/...`, `talus/explain.py`), in miles and feet.
 
 ### Thresholds from your own runs
 

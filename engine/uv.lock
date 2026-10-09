@@ -963,7 +963,7 @@ requires-dist = [
     { name = "cryptography", specifier = ">=42" },
     { name = "fastapi", specifier = ">=0.110" },
     { name = "fitdecode", specifier = ">=0.10" },
-    { name = "garminconnect", marker = "extra == 'garmin'", specifier = ">=0.2.30" },
+    { name = "garminconnect", marker = "extra == 'garmin'", specifier = ">=0.3.17" },
     { name = "httpx", specifier = ">=0.27" },
     { name = "numpy", specifier = ">=2.0" },
     { name = "uvicorn", specifier = ">=0.29" },

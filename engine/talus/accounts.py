@@ -6,7 +6,8 @@ activities, thresholds, settings or coach log: there is no shared table to filte
 accounts.db, next to the folders, holds only who can sign in, their sessions and their
 data-source keys (encrypted).
 
-Passwords are hashed with scrypt. Sessions are random tokens; only their SHA-256 is stored.
+Passwords are hashed with scrypt. An account can also sign in with Google (identity table); an
+account made through Google has no password until its owner sets one. Sessions are random tokens; only their SHA-256 is stored.
 
 SQLite is enough while this runs on one machine for a handful of people. Postgres becomes worth it
 when the engine runs as more than one process or host (it would need one shared database), or
@@ -54,6 +55,15 @@ CREATE TABLE IF NOT EXISTS credential (
     secret TEXT NOT NULL,
     updated_at TEXT NOT NULL,
     PRIMARY KEY (account_id, source)
+);
+CREATE TABLE IF NOT EXISTS identity (
+    provider TEXT NOT NULL,
+    subject TEXT NOT NULL,
+    account_id INTEGER NOT NULL REFERENCES account(id) ON DELETE CASCADE,
+    email TEXT,
+    linked_at TEXT NOT NULL,
+    PRIMARY KEY (provider, subject),
+    UNIQUE (account_id, provider)
 );
 """
 
@@ -141,7 +151,16 @@ class Accounts:
 
     def legacy_data_waiting(self) -> bool:
         """True when a single-user install's data sits in account 1's folder with no account yet."""
-        return self.count() == 0 and (self.user_dir(1) / "talus.db").exists()
+        db = self.user_dir(1) / "talus.db"
+        if self.count() or not db.exists():
+            return False
+        con = sqlite3.connect(f"file:{db}?mode=ro", uri=True)
+        try:
+            return con.execute("SELECT EXISTS (SELECT 1 FROM activity)").fetchone()[0] == 1
+        except sqlite3.Error:  # no activity table yet: an empty store opened before sign-up
+            return False
+        finally:
+            con.close()
 
     def _row(self, r: sqlite3.Row | None) -> Account | None:
         return None if r is None else Account(r["id"], r["email"], bool(r["is_owner"]), r["created_at"])
@@ -158,13 +177,14 @@ class Accounts:
     def all(self) -> list[Account]:
         return [self._row(r) for r in self.db.execute("SELECT * FROM account ORDER BY id")]
 
-    def create(self, email: str, password: str) -> Account:
+    def create(self, email: str, password: str | None) -> Account:
         """The first account is the owner: it gets the existing data (account 1's folder), the
-        .env data-source keys, and no coach spending ceiling."""
+        .env data-source keys, and no coach spending ceiling. No password means the account
+        signs in with Google only, until a password is set."""
         email = email.strip()
         if not EMAIL.match(email):
             raise AccountError("Enter a valid email address.")
-        if len(password) < MIN_PASSWORD:
+        if password is not None and len(password) < MIN_PASSWORD:
             raise AccountError(f"Use a password of at least {MIN_PASSWORD} characters.")
         if self.by_email(email):
             raise AccountError("An account with that email already exists.")
@@ -175,7 +195,8 @@ class Accounts:
         try:
             cur = self.db.execute(
                 "INSERT INTO account (id, email, password_hash, is_owner, created_at) VALUES (?, ?, ?, ?, ?)",
-                (1 if first else None, email, hash_password(password), int(first), _now().isoformat()))
+                (1 if first else None, email, "" if password is None else hash_password(password), int(first),
+                 _now().isoformat()))
         except sqlite3.IntegrityError:  # the same email, or a second first account, signed up at once
             self.db.rollback()
             raise AccountError("An account with that email already exists.") from None
@@ -194,6 +215,36 @@ class Accounts:
             check_password(password, hash_password("timing"))  # same work whether or not the email exists
             return None
         return self._row(r) if check_password(password, r["password_hash"]) else None
+
+    def has_password(self, account_id: int) -> bool:
+        r = self.db.execute("SELECT password_hash FROM account WHERE id = ?", (account_id,)).fetchone()
+        return bool(r and r["password_hash"])
+
+    # Sign-in identities from other providers (Google), by the provider's stable subject id
+    def identity_account(self, provider: str, subject: str) -> Account | None:
+        return self._row(self.db.execute(
+            "SELECT a.* FROM identity i JOIN account a ON a.id = i.account_id WHERE i.provider = ? AND i.subject = ?",
+            (provider, subject)).fetchone())
+
+    def identity(self, account_id: int, provider: str) -> dict | None:
+        r = self.db.execute("SELECT email, linked_at FROM identity WHERE account_id = ? AND provider = ?",
+                            (account_id, provider)).fetchone()
+        return None if r is None else {"email": r["email"], "linked_at": r["linked_at"]}
+
+    def link_identity(self, account_id: int, provider: str, subject: str, email: str | None) -> None:
+        owner = self.identity_account(provider, subject)
+        if owner is not None and owner.id != account_id:
+            raise AccountError("That Google account is already linked to another Talus account.")
+        self.db.execute("DELETE FROM identity WHERE account_id = ? AND provider = ?", (account_id, provider))
+        self.db.execute("INSERT INTO identity VALUES (?, ?, ?, ?, ?)",
+                        (provider, subject, account_id, email, _now().isoformat()))
+        self.db.commit()
+
+    def unlink_identity(self, account_id: int, provider: str) -> None:
+        if not self.has_password(account_id):
+            raise AccountError("Set a password first, so you can still sign in.")
+        self.db.execute("DELETE FROM identity WHERE account_id = ? AND provider = ?", (account_id, provider))
+        self.db.commit()
 
     def set_password(self, account_id: int, password: str) -> None:
         if len(password) < MIN_PASSWORD:

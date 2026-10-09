@@ -194,6 +194,20 @@ export interface LastSync {
   listed: number;
   new: number;
   saved: number;
+  duplicates?: number;
+  error: string | null;
+}
+
+export interface LastImport {
+  at: string;
+  source: "file" | "apple_health";
+  files: number;
+  listed: number;
+  new: number;
+  duplicates: number;
+  failed: string[];
+  wellness_days: number;
+  no_data?: number;
   error: string | null;
 }
 
@@ -213,6 +227,14 @@ export interface Settings {
     latest_activity: string | null;
     last_sync: LastSync | null;
   };
+  sources: {
+    intervals: { connected: boolean; last_sync: LastSync | null };
+    // Garmin direct is unofficial and offered to the owner account only.
+    garmin: { available: boolean; connected: boolean; updated_at: string | null; mfa_pending: boolean; last_sync: LastSync | null };
+    upload: { last_import: LastImport | null; max_mb: number };
+    // Posted by the Talus iOS app to /api/import/healthkit.
+    healthkit: { last_sync: { at: string; workouts_added: number; workouts_skipped: number; wellness_days: number } | null };
+  };
   coach: {
     enabled: boolean;
     key_set: boolean;
@@ -229,7 +251,15 @@ export interface Settings {
   units: { distance: "mi"; vert: "ft" };
 }
 
-export interface Account { id: number; email: string; is_owner: boolean; created_at: string }
+export interface Account {
+  id: number;
+  email: string;
+  is_owner: boolean;
+  created_at: string;
+  has_password: boolean;
+  google: { email: string | null; linked_at: string } | null;
+  google_available: boolean;
+}
 
 export interface Explanation {
   title: string;

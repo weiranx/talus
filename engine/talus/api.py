@@ -9,6 +9,7 @@ from __future__ import annotations
 import io
 import json
 import os
+import secrets
 import sqlite3
 import threading
 import time
@@ -17,12 +18,13 @@ from contextvars import ContextVar
 from datetime import date, datetime, timedelta
 from http.cookies import SimpleCookie
 
+import httpx
 import numpy as np
 from fastapi import BackgroundTasks, FastAPI, HTTPException, Request, Response
-from fastapi.responses import JSONResponse, StreamingResponse
+from fastapi.responses import JSONResponse, RedirectResponse, StreamingResponse
 from pydantic import BaseModel, ConfigDict, Field
 
-from . import cli, coach, explain, ledger, wellness, zones
+from . import cli, coach, explain, google_auth, ledger, wellness, zones
 from . import settings as app_settings
 from .accounts import SESSION_DAYS, Account, AccountError, Accounts
 from .config import data_dir, load_env
@@ -493,6 +495,7 @@ def get_settings() -> dict:
             "latest_activity": max((r["start_time"][:10] for r in acts), default=None),
             "last_sync": saved.get("last_sync"),
         },
+        "sources": _sources(saved),
         "coach": {
             "enabled": cfg["coach_enabled"],
             "key_set": bool(os.environ.get("ANTHROPIC_API_KEY")),
@@ -639,23 +642,180 @@ def delete_source() -> dict:
     return {"ok": True}
 
 
+def _sources(saved: dict) -> dict:
+    """Every way data can reach this account, for the Data sources card. Sync sources carry
+    their own last sync; uploads share the last import."""
+    accounts, account = get_accounts(), _account.get()
+    garmin = accounts.credential(account.id, "garmin") if account else None
+    return {
+        "intervals": {"connected": _intervals_credential() is not None,
+                      "last_sync": saved.get("last_sync_intervals")
+                      or (saved.get("last_sync") if (saved.get("last_sync") or {}).get("source") == "intervals" else None)},
+        "garmin": {"available": _is_owner(), "connected": garmin is not None,
+                   "updated_at": garmin and garmin["updated_at"],
+                   "mfa_pending": bool(account) and _garmin().mfa_pending(account.id),
+                   "last_sync": saved.get("last_sync_garmin")},
+        "upload": {"last_import": saved.get("last_import"), "max_mb": MAX_UPLOAD_MB},
+        "healthkit": {"last_sync": saved.get("last_sync_healthkit")},
+    }
+
+
+def _garmin():
+    from .sources import garmin
+    return garmin
+
+
 class SyncIn(BaseModel):
     days: int = Field(default=30, ge=1, le=730)
+    source: str = Field(default="intervals", pattern="^(intervals|garmin)$")
 
 
 @app.post("/api/sync")
 def sync_now(body: SyncIn, background: BackgroundTasks) -> dict:
     store = get_store()
-    cred = _intervals_credential()
-    if cred is None:
-        raise HTTPException(409, "Add your intervals.icu API key under Data source first.")
+    save = None
+    if body.source == "intervals":
+        cred = _intervals_credential()
+        if cred is None:
+            raise HTTPException(409, "Add your intervals.icu API key under Data sources first.")
+    else:
+        account = current_account()
+        if not account.is_owner:
+            raise HTTPException(403, "Garmin Connect is for the owner account only.")
+        cred = get_accounts().credential(account.id, "garmin")
+        if cred is None:
+            raise HTTPException(409, "Connect Garmin under Data sources first.")
+
+        def save(values: dict) -> None:
+            get_accounts().set_credential(account.id, "garmin", "tokens", values)
     lines: list[str] = []
     try:
-        result = cli.sync(store, "intervals", date.today() - timedelta(days=body.days), log=lines.append,
-                          credential=cred)
+        result = cli.sync(store, body.source, date.today() - timedelta(days=body.days), log=lines.append,
+                          credential=cred, save_credential=save)
     except Exception:
-        return store.settings()["last_sync"] | {"log": lines}
+        return store.settings()[f"last_sync_{body.source}"] | {"log": lines}
     # The coach writes after the response, so the sync button doesn't wait on it.
+    background.add_task(warm_coach, result.pop("added_ids"))
+    return result | {"log": lines}
+
+
+class GarminIn(BaseModel):
+    email: str = Field(min_length=3, max_length=200)
+    password: str = Field(min_length=1, max_length=200)
+
+
+class MfaIn(BaseModel):
+    code: str = Field(min_length=4, max_length=12)
+
+
+def _garmin_owner() -> Account:
+    account = current_account()
+    if not account.is_owner:
+        raise HTTPException(403, "Garmin Connect is for the owner account only.")
+    return account
+
+
+@app.post("/api/sources/garmin")
+def connect_garmin(body: GarminIn) -> dict:
+    """Sign in to Garmin Connect once. The password is used for this sign-in and dropped; only
+    the token bundle is kept, encrypted. Garmin may ask for an MFA code next."""
+    account = _garmin_owner()
+    garmin = _garmin()
+    try:
+        tokens = garmin.start_login(account.id, body.email.strip(), body.password)
+    except garmin.GarminLoginError as e:
+        raise HTTPException(400, str(e))
+    if tokens is None:
+        return {"status": "needs_mfa"}
+    get_accounts().set_credential(account.id, "garmin", "tokens", {"tokens": tokens})
+    return {"status": "connected"}
+
+
+@app.post("/api/sources/garmin/mfa")
+def garmin_mfa(body: MfaIn) -> dict:
+    account = _garmin_owner()
+    garmin = _garmin()
+    try:
+        tokens = garmin.finish_login(account.id, body.code)
+    except garmin.GarminLoginError as e:
+        raise HTTPException(400, str(e))
+    get_accounts().set_credential(account.id, "garmin", "tokens", {"tokens": tokens})
+    return {"status": "connected"}
+
+
+@app.delete("/api/sources/garmin")
+def disconnect_garmin() -> dict:
+    """Forget the Garmin tokens. Activities already synced stay."""
+    get_accounts().clear_credential(current_account().id, "garmin")
+    return {"ok": True}
+
+
+class HealthKitWorkout(BaseModel):
+    uuid: str = Field(min_length=1, max_length=64)
+    sport: str = Field(pattern="^(run|trail_run|hike|walk|ride|other)$")
+    name: str | None = Field(default=None, max_length=200)
+    start: str = Field(min_length=10, max_length=40)  # ISO 8601 with offset
+    end: str = Field(min_length=10, max_length=40)
+    device_name: str | None = Field(default=None, max_length=200)
+    tcx: str = Field(min_length=20)
+
+
+class HealthKitNight(BaseModel):
+    day: date
+    hrv_sdnn_ms: float | None = None  # accepted, not used: SDNN is not the rMSSD readiness reads
+    resting_hr: float | None = Field(default=None, ge=20, le=150)
+    sleep_s: float | None = Field(default=None, ge=0, le=86400)
+
+
+class HealthKitIn(BaseModel):
+    workouts: list[HealthKitWorkout] = Field(default_factory=list, max_length=500)
+    wellness: list[HealthKitNight] = Field(default_factory=list, max_length=1000)
+
+
+@app.post("/api/import/healthkit")
+def import_healthkit(body: HealthKitIn, background: BackgroundTasks) -> dict:
+    """What the Talus iOS app reads from HealthKit, for the signed-in account. See imports.import_healthkit."""
+    from . import imports
+    result = imports.import_healthkit(get_store(), [w.model_dump() for w in body.workouts],
+                                      [n.model_dump(mode="json") for n in body.wellness], log=lambda *_: None)
+    background.add_task(warm_coach, result.pop("added_ids"))
+    return result
+
+
+MAX_UPLOAD_MB = int(os.environ.get("TALUS_MAX_UPLOAD_MB", "2048"))
+
+
+@app.post("/api/import")
+async def import_file(request: Request, background: BackgroundTasks, name: str = "upload") -> dict:
+    """Upload one file as the request body: a FIT, GPX or TCX file (gzipped or not), a zip of
+    them, or the Health app's export.zip. Streamed to disk, since an Apple Health export can run
+    to gigabytes, and deleted once read."""
+    store = get_store()
+    tmp_dir = store.dir / "uploads"
+    tmp_dir.mkdir(parents=True, exist_ok=True)
+    tmp = tmp_dir / f"{int(time.time() * 1000)}-{os.getpid()}.part"
+    size = 0
+    try:
+        with tmp.open("wb") as f:
+            async for chunk in request.stream():
+                size += len(chunk)
+                if size > MAX_UPLOAD_MB * 1024 * 1024:
+                    raise HTTPException(413, f"That file is over {MAX_UPLOAD_MB} MB.")
+                f.write(chunk)
+        if size == 0:
+            raise HTTPException(400, "The file was empty.")
+        from starlette.concurrency import run_in_threadpool
+
+        from .imports import import_paths
+        lines: list[str] = []
+        try:
+            # A store's connection belongs to the thread that opened it.
+            result = await run_in_threadpool(
+                lambda: import_paths(Store(store.dir), [(os.path.basename(name), tmp)], lines.append))
+        except Exception:
+            return store.settings()["last_import"] | {"log": lines}
+    finally:
+        tmp.unlink(missing_ok=True)
     background.add_task(warm_coach, result.pop("added_ids"))
     return result | {"log": lines}
 
@@ -776,7 +936,8 @@ def auth_status(request: Request) -> dict:
     accounts = get_accounts()
     account = accounts.session_account(request.cookies.get(COOKIE))
     return {"account": account and _account_json(account), "has_accounts": accounts.count() > 0,
-            "signup_open": _signup_open(accounts), "existing_data": accounts.legacy_data_waiting()}
+            "signup_open": _signup_open(accounts), "existing_data": accounts.legacy_data_waiting(),
+            "google": google_auth.enabled()}
 
 
 @app.post("/api/auth/signup")
@@ -812,7 +973,11 @@ def logout(request: Request, response: Response) -> dict:
 
 @app.get("/api/account")
 def get_account() -> dict:
-    return _account_json(current_account())
+    accounts = get_accounts()
+    account = current_account()
+    return _account_json(account) | {"has_password": accounts.has_password(account.id),
+                                     "google": accounts.identity(account.id, "google"),
+                                     "google_available": google_auth.enabled()}
 
 
 class PasswordIn(BaseModel):
@@ -825,7 +990,8 @@ def change_password(body: PasswordIn, response: Response) -> dict:
     """Changing the password signs out every session, this one included, then signs this one back in."""
     accounts = get_accounts()
     account = current_account()
-    if accounts.authenticate(account.email, body.current) is None:
+    # An account made with Google has no password yet; it can set one without the old one.
+    if accounts.has_password(account.id) and accounts.authenticate(account.email, body.current) is None:
         raise HTTPException(403, "Your current password is wrong.")
     try:
         accounts.set_password(account.id, body.new)
@@ -868,11 +1034,112 @@ class DeleteIn(BaseModel):
 
 @app.post("/api/account/delete")
 def delete_account(body: DeleteIn, response: Response) -> dict:
-    """Delete the account and all its data. Needs the password again; cannot be undone."""
+    """Delete the account and all its data. Needs the password again (or, for an account with no
+    password, its email typed out); cannot be undone."""
     accounts = get_accounts()
     account = current_account()
-    if accounts.authenticate(account.email, body.password) is None:
-        raise HTTPException(403, "Your password is wrong.")
+    if accounts.has_password(account.id):
+        if accounts.authenticate(account.email, body.password) is None:
+            raise HTTPException(403, "Your password is wrong.")
+    elif body.password.strip().lower() != account.email.lower():
+        raise HTTPException(403, "Type your email exactly to confirm.")
     accounts.delete(account.id)
     response.delete_cookie(COOKIE, path="/")
+    return {"ok": True}
+
+
+# Sign in with Google. The state, nonce and where to go next ride in a short-lived encrypted
+# cookie, so a callback only completes in the browser that started it.
+
+OAUTH_COOKIE = "talus_oauth"
+OAUTH_TTL_S = 600
+
+
+def _safe_next(path: str | None) -> str:
+    return path if path and path.startswith("/") and not path.startswith("//") else "/"
+
+
+def _back(path: str, error: str | None = None) -> RedirectResponse:
+    from urllib.parse import urlencode
+
+    target = path if error is None else f"{path}?{urlencode({'google_error': error})}"
+    response = RedirectResponse(target, status_code=303)
+    response.delete_cookie(OAUTH_COOKIE, path="/")
+    return response
+
+
+@app.get("/api/auth/google/start")
+def google_start(request: Request, next: str | None = None, link: bool = False) -> RedirectResponse:
+    """Send the browser to Google. With link=1, a signed-in account adds Google to itself."""
+    if not google_auth.enabled():
+        return _back("/login", "Google sign-in isn't set up on this Talus.")
+    accounts = get_accounts()
+    link_to = None
+    if link:
+        account = accounts.session_account(request.cookies.get(COOKIE))
+        if account is None:
+            return _back("/login", "Sign in first.")
+        link_to = account.id
+    state, nonce = secrets.token_urlsafe(24), secrets.token_urlsafe(24)
+    sealed = accounts._cipher().encrypt(json.dumps(
+        {"state": state, "nonce": nonce, "next": _safe_next(next), "link": link_to}).encode()).decode()
+    response = RedirectResponse(google_auth.authorize_url(state, nonce), status_code=303)
+    response.set_cookie(OAUTH_COOKIE, sealed, max_age=OAUTH_TTL_S, httponly=True, samesite="lax", path="/",
+                        secure=os.environ.get("TALUS_SECURE_COOKIE", "") == "1")
+    return response
+
+
+@app.get(google_auth.CALLBACK_PATH)
+def google_callback(request: Request, code: str | None = None, state: str | None = None,
+                    error: str | None = None) -> RedirectResponse:
+    """Google sends the browser back here. A Google account already linked signs in; one whose
+    verified email matches a Talus account links to it and signs in; otherwise a new account is
+    made, if sign-ups are open."""
+    accounts = get_accounts()
+    try:
+        flow = json.loads(accounts._cipher().decrypt(request.cookies.get(OAUTH_COOKIE, "").encode(),
+                                                     ttl=OAUTH_TTL_S))
+    except Exception:
+        return _back("/login", "The Google sign-in timed out. Try again.")
+    home = "/settings" if flow["link"] else "/login"
+    if error or not code:
+        return _back(home, "Google sign-in was cancelled.")
+    if not state or not secrets.compare_digest(state, flow["state"]):
+        return _back(home, "The sign-in didn't match this browser. Try again.")
+    try:
+        subject, email = google_auth.check_claims(google_auth.exchange_code(code), flow["nonce"])
+    except google_auth.GoogleError as e:
+        return _back(home, str(e))
+    except httpx.HTTPError:
+        return _back(home, "Couldn't reach Google. Try again.")
+
+    if flow["link"]:
+        current = accounts.session_account(request.cookies.get(COOKIE))
+        if current is None or current.id != flow["link"]:
+            return _back("/login", "Sign in first.")
+        try:
+            accounts.link_identity(current.id, "google", subject, email)
+        except AccountError as e:
+            return _back("/settings", str(e))
+        return _back("/settings")
+
+    account = accounts.identity_account("google", subject)
+    if account is None:
+        account = accounts.by_email(email)
+        if account is None:
+            if not _signup_open(accounts):
+                return _back("/login", "New accounts are closed on this Talus. Ask its owner.")
+            account = accounts.create(email, None)
+        accounts.link_identity(account.id, "google", subject, email)
+    response = _back(flow["next"])
+    _signed_in(response, accounts, account)
+    return response
+
+
+@app.post("/api/account/google/unlink")
+def google_unlink() -> dict:
+    try:
+        get_accounts().unlink_identity(current_account().id, "google")
+    except AccountError as e:
+        raise HTTPException(409, str(e))
     return {"ok": True}

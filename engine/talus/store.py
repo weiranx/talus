@@ -64,6 +64,23 @@ CREATE TABLE IF NOT EXISTS daily_health (
     pain INTEGER,
     updated_at TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS coach_log (
+    id INTEGER PRIMARY KEY,
+    created_at TEXT NOT NULL,
+    mode TEXT NOT NULL,
+    subject TEXT NOT NULL,
+    prompt_version TEXT NOT NULL,
+    packet_hash TEXT NOT NULL,
+    packet TEXT NOT NULL,
+    model TEXT,
+    source TEXT NOT NULL,
+    reply TEXT NOT NULL,
+    attempts INTEGER NOT NULL,
+    fallback_reason TEXT,
+    rejected TEXT NOT NULL,
+    usage TEXT,
+    feedback INTEGER
+);
 """
 
 EXT = {"fit": "fit", "gpx": "gpx", "tcx": "tcx", "icu-streams": "json"}
@@ -182,3 +199,25 @@ class Store:
     def checkin(self, day: date) -> dict | None:
         r = self.db.execute("SELECT * FROM daily_health WHERE day = ?", (day.isoformat(),)).fetchone()
         return None if r is None else {"soreness": r["soreness"], "energy": r["energy"], "pain": r["pain"]}
+
+    # Coach log: every call kept whole, so replies can be audited and prompts compared
+    def log_coach(self, mode: str, subject: str, prompt_version: str, packet_hash: str, packet: dict,
+                  result) -> int:
+        cur = self.db.execute(
+            "INSERT INTO coach_log (created_at, mode, subject, prompt_version, packet_hash, packet, model, source,"
+            " reply, attempts, fallback_reason, rejected, usage) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (datetime.now().isoformat(timespec="seconds"), mode, subject, prompt_version, packet_hash,
+             json.dumps(packet), result.model, result.source, json.dumps(result.reply), result.attempts,
+             result.fallback_reason, json.dumps(result.rejected), json.dumps(result.usage)))
+        self.db.commit()
+        return cur.lastrowid
+
+    def coach_entry(self, mode: str, subject: str, prompt_version: str, packet_hash: str) -> sqlite3.Row | None:
+        return self.db.execute(
+            "SELECT * FROM coach_log WHERE mode = ? AND subject = ? AND prompt_version = ? AND packet_hash = ?"
+            " ORDER BY id DESC LIMIT 1", (mode, subject, prompt_version, packet_hash)).fetchone()
+
+    def coach_feedback(self, log_id: int, rating: int | None) -> bool:
+        cur = self.db.execute("UPDATE coach_log SET feedback = ? WHERE id = ?", (rating, log_id))
+        self.db.commit()
+        return cur.rowcount == 1

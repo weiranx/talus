@@ -13,7 +13,7 @@ import numpy as np
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel, Field
 
-from . import ledger
+from . import coach, ledger
 from .config import data_dir, load_env
 from .parse import parse
 from .readiness import daily_call, readiness
@@ -24,6 +24,7 @@ from .units import ft, mi
 MAX_POINTS = 800
 
 app = FastAPI(title="Talus engine")
+coach_client = coach.default_client  # swapped out in tests
 
 
 def get_store() -> Store:
@@ -201,3 +202,51 @@ def activity(activity_id: int) -> dict:
                     "zone": None if zone is None else [int(v) for v in zone[idx]],
                     "lat": pick(streams.lat, nd=6), "lon": pick(streams.lon, nd=6)},
     }
+
+
+def _coach(store: Store, mode: str, subject: str, packet: dict, fallback: dict, refresh: bool) -> dict:
+    """Reuse the logged reply for the same packet and prompt version, so reloading a page doesn't
+    call the API again. Only API calls are logged; with no key the rules are shown as is."""
+    h = coach.packet_hash(packet)
+    row = None if refresh else store.coach_entry(mode, subject, coach.PROMPT_VERSION, h)
+    if row is not None and not (row["fallback_reason"] or "").startswith("api_error"):
+        return {"source": row["source"], "reply": json.loads(row["reply"]), "log_id": row["id"],
+                "feedback": row["feedback"], "fallback_reason": row["fallback_reason"], "model": row["model"]}
+    result = coach.run(mode, packet, fallback, coach_client())
+    log_id = None
+    if result.fallback_reason != "no_key":
+        log_id = store.log_coach(mode, subject, coach.PROMPT_VERSION, h, packet, result)
+    return {"source": result.source, "reply": result.reply, "log_id": log_id, "feedback": None,
+            "fallback_reason": result.fallback_reason, "model": result.model}
+
+
+@app.get("/api/coach/brief")
+def coach_brief(refresh: bool = False) -> dict:
+    t = today()
+    store = get_store()
+    day = date.fromisoformat(t["date"])
+    packet = coach.brief_packet(t, _activities(store, day - timedelta(days=13)))
+    fallback = {k: t["call"][k] for k in ("call", "session", "detail", "why")}
+    return _coach(store, "brief", t["date"], packet, fallback, refresh)
+
+
+@app.get("/api/coach/activity/{activity_id}")
+def coach_activity(activity_id: int, refresh: bool = False) -> dict:
+    a = activity(activity_id)
+    store = get_store()
+    _ledgers_through_today(store)
+    day = date.today()
+    now = {d.ledger: _ledger_json(d) for d in store.ledger_days(day) if d.day == day}
+    packet = coach.analysis_packet(a, _thresholds(store), now, day)
+    return _coach(store, "analysis", str(activity_id), packet, coach.rules_analysis(packet), refresh)
+
+
+class Feedback(BaseModel):
+    rating: int | None = Field(default=None, ge=-1, le=1)
+
+
+@app.post("/api/coach/feedback/{log_id}")
+def coach_feedback(log_id: int, body: Feedback) -> dict:
+    if not get_store().coach_feedback(log_id, body.rating or None):
+        raise HTTPException(404, "No such coach reply")
+    return {"ok": True}

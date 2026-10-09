@@ -21,9 +21,23 @@ export default function Overnight({ w }: { w: Wellness }) {
     { key: "rhr", label: "Resting HR", value: w.resting_hr.last_night == null ? null : `${Math.round(w.resting_hr.last_night)} bpm`, s: w.resting_hr },
     { key: "sleep", label: "Sleep", value: hours(w.sleep.last_night_h), s: w.sleep },
   ];
+  const empty = rows.every((r) => r.s.status === "no_data");
   return (
     <section className="card" style={{ gap: 12 }}>
       <h2 className="label">Overnight</h2>
+      {empty && (
+        <div className="muted">
+          <div style={{ fontWeight: 600, color: "var(--ink)" }}>No overnight data from your watch yet</div>
+          <ol style={{ margin: "6px 0 0", paddingLeft: 20 }}>
+            <li>
+              In intervals.icu, open{" "}
+              <a href="https://intervals.icu/settings/connections" target="_blank" rel="noreferrer">Settings, Connections</a>.
+            </li>
+            <li>Under Garmin, tick Download wellness data, then click the second Download Old Data and OK.</li>
+            <li>When the import finishes, run <span className="mono">talus sync</span> and reload this page.</li>
+          </ol>
+        </div>
+      )}
       {rows.map((r) => (
         <div key={r.key} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12 }}>
           <div style={{ minWidth: 0 }}>

@@ -30,6 +30,10 @@ def main(argv: list[str] | None = None) -> None:
     t.add_argument("--sex", choices=["male", "female"], default="male")
     t.add_argument("--threshold-pace", help="threshold pace per mile, e.g. 7:30, for runs without HR")
 
+    inf = sub.add_parser("infer", help="estimate AeT, AnT and max HR from your runs")
+    inf.add_argument("--days", type=int, default=180)
+    inf.add_argument("--apply", action="store_true", help="save the AeT and AnT estimates as your thresholds")
+
     s = sub.add_parser("sync", help="pull new activities from a platform")
     s.add_argument("--source", choices=["intervals", "garmin"], default="intervals")
     s.add_argument("--days", type=int, default=180)
@@ -62,8 +66,54 @@ def main(argv: list[str] | None = None) -> None:
         return
     store = Store(data_dir())
     {"thresholds": cmd_thresholds, "sync": cmd_sync, "import": cmd_import, "score": cmd_score,
-     "rescore": cmd_rescore, "list": cmd_list, "load": cmd_load,
+     "rescore": cmd_rescore, "list": cmd_list, "load": cmd_load, "infer": cmd_infer,
      "demo": cmd_demo}[args.cmd](store, args)
+
+
+def cmd_infer(store: Store, args) -> None:
+    from .infer import infer
+
+    since = (date.today() - timedelta(days=args.days)).isoformat()
+    acts, names = [], {}
+    for row in store.activities():
+        if not row["start_time"] or row["start_time"][:10] < since:
+            continue
+        try:
+            st = parse(store.raw(row))
+        except ValueError:
+            continue
+        st.sport = st.sport or row["sport"]
+        acts.append((row["id"], st))
+        names[row["id"]] = f"{row['start_time'][:10]} {row['name'] or ''}".strip()
+    r = infer(acts)
+    print(f"{r['runs_with_hr']} runs with heart rate in the last {args.days} days.\n")
+    for key, label in (("ant", "AnT"), ("aet", "AeT"), ("max", "Max HR")):
+        e = r[key]
+        value = "n/a" if e.value is None else f"{e.value:.0f} bpm"
+        print(f"{label:7s} {value:8s} {e.confidence:11s} {e.method}")
+        for i in e.activities:
+            print(f"{'':28s}from #{i} {names.get(i, '')}")
+    if r["zones"]:
+        z = r["zones"]
+        print(f"\nZones: 1 {z['z1']}, 2 {z['z2']}, 3 {z['z3']}")
+    if r["drift_runs"]:
+        print("\nDrift on steady flat running (under 5% means aerobic):")
+        for d in sorted(r["drift_runs"], key=lambda d: d.avg_hr):
+            print(f"  #{d.activity_id:<5d} {names.get(d.activity_id, ''):32.32s} avg {d.avg_hr:5.1f} bpm, "
+                  f"drift {d.decoupling:6.1%} over {d.flat_minutes:.0f} flat min")
+    current = store.thresholds()
+    if current:
+        print(f"\nCurrent: AeT {current.aet:.0f}, AnT {current.ant:.0f}, max {current.max:.0f} ({current.source})")
+    if not args.apply:
+        print("Run with --apply to use these, or set your own with talus thresholds.")
+        return
+    if current is None or r["ant"].value is None or r["aet"].value is None:
+        sys.exit("Need current thresholds (for resting HR) and both estimates to apply.")
+    th = Thresholds(current.resting, r["aet"].value, r["ant"].value, max(current.max, r["max"].value or 0),
+                    current.sex, current.threshold_pace_s_per_mi,
+                    f"inferred from runs: AnT {r['ant'].confidence}, AeT {r['aet'].confidence}")
+    store.set_thresholds(th)
+    print(f"Saved: AeT {th.aet:.0f}, AnT {th.ant:.0f}, max {th.max:.0f}. Run talus rescore to apply them to history.")
 
 
 def cmd_thresholds(store: Store, args) -> None:

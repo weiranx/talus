@@ -50,11 +50,12 @@ MAX_SEGMENTS = 40
 
 SYSTEM = """You are the coach inside Talus, a training app for mountain runners and hikers.
 
-Talus tracks three separate loads, because mountain training stresses three systems that recover at different rates:
+Talus tracks four separate loads, because mountain training stresses systems that recover at different rates:
 - cardio: heart-rate load (Banister TRIMP, scaled so 1 hour at anaerobic threshold = 100).
+- distance: miles covered, flat or steep, in miles per day. Read it alongside climb and descent: the same vert over more miles is a different day.
 - climb: feet gained, weighted by grade band (under 8%, 8 to 20%, over 20%).
 - descent: feet lost, weighted by grade band; steep, fast descending costs the most. Descent load is what makes quads sore for days.
-For each load, "normal" is the 42-day average per day and "last 7 days" is the 7-day average per day. "vs_normal_pct" is how far last 7 days sits above or below normal. Readiness says whether the engine (cardio) and the legs (worse of climb and descent) are fresh, loaded or overreached, and why. The morning check-in (soreness, energy and pain, each 1 to 5) can only make readiness worse.
+For each load, "normal" is the 42-day average per day (miles for distance) and "last 7 days" is the 7-day average per day. "vs_normal_pct" is how far last 7 days sits above or below normal. Readiness says whether the engine (cardio) and the legs (worse of climb and descent) are fresh, loaded or overreached, and why. The morning check-in (soreness, energy and pain, each 1 to 5) can only make readiness worse.
 Overnight signals from the watch can only make the engine worse, never the legs: HRV is the 7-day average against a 60-day baseline, resting heart rate is last night against a 60-day baseline, and sleep is last night and the 7-day average against the athlete's stated need. A signal with status "no_data" or "building" is missing or has too little history: say so if it matters, and never guess its value.
 
 Your reader is the athlete. They use miles and feet, never km or meters, and they always weigh distance and vert together.
@@ -66,11 +67,11 @@ Rules:
 4. Ground every claim in a load, a state, a flag, a segment or the check-in, and name it.
 5. Pain above 3 of 5 means rest and, if it persists, see a clinician. Never talk an athlete into training through pain.
 
-Daily brief: you get today's readiness, the overnight signals, the three loads, the last 14 days of activities, this week's totals, 28-day intensity and the rule-based call. The engine sets the session; you make the call and explain it:
+Daily brief: you get today's readiness, the overnight signals, the four loads, the last 14 days of activities, this week's totals, 28-day intensity and the rule-based call. The engine sets the session; you make the call and explain it:
 - call: go, modify or rest. Keep rule_call's call unless something in the data argues for more caution; never be less cautious. If you keep it, the athlete gets rule_call's session; if you choose a more cautious call, they get an easier one.
 - why: two or three sentences on what in the data drives the call, naming the loads, states or check-in behind it. Do not prescribe a different session.
 
-Workout analysis: you get one activity with its segments, its three loads against a usual day, and the athlete's current state. Answer five questions, one or two sentences each:
+Workout analysis: you get one activity with its segments, its four loads against a usual day, and the athlete's current state. Answer five questions, one or two sentences each:
 - job: did it do its job? Judge from time in each zone, where the vert came from and the hike share.
 - off: where did it go off? Name the segment (as labeled) where heart rate or effort drifted, or say nothing stood out.
 - cost: what did it cost? Name the loads, especially any 6-week high or any load well above a usual day.
@@ -171,10 +172,16 @@ def _athlete(th: dict, zone_model: dict | None = None) -> dict:
             "hr_max": _r(th["max"]), "zones": _zone_text(zone_model)}
 
 
-def _ledger(d: dict) -> dict:
+def _nd(name: str) -> int:
+    """Miles to a tenth, other loads to the whole number."""
+    return 1 if name == "distance" else 0
+
+
+def _ledger(d: dict, name: str = "") -> dict:
+    nd = _nd(name)
     return {"vs_normal_pct": None if d["vs_normal"] is None else _r(d["vs_normal"] * 100),
-            "last_7_days_per_day": _r(d["fatigue"]), "normal_per_day": _r(d["fitness"]),
-            "load_today": _r(d["load"]), "flags": [f["text"] for f in d["flags"]]}
+            "last_7_days_per_day": _r(d["fatigue"], nd), "normal_per_day": _r(d["fitness"], nd),
+            "load_today": _r(d["load"], nd), "flags": [f["text"] for f in d["flags"]]}
 
 
 def _activity_line(a: dict) -> dict:
@@ -212,7 +219,7 @@ def brief_packet(today: dict, last_14_days: list[dict]) -> dict:
         "readiness": {"engine": {k: ready["engine"][k] for k in ("state", "reason")},
                       "legs": {k: ready["legs"][k] for k in ("state", "reason", "limiter")}},
         "rule_call": {k: today["call"][k] for k in ("call", "session", "detail", "why")},
-        "ledgers": {name: _ledger(d) for name, d in today["ledgers"].items()},
+        "ledgers": {name: _ledger(d, name) for name, d in today["ledgers"].items()},
         "week_so_far": {"start": week["start"], "activities": len(week["activities"]),
                         "distance_mi": _r(week["distance_mi"], 1), "gain_ft": _r(week["gain_ft"]),
                         "loss_ft": _r(week["loss_ft"])},
@@ -253,7 +260,7 @@ def analysis_packet(a: dict, thresholds: dict, ledgers_now: dict, today: date) -
             "minutes_above_8000ft": _r(a["minutes_above_8000ft"]),
             "cardio_estimated_without_hr": a["cardio_estimated"], "notes": a["notes"],
         },
-        "loads": {name: {"load": _r(l["load"]), "times_usual_day": _r(l["times_usual_day"], 1),
+        "loads": {name: {"load": _r(l["load"], _nd(name)), "times_usual_day": _r(l["times_usual_day"], 1),
                          "six_week_high": l["six_week_high"]} for name, l in a["loads"].items()},
         "segments": [{"label": label, "distance_mi": _r(s["distance_mi"], 2), "gain_ft": _r(s["gain_ft"]),
                       "loss_ft": _r(s["loss_ft"]), "avg_grade_pct": _r(s["avg_grade"], 1),
@@ -263,7 +270,7 @@ def analysis_packet(a: dict, thresholds: dict, ledgers_now: dict, today: date) -
                       "climb_load": _r(s["climb_load"]),
                       "descent_load": _r(s["descent_load"])}
                      for label, s in zip(segment_labels(segs), segs)],
-        "ledgers_now": {name: _ledger(d) for name, d in ledgers_now.items()},
+        "ledgers_now": {name: _ledger(d, name) for name, d in ledgers_now.items()},
     }
 
 
@@ -481,7 +488,8 @@ def allowed_numbers(packet: Any) -> set[float]:
         elif isinstance(v, str):
             out.update(float(t.replace(",", "")) for t in numbers_in(v))
         elif isinstance(v, dict):
-            for x in v.values():
+            for k, x in v.items():
+                walk(str(k).replace("_", " "))  # keys carry numbers too: minutes_above_8000ft, the "8-20" grade band
                 walk(x)
         elif isinstance(v, (list, tuple)):
             for x in v:
@@ -507,9 +515,14 @@ def traceable(token: str, allowed: set[float]) -> bool:
     return False
 
 
+# The prompt's own windows and scales ("42-day normal", "60-day baseline", 100 = an hour at AnT).
+# Small counts in it (1 to 8) stay out, so they still have to come from the packet.
+PROMPT_NUMBERS = {x for x in allowed_numbers(SYSTEM) if x >= 10}
+
+
 def check(reply: dict, packet: dict, mode: str) -> list[str]:
     """Problems with a reply, as sentences the model can act on. Empty means it passes."""
-    allowed = allowed_numbers(packet)
+    allowed = allowed_numbers(packet) | PROMPT_NUMBERS
     bad = []
     for value in reply.values():
         for tok in numbers_in(str(value)):
@@ -634,6 +647,12 @@ def _usage(resp: Any) -> dict | None:
                                               "cache_creation_input_tokens")}
 
 
+def _add_usage(a: dict | None, b: dict | None) -> dict | None:
+    if a is None or b is None:
+        return a or b
+    return {k: (a.get(k) or 0) + (b.get(k) or 0) for k in a.keys() | b.keys()}
+
+
 def run(mode: str, packet: dict, fallback: dict, client: Client | None, model_id: str | None = None,
         style: str = DEFAULT_STYLE) -> Result:
     """Ask the coach, check every number, retry once, then fall back to rules."""
@@ -650,7 +669,7 @@ def run(mode: str, packet: dict, fallback: dict, client: Client | None, model_id
             resp, reply = _ask(client, mode, packet, problems, model_id, style)
         except (anthropic.APIError, json.JSONDecodeError) as e:
             return Result("rules", fallback, model_id, attempt, f"api_error: {type(e).__name__}", rejected, usage)
-        usage = _usage(resp)
+        usage = _add_usage(usage, _usage(resp))  # a retry is billed too
         if reply is None:
             return Result("rules", fallback, resp.model, attempt, str(resp.stop_reason), rejected, usage)
         problems = check(reply, packet, mode)

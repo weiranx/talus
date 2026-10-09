@@ -22,7 +22,9 @@ from . import elevation
 from .models import Streams
 from .score import MAX_DT_S, MOVING_MPS
 
-FOOT_SPORTS = {"running", "trail_running", "run", "hiking", "hike", "walking", "walk", "generic"}
+# Lower-cased: intervals.icu sends "Run", "TrailRun", "VirtualRun", "Hike", "Walk".
+FOOT_SPORTS = {"running", "trail_running", "run", "trailrun", "virtualrun", "hiking", "hike", "walking", "walk",
+               "generic"}
 ANT_HOLD_S = 3600
 ANT_SHORT_S = 1800
 ANT_SHORT_FACTOR = 0.97
@@ -80,10 +82,11 @@ def drift(s: Streams) -> tuple[float, float, float] | None:
     heart rate wasn't steady enough to read."""
     if s.heart_rate is None or s.distance is None:
         return None
-    dt = np.minimum(np.diff(s.time, prepend=s.time[0]), MAX_DT_S)
+    raw_dt = np.diff(s.time, prepend=s.time[0])
+    dt = np.minimum(raw_dt, MAX_DT_S)
     dd = np.diff(s.distance, prepend=s.distance[0])
     with np.errstate(divide="ignore", invalid="ignore"):
-        speed = np.where(dt > 0, dd / dt, 0.0)
+        speed = np.where(raw_dt > 0, dd / raw_dt, 0.0)  # over the real gap, as in score
     if s.altitude is not None:
         alt, _, _ = elevation.clean(s.altitude, s.barometric, s.time)
         grade = elevation.smoothed_grade(s.distance, alt)

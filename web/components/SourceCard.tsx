@@ -6,25 +6,43 @@ import Pill from "@/components/Pill";
 import { dayLabel, n0 } from "@/lib/format";
 import type { LastSync, Settings } from "@/lib/types";
 
-const RANGES = [7, 30, 90, 180];
+export const RANGES = [7, 30, 90, 180];
 
-function when(iso: string): string {
+export function when(iso: string): string {
   return new Date(iso).toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
 }
 
-function syncLine(s: LastSync): string {
+export function syncLine(s: LastSync): string {
   if (s.error) return `Failed ${when(s.at)}: ${s.error}`;
-  return `${when(s.at)}: ${s.listed} activities since ${dayLabel(s.since, { month: "short", day: "numeric" })}, ${s.new} new.`;
+  const dups = s.duplicates ? `, ${s.duplicates} already here from another source` : "";
+  return `${when(s.at)}: ${s.listed} activities since ${dayLabel(s.since, { month: "short", day: "numeric" })}, ${s.new} new${dups}.`;
 }
 
-export default function SourceCard({ source }: { source: Settings["source"] }) {
+/** Run a sync for one source and turn the answer into a status line. */
+export async function runSync(source: "intervals" | "garmin", days: number): Promise<{ ok: boolean; text: string }> {
+  const res = await fetch("/api/sync", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ days, source }),
+  }).catch(() => null);
+  if (!res) return { ok: false, text: "Could not reach the engine. Is it running?" };
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok) return { ok: false, text: body.detail ?? `Sync failed (${res.status}).` };
+  if (body.error) return { ok: false, text: `Sync failed: ${body.error}` };
+  const dups = body.duplicates ? ` ${body.duplicates} already here from another source.` : "";
+  return { ok: true, text: (body.saved ? `Pulled ${body.saved} new ${body.saved === 1 ? "activity" : "activities"}.` : "Up to date, nothing new.") + dups };
+}
+
+export default function SourceCard({ source, lastSync }: { source: Settings["source"]; lastSync: LastSync | null }) {
   const router = useRouter();
   const [days, setDays] = useState(30);
   const [syncing, setSyncing] = useState(false);
   const [message, setMessage] = useState<{ ok: boolean; text: string } | null>(null);
   const [editing, setEditing] = useState(!source.key_set);
   const [key, setKey] = useState("");
-  const [athlete, setAthlete] = useState(source.athlete_id ?? "");
+  // "0" means whoever owns the key, the same as leaving the field blank.
+  const athleteId = source.athlete_id && source.athlete_id !== "0" ? source.athlete_id : null;
+  const [athlete, setAthlete] = useState(athleteId ?? "");
   const [saving, setSaving] = useState(false);
 
   async function saveKey(e: React.FormEvent) {
@@ -38,7 +56,11 @@ export default function SourceCard({ source }: { source: Settings["source"] }) {
     }).catch(() => null);
     setSaving(false);
     if (!res) return setMessage({ ok: false, text: "Could not reach the engine. Is it running?" });
-    if (!res.ok) return setMessage({ ok: false, text: "Check the key, and that the athlete id looks like i123456." });
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}));
+      return setMessage({ ok: false, text: res.status === 422 ? "Check the key, and that the athlete id looks like i123456."
+        : typeof body.detail === "string" ? body.detail : `Could not save the key (${res.status}).` });
+    }
     setKey("");
     setEditing(false);
     setMessage({ ok: true, text: "Saved. Sync to pull your activities." });
@@ -46,7 +68,8 @@ export default function SourceCard({ source }: { source: Settings["source"] }) {
   }
 
   async function removeKey() {
-    await fetch("/api/settings/source", { method: "DELETE" }).catch(() => null);
+    const res = await fetch("/api/settings/source", { method: "DELETE" }).catch(() => null);
+    if (!res?.ok) return setMessage({ ok: false, text: res ? `Could not remove the key (${res.status}).` : "Could not reach the engine. Is it running?" });
     setEditing(true);
     router.refresh();
   }
@@ -54,38 +77,26 @@ export default function SourceCard({ source }: { source: Settings["source"] }) {
   async function sync() {
     setSyncing(true);
     setMessage(null);
-    const res = await fetch("/api/sync", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ days }),
-    }).catch(() => null);
+    setMessage(await runSync("intervals", days));
     setSyncing(false);
-    if (!res) return setMessage({ ok: false, text: "Could not reach the engine. Is it running?" });
-    const body = await res.json().catch(() => ({}));
-    if (!res.ok) return setMessage({ ok: false, text: body.detail ?? `Sync failed (${res.status}).` });
-    setMessage(body.error ? { ok: false, text: `Sync failed: ${body.error}` }
-      : { ok: true, text: body.new ? `Pulled ${body.new} new ${body.new === 1 ? "activity" : "activities"}.` : "Up to date, nothing new." });
     router.refresh();
   }
 
   return (
     <section className="card">
       <div style={{ display: "flex", flexWrap: "wrap", justifyContent: "space-between", alignItems: "center", gap: 8 }}>
-        <h2 className="label">Data source</h2>
+        <h2 className="label">intervals.icu</h2>
         {source.key_set ? <Pill tone="good">Connected</Pill> : <Pill tone="bad">No API key</Pill>}
       </div>
       <dl className="kv">
-        <dt>Source</dt>
-        <dd>{source.name}</dd>
         <dt>API key</dt>
         <dd>{source.key_set ? (source.updated_at ? `Saved ${when(source.updated_at)}` : "From the engine's .env") : "Not added yet"}</dd>
         <dt>Athlete</dt>
-        <dd>{source.athlete_id ? <span className="mono">{source.athlete_id}</span> : "Whoever owns the key"}</dd>
-        <dt>Activities</dt>
+        <dd>{athleteId ? <span className="mono">{athleteId}</span> : "Whoever owns the key"}</dd>
+        <dt>In Talus</dt>
         <dd><span className="mono">{n0(source.activities)}</span>{source.latest_activity ? `, latest ${dayLabel(source.latest_activity, { month: "short", day: "numeric", year: "numeric" })}` : ""}</dd>
         <dt>Last sync</dt>
-        <dd>{source.last_sync ? syncLine(source.last_sync) : "Not from here yet"}</dd>
-        {source.garmin_fallback_set ? (<><dt>Fallback</dt><dd>Garmin login set, run <code>talus sync --source garmin</code></dd></>) : null}
+        <dd>{lastSync ? syncLine(lastSync) : "Not from here yet"}</dd>
       </dl>
       {editing ? (
         <form className="form" onSubmit={saveKey}>

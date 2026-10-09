@@ -67,7 +67,7 @@ export default async function ActivityPage({ params }: { params: Promise<{ id: s
                   </div>
                   <div className="muted">
                     {l.load == null ? "not scored, no heart rate" : (
-                      <>{l.times_usual_day == null ? "" : "a usual day, "}{l.six_week_high ? "6-week high, " : ""}load <Explain path={`activity/${a.id}/${name}_load`}>{n0(l.load)}</Explain>{name === "cardio" && a.cardio_estimated ? ", estimated" : ""}</>
+                      <>{l.times_usual_day == null ? "" : "a usual day, "}{l.six_week_high ? "6-week high, " : ""}{name === "distance" ? `${mi(l.load)} mi` : <>load <Explain path={`activity/${a.id}/${name}_load`}>{n0(l.load)}</Explain></>}{name === "cardio" && a.cardio_estimated ? ", estimated" : ""}</>
                     )}
                   </div>
                 </div>

@@ -33,10 +33,10 @@ def test_ledgers_are_separate():
 
 
 def test_two_activities_same_day_add_up_and_missing_cardio_is_zero():
-    acts = [(START, {"cardio": 50, "climb": 100, "descent": 100}),
-            (START, {"cardio": None, "climb": 200, "descent": 300})]
+    acts = [(START, {"cardio": 50, "distance": 4.5, "climb": 100, "descent": 100}),
+            (START, {"cardio": None, "distance": 2.0, "climb": 200, "descent": 300})]
     by = {d.ledger: d.load for d in ledger.build(acts, until=START)}
-    assert by == {"cardio": 50, "climb": 300, "descent": 400}
+    assert by == {"cardio": 50, "distance": 6.5, "climb": 300, "descent": 400}
 
 
 def test_fitness_and_fatigue_time_constants():

@@ -7,6 +7,7 @@
   --cardio: #2459c4;
   --climb: #c96a00;
   --descent: #6e3c9e;
+  --distance: #0f7b74;
   --z1: #a9bdb5;
   --z2: #52605a;
   --z3: #15211d;
@@ -139,3 +140,6 @@ code { font-family: var(--mono); font-size: 13px; background: var(--bg); padding
   font-size: 13px; font-weight: 400; font-family: var(--font-sans), system-ui, sans-serif; line-height: 1.4; letter-spacing: 0; text-align: left; white-space: normal; }
 .explain-inputs { display: grid; grid-template-columns: 1fr auto; gap: 4px 12px; }
 .explain-step { background: var(--bg); border-radius: 6px; padding: 4px 8px; overflow-wrap: anywhere; }
+.google-btn { display: inline-flex; align-items: center; justify-content: center; gap: 10px; text-decoration: none; color: var(--ink); }
+.or-line { display: flex; align-items: center; gap: 10px; color: var(--muted); font-size: 12px; }
+.or-line::before, .or-line::after { content: ""; flex: 1; height: 1px; background: var(--line); }

@@ -4,7 +4,7 @@ import IntensityChart from "@/components/IntensityChart";
 import LedgerChart from "@/components/LedgerChart";
 import Pill from "@/components/Pill";
 import { engine, EngineError } from "@/lib/api";
-import { dayLabel, duration, LEDGER_LABEL, LEDGER_UNIT, ledgerBadge, mi, n0, pct, zoneColors, zoneKeys } from "@/lib/format";
+import { dayLabel, duration, LEDGER_LABEL, LEDGER_UNIT, ledgerBadge, ledgerDecimals, ledgerNum, ledgerUnit, mi, n0, pct, zoneColors, zoneKeys } from "@/lib/format";
 import { LEDGERS, type LoadData } from "@/lib/types";
 
 export const dynamic = "force-dynamic";
@@ -49,6 +49,7 @@ export default async function LoadPage({ searchParams }: { searchParams: Promise
         if (!l.today) return null;
         const badge = ledgerBadge(l.today);
         const spike = l.series.slice(-7).find((d) => d.flags.some((f) => f.key === "spike"));
+        const nd = ledgerDecimals(name), unit = ledgerUnit(name);
         return (
           <section key={name} className="card">
             <div style={{ display: "flex", flexWrap: "wrap", justifyContent: "space-between", alignItems: "center", gap: 8 }}>
@@ -60,12 +61,12 @@ export default async function LoadPage({ searchParams }: { searchParams: Promise
               <div style={{ textAlign: "right" }}>
                 <div className="big">{l.today.vs_normal_text.replace(/^./, (c) => c.toUpperCase())}</div>
                 <div className="muted">
-                  Last 7 days <span className="mono" style={{ color: "var(--ink)" }}>{n0(l.today.fatigue)}</span> a day. Your normal{" "}
-                  <span className="mono" style={{ color: "var(--ink)" }}>{n0(l.today.fitness)}</span>.
+                  Last 7 days <span className="mono" style={{ color: "var(--ink)" }}>{ledgerNum(l.today.fatigue, nd) + unit}</span> a day. Your normal{" "}
+                  <span className="mono" style={{ color: "var(--ink)" }}>{ledgerNum(l.today.fitness, nd) + unit}</span>.
                 </div>
               </div>
             </div>
-            <LedgerChart series={l.series} color={`var(--${name})`} label={LEDGER_LABEL[name]} />
+            <LedgerChart series={l.series} color={`var(--${name})`} label={LEDGER_LABEL[name]} decimals={nd} unit={unit} />
             <div className="muted">
               {spike ? `${dayLabel(spike.day, { weekday: "long" })} was your biggest ${name} day in 6 weeks. ` : ""}
               {LEDGER_UNIT[name]}

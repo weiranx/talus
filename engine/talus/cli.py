@@ -7,7 +7,6 @@ from __future__ import annotations
 
 import argparse
 import getpass
-import hashlib
 import os
 import sys
 from datetime import date, datetime, timedelta
@@ -45,12 +44,13 @@ def main(argv: list[str] | None = None) -> None:
     inf.add_argument("--apply", action="store_true", help="save the AeT and AnT estimates as your thresholds")
 
     s = sub.add_parser("sync", help="pull new activities, plus overnight HRV, resting HR and sleep, from a platform")
-    s.add_argument("--source", choices=["intervals", "garmin"], default="intervals")
+    s.add_argument("--source", choices=SOURCES, default="intervals",
+                   help="garmin is unofficial: owner account only, at your own risk")
     s.add_argument("--days", type=int, default=180)
     s.add_argument("--since", type=date.fromisoformat)
     s.add_argument("--no-coach", action="store_true", help="skip writing the coach brief and reads after the sync")
 
-    i = sub.add_parser("import", help="import FIT, GPX or TCX files")
+    i = sub.add_parser("import", help="import FIT, GPX or TCX files, zips of them, or an Apple Health export.zip")
     i.add_argument("files", nargs="+", type=Path)
     i.add_argument("--no-coach", action="store_true", help="skip writing the coach brief and reads after the import")
 
@@ -62,7 +62,7 @@ def main(argv: list[str] | None = None) -> None:
     ls = sub.add_parser("list", help="recent activities in mi and ft")
     ls.add_argument("-n", type=int, default=20)
 
-    ld = sub.add_parser("load", help="cardio, climb and descent ledgers: today and recent days")
+    ld = sub.add_parser("load", help="cardio, distance, climb and descent ledgers: today and recent days")
     ld.add_argument("--days", type=int, default=14)
 
     dm = sub.add_parser("demo", help="fill an empty data dir with 10 weeks of sample training")
@@ -78,7 +78,9 @@ def main(argv: list[str] | None = None) -> None:
     args = p.parse_args(argv)
     if args.cmd == "serve":
         import uvicorn
-        Store(data_dir()).refresh_ledgers()  # once, so pages read stored ledgers from the start
+        accounts = Accounts(data_dir())  # moves a single-user install into account 1 first
+        for a in accounts.all():  # once, so pages read stored ledgers from the start
+            Store(accounts.user_dir(a.id)).refresh_ledgers()
         uvicorn.run("talus.api:app", host="127.0.0.1", port=args.port)
         return
     accounts = Accounts(data_dir())
@@ -91,7 +93,8 @@ def main(argv: list[str] | None = None) -> None:
         if account is None:
             sys.exit(f"No account {args.user}. See: talus account list")
     store = Store(accounts.user_dir(account.id) if account else default_user_dir(accounts))
-    args.credential = credential_for(accounts, account)
+    args.credential = credential_for(accounts, account, getattr(args, "source", "intervals"))
+    args.accounts, args.account = accounts, account or accounts.owner()
     # The coach runs after a sync through the API's code, which reads the account from here.
     from . import api
     reset = api._account.set(account)
@@ -110,11 +113,13 @@ def default_user_dir(accounts: Accounts):
     return accounts.user_dir(owner.id if owner else 1)
 
 
-def credential_for(accounts: Accounts, account: Account | None) -> dict | None:
-    """The intervals.icu key to sync with: the account's own, or for the owner, the .env key
-    while none is saved."""
+def credential_for(accounts: Accounts, account: Account | None, source: str = "intervals") -> dict | None:
+    """The saved credential to sync a source with. For intervals.icu the owner falls back to the
+    .env key while none is saved."""
     account = account or accounts.owner()
-    cred = accounts.credential(account.id, "intervals") if account else None
+    cred = accounts.credential(account.id, source) if account else None
+    if source != "intervals":
+        return cred
     if cred is None and (account is None or account.is_owner) and os.environ.get("INTERVALS_API_KEY"):
         cred = {"kind": "api_key", "api_key": os.environ["INTERVALS_API_KEY"],
                 "athlete_id": os.environ.get("INTERVALS_ATHLETE_ID") or "0", "updated_at": None}
@@ -207,35 +212,74 @@ def cmd_thresholds(store: Store, args) -> None:
                     "manual" if args.aet else "manual, AeT provisional (88% of AnT)")
     store.set_thresholds(th)
     print(f"Saved: resting {th.resting:.0f}, AeT {th.aet:.0f}, AnT {th.ant:.0f}, max {th.max:.0f} ({th.source})")
+    if store.activities():  # as Settings does, so scores and ledgers match the new thresholds
+        print(f"Rescored {rescore(store, th, log=lambda _: None)} activities and rebuilt the ledgers")
 
 
 def cmd_sync(store: Store, args) -> None:
     since = args.since or date.today() - timedelta(days=args.days)
-    result = sync(store, args.source, since, credential=args.credential)
+    credential = args.credential
+    if args.source == "garmin" and not (args.account and args.account.is_owner):
+        # Unofficial and tied to one person's Garmin login: never pull it into another account.
+        sys.exit("Garmin Connect is for the owner account only.")
+    if args.source == "garmin" and credential is None:
+        # First run from the command line: sign in with GARMIN_EMAIL and GARMIN_PASSWORD from .env
+        # (MFA prompts here), then keep only the tokens, like Settings does.
+        from .sources import garmin
+        if not (args.account and args.account.is_owner):
+            sys.exit("Garmin Connect is for the owner account only.")
+        if not (os.environ.get("GARMIN_EMAIL") and os.environ.get("GARMIN_PASSWORD")):
+            sys.exit("Connect Garmin in Settings > Data sources, or set GARMIN_EMAIL and GARMIN_PASSWORD in .env.")
+        tokens = garmin.start_login(args.account.id, os.environ["GARMIN_EMAIL"], os.environ["GARMIN_PASSWORD"])
+        if tokens is None:
+            tokens = garmin.finish_login(args.account.id, input("Garmin MFA code: "))
+        args.accounts.set_credential(args.account.id, "garmin", "tokens", {"tokens": tokens})
+        credential = {"kind": "tokens", "tokens": tokens}
+    save = None
+    if args.account:
+        def save(values: dict) -> None:
+            args.accounts.set_credential(args.account.id, args.source, "tokens", values)
+    result = sync(store, args.source, since, credential=credential, save_credential=save)
     if not args.no_coach and store.thresholds() is not None:
         warm_coach(result["added_ids"])
 
 
-def sync(store: Store, source_name: str, since: date, log=print, credential: dict | None = None) -> dict:
-    """Pull new activities since a day, score them and rebuild the ledgers. The outcome is kept as
-    the last sync, so the Settings screen can show it whether the sync ran here or from the web."""
+SOURCES = ("intervals", "garmin")
+
+
+def open_source(source_name: str, credential: dict | None):
+    if source_name == "intervals":
+        from .sources.intervals import IntervalsSource
+        if credential is None:
+            raise RuntimeError("No intervals.icu key for this account. Add one in Settings > Data sources.")
+        return IntervalsSource.from_credential(credential)
+    if source_name == "garmin":
+        from .sources.garmin import GarminSource
+        if credential is None:
+            raise RuntimeError("Garmin Connect isn't connected. Connect it in Settings > Data sources.")
+        return GarminSource.from_credential(credential)
+    raise ValueError(f"Unknown source {source_name}")
+
+
+def sync(store: Store, source_name: str, since: date, log=print, credential: dict | None = None,
+         save_credential=None, source=None) -> dict:
+    """Pull new activities since a day, score them and rebuild the ledgers. An activity another
+    source already brought in (intervals.icu and Garmin both carry your watch's runs) is skipped
+    before it is downloaded. The outcome is kept as that source's last sync, so the Settings
+    screen can show it whether the sync ran here or from the web."""
     started = datetime.now().isoformat(timespec="seconds")
     result = {"at": started, "source": source_name, "since": since.isoformat(), "listed": 0, "new": 0,
-              "saved": 0, "error": None}
+              "saved": 0, "duplicates": 0, "error": None}
     added: list[int] = []
     try:
-        if source_name == "intervals":
-            from .sources.intervals import IntervalsSource
-            if credential is None:
-                raise RuntimeError("No intervals.icu key for this account. Add one in Settings > Data source.")
-            source = IntervalsSource.from_credential(credential)
-        else:
-            from .sources.garmin import GarminSource
-            source = GarminSource()
+        source = source or open_source(source_name, credential)
         remote = source.list_activities(since)
         new = [a for a in remote if not store.has(a.source, a.source_id)]
-        result.update(listed=len(remote), new=len(new))
-        log(f"{len(remote)} activities since {since}, {len(new)} new")
+        dups = [a for a in new if store.duplicate_of(a.start_time, a.distance_m) is not None]
+        new = [a for a in new if a not in dups]
+        result.update(listed=len(remote), new=len(new), duplicates=len(dups))
+        log(f"{len(remote)} activities since {since}, {len(new)} new"
+            + (f", {len(dups)} already here from another source" if dups else ""))
         th = store.thresholds()
         for act in sorted(new, key=lambda a: a.start_time):
             raw = source.fetch(act)
@@ -250,8 +294,15 @@ def sync(store: Store, source_name: str, since: date, log=print, credential: dic
         if hasattr(source, "list_wellness"):
             # Readiness reads overnight signals against a 60-day baseline, so always pull that far back.
             # Best effort: activities are already saved, and readiness works without overnight data.
+            wellness_since = min(since, date.today() - timedelta(days=WELLNESS_DAYS))
+            if getattr(source, "wellness_per_day", False):
+                # One request per day: ask only from the last stored night, re-reading two days
+                # in case a night was still syncing from the watch.
+                have = store.wellness(wellness_since, date.today())
+                if have:
+                    wellness_since = max(wellness_since, max(have) - timedelta(days=2))
             try:
-                days = source.list_wellness(min(since, date.today() - timedelta(days=WELLNESS_DAYS)))
+                days = source.list_wellness(wellness_since)
             except Exception as e:
                 log(f"  HRV, resting HR and sleep not pulled: {type(e).__name__}: {e}")
             else:
@@ -266,27 +317,21 @@ def sync(store: Store, source_name: str, since: date, log=print, credential: dic
         result["error"] = f"{type(e).__name__}: {e}"
         raise
     finally:
-        store.save_settings({"last_sync": result})
+        store.save_settings({"last_sync": result, f"last_sync_{source_name}": result})
+        if save_credential and hasattr(source, "tokens"):
+            tokens = source.tokens()
+            if tokens and credential and tokens != credential.get("tokens"):
+                save_credential({"tokens": tokens})  # refreshed during the sync
     return result | {"added_ids": added}
 
 
 def cmd_import(store: Store, args) -> None:
-    th = store.thresholds()
-    added = []
-    for path in args.files:
-        data = unwrap(path.read_bytes())
-        raw = RawFile(data, sniff_format(data))
-        streams = parse(raw)
-        act = RemoteActivity(source="file", source_id=hashlib.sha256(data).hexdigest()[:16],
-                             start_time=streams.start_time or datetime.fromtimestamp(path.stat().st_mtime),
-                             name=path.stem, sport=streams.sport)
-        activity_id = store.add(act, raw)
-        added.append(activity_id)
-        _score_and_save(store, activity_id, raw, th, act.sport, label=path.name)
-    if th is not None:
-        rebuild_ledgers(store)
-        if not args.no_coach:
-            warm_coach(added)
+    from .imports import import_paths
+    result = import_paths(store, [(p.name, p) for p in args.files])
+    if store.thresholds() is None:
+        print("Set thresholds with `talus thresholds` to score these activities.")
+    elif not args.no_coach:
+        warm_coach(result["added_ids"])
 
 
 def warm_coach(activity_ids: list[int], log=print) -> None:
@@ -321,10 +366,32 @@ def cmd_rescore(store: Store, args) -> None:
     print(f"Rescored {n} activities and rebuilt the ledgers")
 
 
+def fix_utc_starts(store: Store, log=print) -> int:
+    """Files imported before Talus filed them by local time were stored with a UTC start, so an
+    evening run could land on the next day. Rewrite those starts as local wall-clock time."""
+    from .sources.base import local_naive, wall_clock_start
+    fixed = 0
+    for row in store.activities():
+        start = row["start_time"]
+        if not start or datetime.fromisoformat(start).tzinfo is None:
+            continue
+        try:
+            local = wall_clock_start(parse(store.raw(row)))
+        except Exception:  # unreadable file: at least move it into the engine's zone
+            local = None
+        local = local or local_naive(datetime.fromisoformat(start))
+        store.set_start_time(row["id"], local)
+        fixed += 1
+    if fixed:
+        log(f"Moved {fixed} imported activities from UTC to local start times")
+    return fixed
+
+
 def rescore(store: Store, th: Thresholds, log=print) -> int:
+    fix_utc_starts(store, log=log)
     rows = store.activities()
     for row in rows:
-        _score_and_save(store, row["id"], store.raw(row), th, row["sport"],
+        _score_and_save(store, row["id"], lambda row=row: store.raw(row), th, row["sport"],
                         label=f"{row['start_time'][:10]} {row['name']}", log=log)
     rebuild_ledgers(store)
     return len(rows)
@@ -351,24 +418,27 @@ def cmd_load(store: Store, args) -> None:
         sys.exit("No ledger yet: set thresholds, then sync or import activities")
     latest = max(d.day for d in days)
     print(f"Ledgers on {latest}")
-    for d in (d for d in days if d.day == latest):
+    for d in sorted((d for d in days if d.day == latest), key=lambda d: ledger.LEDGERS.index(d.ledger)):
         flags = "; ".join(ledger.FLAG_TEXT[f] for f in d.flags)
+        nd = 1 if d.ledger == "distance" else 0
         print(f"  {d.ledger:8} last 7 days {ledger.describe_vs_normal(d.vs_normal):24} "
-              f"(fitness {d.fitness:,.0f}, fatigue {d.fatigue:,.0f}, form {d.form:+,.0f})"
+              f"(fitness {d.fitness:,.{nd}f}, fatigue {d.fatigue:,.{nd}f}, form {d.form:+,.{nd}f})"
               + (f"  ! {flags}" if flags else ""))
     history_days = len(store.ledgers()) // len(ledger.LEDGERS)
     if history_days < ledger.MIN_HISTORY_DAYS:
         print(f"  Thin history: flags start after {ledger.MIN_HISTORY_DAYS} days of data")
     print()
-    print(f"{'day':10}  {'cardio':>6}  {'climb':>6}  {'descent':>7}  flags")
+    print(f"{'day':10}  {'cardio':>6}  {'mi':>5}  {'climb':>6}  {'descent':>7}  flags")
     by_day: dict = {}
     for d in days:
         by_day.setdefault(d.day, {})[d.ledger] = d
     for day in sorted(by_day):
         row = by_day[day]
         flags = ", ".join(f"{k} {f}" for k, v in row.items() for f in v.flags)
-        print(f"{day}  {row['cardio'].load:6,.0f}  {row['climb'].load:6,.0f}  {row['descent'].load:7,.0f}  {flags}")
-    print("\nLoads: cardio 100 = 1 hour at threshold HR; climb and descent 1 = one foot on a moderate grade.")
+        print(f"{day}  {row['cardio'].load:6,.0f}  {row['distance'].load:5.1f}  {row['climb'].load:6,.0f}  "
+              f"{row['descent'].load:7,.0f}  {flags}")
+    print("\nLoads: cardio 100 = 1 hour at threshold HR; distance in miles; "
+          "climb and descent 1 = one foot on a moderate grade.")
 
 
 def cmd_demo(store: Store, args) -> None:
@@ -396,7 +466,8 @@ def usual_day_line(store: Store, row, r: ActivityScore) -> str:
     day = date.fromisoformat(row["start_time"][:10])
     before = {d.ledger: d.fitness for d in store.ledgers(day - timedelta(days=1)) if d.day == day - timedelta(days=1)}
     parts = []
-    for name, load in (("cardio", r.cardio_load), ("climb", r.climb_load), ("descent", r.descent_load)):
+    for name, key in ledger.ACTIVITY_KEY.items():
+        load = getattr(r, key)
         x = None if load is None else ledger.times_usual_day(load, before.get(name, 0.0))
         parts.append(f"{name} {'n/a' if x is None else f'{x:.1f}x'}")
     return "Vs a usual day     " + ", ".join(parts)
@@ -414,11 +485,11 @@ def _score_and_save(store, activity_id, raw, th, sport, label, log=print) -> Non
         log(f"  saved {label}")
         return
     try:
-        streams = parse(raw)
+        streams = parse(raw() if callable(raw) else raw)
         streams.sport = streams.sport or sport
         result = score(streams, th)
-    except ValueError as e:
-        log(f"  saved {label}, not scored: {e}")
+    except Exception as e:  # a damaged, truncated or missing file leaves that activity unscored, not the batch
+        log(f"  saved {label}, not scored: {type(e).__name__}: {e}")
         return
     store.save_score(activity_id, result)
     log(f"  {label}: {result.distance_mi:.1f} mi, {result.gain_ft:,.0f} ft up, {result.loss_ft:,.0f} ft down")

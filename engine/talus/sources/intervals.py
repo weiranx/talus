@@ -45,7 +45,11 @@ class IntervalsSource:
         {"kind": "oauth", "access_token", "athlete_id"}."""
         if cred.get("kind") == "oauth":
             return cls(athlete_id=cred.get("athlete_id"), client=client, access_token=cred["access_token"])
-        return cls(api_key=cred["api_key"], athlete_id=cred.get("athlete_id") or "0", client=client)
+        # Never fall back to the server's INTERVALS_API_KEY here: that key is the owner's.
+        api_key = (cred.get("api_key") or "").strip()
+        if not api_key:
+            raise RuntimeError("The saved intervals.icu key is blank. Add it again in Settings > Data source.")
+        return cls(api_key=api_key, athlete_id=cred.get("athlete_id") or "0", client=client)
 
     def list_activities(self, since: date, until: date | None = None) -> list[RemoteActivity]:
         params = {"oldest": since.isoformat(), "newest": (until or date.today()).isoformat()}

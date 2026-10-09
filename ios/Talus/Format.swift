@@ -1,0 +1,203 @@
+import SwiftUI
+
+// Same wording and colors as the web app (web/lib/format.ts, web/app/globals.css).
+
+enum Fmt {
+    static func n0(_ v: Double?) -> String {
+        guard let v else { return "–" }
+        return Int(v.rounded()).formatted(.number)
+    }
+
+    static func mi(_ v: Double) -> String { String(format: "%.1f", v) }
+
+    static func pct(_ v: Double) -> String { "\(Int((v * 100).rounded()))%" }
+
+    static func duration(_ seconds: Double) -> String {
+        let s = Int(seconds.rounded())
+        return String(format: "%d:%02d", s / 3600, (s % 3600) / 60)
+    }
+
+    /// Distance and vert together, the way every Talus screen shows them.
+    static func distVert(mi d: Double, gain: Double, loss: Double) -> String {
+        "\(mi(d)) mi · \(n0(gain)) ft up · \(n0(loss)) ft down"
+    }
+
+    private static let isoDay: DateFormatter = {
+        let f = DateFormatter()
+        f.calendar = Calendar(identifier: .gregorian)
+        f.locale = Locale(identifier: "en_US_POSIX")
+        f.dateFormat = "yyyy-MM-dd"
+        return f
+    }()
+
+    static func date(_ iso: String) -> Date? { isoDay.date(from: String(iso.prefix(10))) }
+
+    static func day(_ iso: String, _ style: Date.FormatStyle = .dateTime.weekday(.abbreviated)) -> String {
+        date(iso).map { $0.formatted(style) } ?? iso
+    }
+
+    static func capitalized(_ s: String) -> String { s.prefix(1).uppercased() + s.dropFirst() }
+
+    static func state(_ s: String) -> String {
+        s == "overreached" ? "Overreached" : s == "loaded" ? "Loaded" : "Fresh"
+    }
+}
+
+enum Tone {
+    case good, warn, bad, neutral
+
+    var ink: Color {
+        switch self {
+        case .good: Color(hex: 0x14573A, dark: 0x8FD3AE)
+        case .warn: Color(hex: 0x7A4300, dark: 0xF2C27F)
+        case .bad: Color(hex: 0x8A1F17, dark: 0xF2A39C)
+        case .neutral: .secondary
+        }
+    }
+
+    var fill: Color {
+        switch self {
+        case .good: Color(hex: 0xDCEFE4, dark: 0x183A2A)
+        case .warn: Color(hex: 0xFCEBD3, dark: 0x4A3112)
+        case .bad: Color(hex: 0xF9DCD9, dark: 0x4D1F1B)
+        case .neutral: Color.secondary.opacity(0.12)
+        }
+    }
+
+    static func state(_ s: String) -> Tone { s == "overreached" ? .bad : s == "loaded" ? .warn : .good }
+    static func call(_ c: String) -> Tone { c == "rest" ? .bad : c == "modify" ? .warn : .good }
+}
+
+enum Ledger {
+    static func label(_ name: String) -> String { Fmt.capitalized(name) }
+
+    static func color(_ name: String) -> Color {
+        switch name {
+        case "cardio": Color(hex: 0x2459C4, dark: 0x6F9BF0)
+        case "climb": Color(hex: 0xC96A00, dark: 0xF0A04B)
+        case "descent": Color(hex: 0x6E3C9E, dark: 0xB78BE0)
+        case "distance": Color(hex: 0x1F7A6C, dark: 0x5CC4B2)
+        default: .gray
+        }
+    }
+
+    static func unit(_ name: String) -> String? {
+        switch name {
+        case "cardio": "Cardio load: 100 is one hour at your threshold heart rate."
+        case "climb": "Climb load: 1 is one foot gained on a moderate grade. Steeper feet count more."
+        case "descent": "Descent load: 1 is one foot lost on a moderate grade. Steeper feet count more."
+        case "distance": "Distance: miles covered, flat or steep. Climb and descent carry the vert."
+        default: nil
+        }
+    }
+
+    /// Distance reads in miles to a tenth, the other loads as whole numbers.
+    static func value(_ name: String, _ v: Double?) -> String {
+        guard let v else { return "–" }
+        return name == "distance" ? "\(Fmt.mi(v)) mi" : Fmt.n0(v)
+    }
+
+    /// Mirrors ledgerBadge in web/lib/format.ts.
+    static func badge(vsNormal: Double?, flags: [Flag], building: Bool?) -> (String, Tone) {
+        if building == true { return ("Building your normal", .neutral) }
+        if let flag = flags.first(where: { $0.key == "overreach" || $0.key == "ramp" }) ?? flags.first {
+            return (flag.text, flag.key == "overreach" ? .bad : .warn)
+        }
+        guard let v = vsNormal else { return ("No history", .neutral) }
+        if v > 0.15 { return ("Loaded", .warn) }
+        if v > 0.05 { return ("Building", .good) }
+        if v < -0.1 { return ("Recovering", .neutral) }
+        return ("Steady", .good)
+    }
+}
+
+enum Zones {
+    static func colors(_ n: Int) -> [Color] {
+        n == 5
+            ? [0xC4D2CB, 0x93A9A0, 0x68796F, 0x3C4842, 0x15211D].map { Color(hex: $0) }
+            : [0xA9BDB5, 0x52605A, 0x15211D].map { Color(hex: $0) }
+    }
+}
+
+extension Color {
+    init(hex: UInt32, dark: UInt32? = nil) {
+        func rgb(_ h: UInt32) -> UIColor {
+            UIColor(red: CGFloat((h >> 16) & 0xFF) / 255, green: CGFloat((h >> 8) & 0xFF) / 255,
+                    blue: CGFloat(h & 0xFF) / 255, alpha: 1)
+        }
+        let light = rgb(hex), darkColor = rgb(dark ?? hex)
+        self.init(uiColor: UIColor { $0.userInterfaceStyle == .dark ? darkColor : light })
+    }
+}
+
+struct Pill: View {
+    let text: String
+    let tone: Tone
+
+    var body: some View {
+        Text(text)
+            .font(.caption.weight(.semibold))
+            .padding(.horizontal, 8).padding(.vertical, 3)
+            .foregroundStyle(tone.ink)
+            .background(tone.fill, in: Capsule())
+    }
+}
+
+struct Card<Content: View>: View {
+    @ViewBuilder var content: Content
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) { content }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(16)
+            .background(Color(uiColor: .secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 14))
+    }
+}
+
+struct SectionLabel: View {
+    let text: String
+    init(_ text: String) { self.text = text }
+
+    var body: some View {
+        Text(text.uppercased()).font(.caption.weight(.semibold)).foregroundStyle(.secondary).tracking(0.5)
+    }
+}
+
+/// Loading, error and retry around a screen's fetch.
+struct Loader<T, Content: View>: View {
+    let load: () async throws -> T
+    @ViewBuilder var content: (T, @escaping () async -> Void) -> Content
+    @State private var value: T?
+    @State private var error: String?
+    @EnvironmentObject private var session: SessionModel
+
+    var body: some View {
+        Group {
+            if let value {
+                content(value, reload)
+            } else if let error {
+                ContentUnavailableView {
+                    Label("Can't load this", systemImage: "exclamationmark.triangle")
+                } description: {
+                    Text(error)
+                } actions: {
+                    Button("Try again") { Task { await reload() } }
+                }
+            } else {
+                ProgressView().frame(maxWidth: .infinity, maxHeight: .infinity)
+            }
+        }
+        .task { if value == nil { await reload() } }
+    }
+
+    private func reload() async {
+        do {
+            value = try await load()
+            error = nil
+        } catch APIError.signedOut {
+            session.signedOut()
+        } catch {
+            self.error = error.localizedDescription
+        }
+    }
+}

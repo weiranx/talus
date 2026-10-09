@@ -642,6 +642,7 @@ def _sources(saved: dict) -> dict:
                    "mfa_pending": bool(account) and _garmin().mfa_pending(account.id),
                    "last_sync": saved.get("last_sync_garmin")},
         "upload": {"last_import": saved.get("last_import"), "max_mb": MAX_UPLOAD_MB},
+        "healthkit": {"last_sync": saved.get("last_sync_healthkit")},
     }
 
 
@@ -733,6 +734,38 @@ def disconnect_garmin() -> dict:
     """Forget the Garmin tokens. Activities already synced stay."""
     get_accounts().clear_credential(current_account().id, "garmin")
     return {"ok": True}
+
+
+class HealthKitWorkout(BaseModel):
+    uuid: str = Field(min_length=1, max_length=64)
+    sport: str = Field(pattern="^(run|trail_run|hike|walk|ride|other)$")
+    name: str | None = Field(default=None, max_length=200)
+    start: str = Field(min_length=10, max_length=40)  # ISO 8601 with offset
+    end: str = Field(min_length=10, max_length=40)
+    device_name: str | None = Field(default=None, max_length=200)
+    tcx: str = Field(min_length=20)
+
+
+class HealthKitNight(BaseModel):
+    day: date
+    hrv_sdnn_ms: float | None = None  # accepted, not used: SDNN is not the rMSSD readiness reads
+    resting_hr: float | None = Field(default=None, ge=20, le=150)
+    sleep_s: float | None = Field(default=None, ge=0, le=86400)
+
+
+class HealthKitIn(BaseModel):
+    workouts: list[HealthKitWorkout] = Field(default_factory=list, max_length=500)
+    wellness: list[HealthKitNight] = Field(default_factory=list, max_length=1000)
+
+
+@app.post("/api/import/healthkit")
+def import_healthkit(body: HealthKitIn, background: BackgroundTasks) -> dict:
+    """What the Talus iOS app reads from HealthKit, for the signed-in account. See imports.import_healthkit."""
+    from . import imports
+    result = imports.import_healthkit(get_store(), [w.model_dump() for w in body.workouts],
+                                      [n.model_dump(mode="json") for n in body.wellness], log=lambda *_: None)
+    background.add_task(warm_coach, result.pop("added_ids"))
+    return result
 
 
 MAX_UPLOAD_MB = int(os.environ.get("TALUS_MAX_UPLOAD_MB", "2048"))

@@ -232,6 +232,8 @@ export interface Settings {
     // Garmin direct is unofficial and offered to the owner account only.
     garmin: { available: boolean; connected: boolean; updated_at: string | null; mfa_pending: boolean; last_sync: LastSync | null };
     upload: { last_import: LastImport | null; max_mb: number };
+    // Posted by the Talus iOS app to /api/import/healthkit.
+    healthkit: { last_sync: { at: string; workouts_added: number; workouts_skipped: number; wellness_days: number } | null };
   };
   coach: {
     enabled: boolean;

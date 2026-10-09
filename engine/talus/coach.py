@@ -77,6 +77,18 @@ Workout analysis: you get one activity with its segments, its four loads against
 - cost: what did it cost? Name the loads, especially any 6-week high or any load well above a usual day.
 - changes: what does it change for the next few days? Point to the ledger it pushed hardest.
 - takeaway: one thing to keep or change next time.
+
+Plan: you get an objective (a race or mountain day with a date), the athlete's readiness for it now and projected at the start of the taper, and the engine's week-by-week plan. The engine built the plan and checked every week against the load limits; you explain it and never change it. Readiness has five dimensions, each read as ready, close or gap against its rule.
+- verdict: two or three sentences: which dimensions are ready, close or a gap now, and how they project. Readiness covers fitness only.
+- limiter: one or two sentences on the dimension furthest behind and what in the plan closes it, such as the long days or the peak weeks.
+- plan: three or four sentences on the plan's shape: build weeks, recovery weeks, the peak and the taper, and any week the engine held back for a load limit or a time limit. If reachable is false, say plainly that the objective can't be reached inside the limits and name the options given. If changes are listed, say what changed and why.
+
+Weekly review: you get last week against its plan targets, the flags it raised and any reason to replan.
+- week: two or three sentences on how the week went against its targets, naming miles and feet together, time below AeT and any flag.
+- next: one or two sentences on what next week asks for, or why a new plan is suggested.
+
+Chat: the athlete asks a question about their training. Answer it from the data in two to five sentences, naming the numbers you use. If the data can't answer it, say what is missing. You can't change the plan or its targets: to change them, the athlete edits the objective or training days, or asks for a new plan on the Plan page. If the athlete mentions pain above 3 of 5, illness or chest symptoms, recommend rest and a clinician, and do not diagnose. No weight-loss or fueling-restriction advice. You don't judge weather, snow, route conditions or technical skill.
+- used: the names of the data fields your answer relies on.
 """
 
 BRIEF_SCHEMA = {
@@ -97,10 +109,29 @@ ANALYSIS_SCHEMA = {
     "additionalProperties": False,
 }
 
+PLAN_FIELDS = ("verdict", "limiter", "plan")
+REVIEW_FIELDS = ("week", "next")
+
+
+def _schema(fields: tuple[str, ...]) -> dict:
+    return {"type": "object", "properties": {k: {"type": "string"} for k in fields},
+            "required": list(fields), "additionalProperties": False}
+
+
+CHAT_SCHEMA = {
+    "type": "object",
+    "properties": {"answer": {"type": "string"}, "used": {"type": "array", "items": {"type": "string"}}},
+    "required": ["answer", "used"],
+    "additionalProperties": False,
+}
+
 MODES = {
     # Short reply, so low effort keeps it quick; analysis gets more thought.
-    "brief": {"schema": BRIEF_SCHEMA, "effort": "low", "max_tokens": 6000},
-    "analysis": {"schema": ANALYSIS_SCHEMA, "effort": "medium", "max_tokens": 12000},
+    "brief": {"label": "daily brief", "schema": BRIEF_SCHEMA, "effort": "low", "max_tokens": 6000},
+    "analysis": {"label": "workout analysis", "schema": ANALYSIS_SCHEMA, "effort": "medium", "max_tokens": 12000},
+    "plan": {"label": "plan", "schema": _schema(PLAN_FIELDS), "effort": "medium", "max_tokens": 16000},
+    "review": {"label": "weekly review", "schema": _schema(REVIEW_FIELDS), "effort": "low", "max_tokens": 8000},
+    "chat": {"label": "chat", "schema": CHAT_SCHEMA, "effort": "low", "max_tokens": 8000},
 }
 
 
@@ -241,6 +272,185 @@ def analysis_packet(a: dict, thresholds: dict, ledgers_now: dict, today: date) -
                      for label, s in zip(segment_labels(segs), segs)],
         "ledgers_now": {name: _ledger(d, name) for name, d in ledgers_now.items()},
     }
+
+
+def _week(w: dict) -> dict:
+    long = w.get("long")
+    return {"start": w["start"], "focus": w["focus"], "distance_mi": _r(w["miles"], 1), "gain_ft": _r(w["gain_ft"]),
+            "loss_ft": _r(w["loss_ft"]), "hours": _r(w["hours"], 1), "below_aet_hours": _r(w["below_aet_hours"], 1),
+            "long_day": None if not long else {
+                "distance_mi": _r(long["miles"], 1), "gain_ft": _r(long["gain_ft"]), "loss_ft": _r(long["loss_ft"]),
+                "hours": _r(long["minutes"] / 60, 1), "effort_mi": _r(long["effort_mi"], 1),
+                "longest_descent_ft": _r(long.get("longest_descent_ft"))},
+            "held_back_by_load_limit": w["limited_by"], "notes": w["notes"]}
+
+
+def _dims(ev: dict) -> list[dict]:
+    """Objective readiness, one line per dimension: demand, capacity, and capacity as a percent of
+    demand against the rule's percent."""
+    out = []
+    for d in ev["dims"]:
+        nd = 1 if d["unit"] in ("h", "effort mi") else 0
+        out.append({"dimension": d["name"], "status": d["status"], "demand": _r(d["demand"], nd),
+                    "capacity": _r(d["capacity"], nd), "unit": d["unit"],
+                    "capacity_pct_of_demand": None if d["ratio"] is None else _r(d["ratio"] * 100),
+                    "rule_pct": None if d["rule"] is None else _r(d["rule"] * 100)})
+    return out
+
+
+def _dim_name(ev: dict, key: str | None) -> str | None:
+    return next((d["name"] for d in ev["dims"] if d["key"] == key), None)
+
+
+def _objective(plan: dict, today: date) -> dict:
+    obj, dem = plan["objective"], plan["demand"]
+    return {"date": obj["day"], "days_to_go": (date.fromisoformat(obj["day"]) - today).days,
+            "distance_mi": _r(obj["distance_mi"], 1), "gain_ft": _r(obj["gain_ft"]), "loss_ft": _r(obj["loss_ft"]),
+            "effort_mi": _r(dem["effort_mi"], 1), "longest_descent_ft": _r(obj["longest_descent_ft"]),
+            "high_point_ft": _r(obj["high_point_ft"]),
+            "estimated_hours": {"low": _r(dem["time"]["low_h"], 1), "high": _r(dem["time"]["high_h"], 1)}}
+
+
+def plan_packet(plan: dict, now: dict, today: date, reason: str, changes: list[dict]) -> dict:
+    """Context for explaining a plan. The objective's name is left out: it is the athlete's text."""
+    opts = plan.get("options") or {}
+    smaller = opts.get("smaller")
+    return {
+        "objective": _objective(plan, today),
+        "readiness_now": _dims(now), "limiter_now": _dim_name(now, now["limiter"]),
+        "readiness_projected_at_taper": _dims(plan["projected"]),
+        "limiter_projected": _dim_name(plan["projected"], plan["projected"]["limiter"]),
+        "reachable": plan["reachable"],
+        "options": {"smaller_version": None if not smaller else {
+                        "distance_mi": _r(smaller["distance_mi"], 1), "gain_ft": _r(smaller["gain_ft"], -2),
+                        "loss_ft": _r(smaller["loss_ft"], -2)},
+                    "later_date": opts.get("later")},
+        "recent_per_week": {"distance_mi": _r(plan["baseline"]["miles"], 1), "gain_ft": _r(plan["baseline"]["gain_ft"]),
+                            "loss_ft": _r(plan["baseline"]["loss_ft"]), "hours": _r(plan["baseline"]["hours"], 1)},
+        "rules": {"build_week_max_increase_pct": 10, "recovery": "a recovery week after every three build weeks"},
+        "reason_for_this_version": reason,
+        "changes_from_accepted_plan": [{"week": c["start"], "before": _brief_week(c["before"]),
+                                        "after": _brief_week(c["after"])} for c in changes],
+        "weeks": [_week(w) for w in plan["weeks"]],
+    }
+
+
+def _brief_week(w: dict | None) -> dict | None:
+    return None if w is None else {"focus": w["focus"], "distance_mi": _r(w["miles"], 1), "gain_ft": _r(w["gain_ft"]),
+                                   "loss_ft": _r(w["loss_ft"]), "hours": _r(w["hours"], 1)}
+
+
+def review_packet(review: dict, next_week: dict | None, objective: dict | None, replan_text: list[str]) -> dict:
+    a, t, sh = review["actual"], review["target"], review["share"]
+    return {
+        "week": {"start": review["start"], "end": review["end"], "activities": a["activities"],
+                 "actual": {"distance_mi": _r(a["miles"], 1), "gain_ft": _r(a["gain_ft"]), "loss_ft": _r(a["loss_ft"]),
+                            "hours": _r(a["hours"], 1),
+                            "below_aet_pct": None if a["below_aet_pct"] is None else _r(a["below_aet_pct"] * 100),
+                            "longest_day_effort_mi": _r(a["longest_day_effort_mi"], 1)},
+                 "target": None if not t else {"focus": t["focus"], "distance_mi": _r(t["miles"], 1),
+                                               "gain_ft": _r(t["gain_ft"]), "loss_ft": _r(t["loss_ft"]),
+                                               "hours": _r(t["hours"], 1)},
+                 "pct_of_target": None if not sh else {
+                     {"miles": "distance", "gain_ft": "gain", "loss_ft": "loss"}[k]: None if v is None else _r(v * 100)
+                     for k, v in sh.items()},
+                 "flags": [f"{f['ledger']}: {f['text']}" for f in review["flags"]],
+                 "vs_normal_pct_at_end": {k: None if v is None else _r(v * 100)
+                                          for k, v in review["vs_normal_at_end"].items()},
+                 "max_pain": review["max_pain"]},
+        "replan_suggested": replan_text,
+        "next_week": None if next_week is None else _week(next_week),
+        "objective": objective,
+    }
+
+
+def chat_packet(question: str, history: list[dict], today: dict | None, plan: dict | None, now: dict | None,
+                sessions: list[dict], last_14_days: list[dict], day: date) -> dict:
+    """Context for one chat answer. The question and the last few turns are in the packet, so a
+    number the athlete typed may be quoted back."""
+    week = None
+    if plan:
+        from .plan import plan_for_day
+
+        w = plan_for_day(plan, day)
+        week = None if w is None else _week(w)
+    return {
+        "date": day.isoformat(),
+        "athlete": None if not today else _athlete(today["thresholds"], today.get("zone_model")),
+        "readiness_today": None if not today else {k: {"state": today["readiness"][k]["state"],
+                                                       "reason": today["readiness"][k]["reason"]}
+                                                   for k in ("engine", "legs")},
+        "todays_call": None if not today else {k: today["call"][k] for k in ("call", "session", "detail")},
+        "ledgers": None if not today else {name: _ledger(d) for name, d in today["ledgers"].items()},
+        "objective": None if not plan else _objective(plan, day),
+        "objective_readiness_now": None if not now else _dims(now),
+        "plan_this_week": week,
+        "next_7_days": [{"day": s["day"], "session": s["kind"], "distance_mi": _r(s["miles"], 1),
+                         "gain_ft": _r(s["gain_ft"]), "loss_ft": _r(s["loss_ft"]), "minutes": _r(s["minutes"])}
+                        for s in sessions],
+        "last_14_days": [_activity_line(a) for a in sorted(last_14_days, key=lambda a: a["start_time"])],
+        "conversation": [{"role": m["role"], "text": m["text"]} for m in history],
+        "question": question,
+    }
+
+
+def rules_plan(packet: dict) -> dict:
+    """The plan explained from engine numbers alone."""
+    now = packet["readiness_now"]
+    ready = [d["dimension"].lower() for d in now if d["status"] == "ready"]
+    behind = [d["dimension"].lower() for d in now if d["status"] in ("close", "gap")]
+    verdict = ("Ready now on " + ", ".join(ready) + "." if ready else "No dimension is ready yet.")
+    if behind:
+        verdict += " Behind on " + ", ".join(behind) + "."
+    now, proj = packet["limiter_now"], packet["limiter_projected"]
+    if proj:
+        limiter = f"{proj} is the limiter: it is still furthest behind its rule at the taper."
+    elif now:
+        limiter = f"{now} is the limiter now. The long days and peak weeks close it by the taper."
+    else:
+        limiter = "Nothing is behind its rule."
+    weeks = packet["weeks"]
+    peak = max(weeks, key=lambda w: w["gain_ft"]) if weeks else None
+    text = f"{len(weeks)} weeks to the objective." if len(weeks) != 1 else "The objective is this week."
+    if peak:
+        start = date.fromisoformat(peak["start"])
+        text += (f" The biggest week starts {start:%b} {start.day}: {peak['distance_mi']} mi, {peak['gain_ft']:,} ft up and "
+                 f"{peak['loss_ft']:,} ft down.")
+    held = [w["start"] for w in weeks if w["held_back_by_load_limit"]]
+    if held:
+        text += " Some weeks are held back to stay inside the load limits."
+    if not packet["reachable"]:
+        text += " The objective can't be reached inside the load limits by its date."
+        if packet["options"]["later_date"]:
+            later = date.fromisoformat(packet["options"]["later_date"])
+            text += f" It can be by {later:%B} {later.day}, {later.year}."
+    return {"verdict": verdict, "limiter": limiter, "plan": text}
+
+
+def rules_review(packet: dict) -> dict:
+    w = packet["week"]
+    a = w["actual"]
+    week = f"{a['distance_mi']} mi with {a['gain_ft']:,} ft up and {a['loss_ft']:,} ft down in {a['hours']} h."
+    if w["target"]:
+        t = w["target"]
+        week += f" The target was {t['distance_mi']} mi, {t['gain_ft']:,} ft up and {t['loss_ft']:,} ft down."
+    if a["below_aet_pct"] is not None:
+        week += f" {a['below_aet_pct']}% of the time was below AeT."
+    if w["flags"]:
+        week += " Flags: " + "; ".join(w["flags"]) + "."
+    if packet["replan_suggested"]:
+        nxt = "A new plan is suggested: " + "; ".join(packet["replan_suggested"]).lower() + "."
+    elif packet["next_week"]:
+        n = packet["next_week"]
+        nxt = (f"Next week is a {n['focus']} week: {n['distance_mi']} mi, {n['gain_ft']:,} ft up and "
+               f"{n['loss_ft']:,} ft down.")
+    else:
+        nxt = "No plan for next week."
+    return {"week": week, "next": nxt}
+
+
+CHAT_FALLBACK = ("I can't answer that from your numbers right now. Ask about your loads, your plan or your "
+                 "objective, or try again.")
 
 
 def brief_reply(raw: dict, rule_call: dict, aet: float) -> dict:
@@ -408,7 +618,7 @@ def _fallback_args(model_id: str) -> dict:
 def _ask(client: Client, mode: str, packet: dict, problems: list[str], model_id: str,
          style: str = DEFAULT_STYLE) -> tuple[Any, dict | None]:
     cfg = MODES[mode]
-    text = f"Mode: {'daily brief' if mode == 'brief' else 'workout analysis'}.\n"
+    text = f"Mode: {cfg['label']}.\n"
     if STYLES.get(style, STYLES[DEFAULT_STYLE])["prompt"]:
         text += STYLES[style]["prompt"] + "\n"  # after the cached system prompt, so every style shares it
     text += "Data:\n" + json.dumps(packet, sort_keys=True)

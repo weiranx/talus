@@ -15,6 +15,7 @@ import threading
 import time
 import zipfile
 from contextvars import ContextVar
+from dataclasses import asdict
 from datetime import date, datetime, timedelta
 from http.cookies import SimpleCookie
 
@@ -25,12 +26,14 @@ from fastapi.responses import JSONResponse, RedirectResponse, StreamingResponse
 from pydantic import BaseModel, ConfigDict, Field
 
 from . import cli, coach, explain, google_auth, ledger, wellness, zones
+from . import plan as planner
 from . import settings as app_settings
 from .accounts import SESSION_DAYS, Account, AccountError, Accounts
 from .config import data_dir, load_env
 from .models import Thresholds
 from .parse import parse
 from .readiness import daily_call, readiness
+from .route import route_numbers
 from .score import MAX_DT_S, score
 from .store import Store
 from .units import ft, mi
@@ -151,7 +154,9 @@ def _activities(store: Store, since: date | None = None) -> list[dict]:
                     "device_name": row["device_name"], **{k: m[k] for k in (
                         "distance_mi", "gain_ft", "loss_ft", "effort_mi", "moving_time_s", "elapsed_time_s",
                         "cardio_load", "climb_load", "descent_load", "cardio_estimated", "zone_minutes",
-                        "hike_share", "notes")}, "hr_zone_minutes": _display_minutes(m, zm)})
+                        "hike_share", "notes")}, "hr_zone_minutes": _display_minutes(m, zm),
+                    "longest_descent_ft": m.get("longest_descent_ft"),
+                    "minutes_above_8000ft": m.get("minutes_above_8000ft")})
     return out
 
 
@@ -202,12 +207,17 @@ def today() -> dict:
     week = sorted(_activities(store, week_start), key=lambda a: a["start_time"])
     last_28 = _activities(store, day - timedelta(days=27))
     zm = _zone_model(store)
+    call = daily_call(ready, checkin, th.aet) | {"source": "rules", "planned": False}
+    planned = _planned_today(store, day, th.aet)
+    if planned and call["call"] == "go":
+        # The plan sets a "go" day's session; a modify or rest call keeps its easier one.
+        call |= {"session": planned["title"], "detail": planned["detail"], "planned": True}
     return {
         "date": day.isoformat(),
         "checkin": checkin,
         "wellness": overnight,
         "readiness": ready,
-        "call": daily_call(ready, checkin, th.aet) | {"source": "rules"},
+        "call": call,
         "ledgers": {name: _ledger_json(now[name], since) | {"spark": [
             {"day": d.day.isoformat(), "fitness": d.fitness, "fatigue": d.fatigue}
             for d in recent if d.ledger == name]} for name in ledger.LEDGERS if name in now},
@@ -373,7 +383,8 @@ def _coach(store: Store, mode: str, subject: str, packet: dict, fallback: dict, 
     if not cfg["coach_enabled"]:
         return {"source": "rules", "reply": fallback, "log_id": None, "feedback": None,
                 "fallback_reason": "off", "model": None}
-    model_id, style = cfg[f"{mode}_model"], cfg["coach_style"]
+    # Plan, weekly review and chat are longer reads, so they run on the analysis model.
+    model_id, style = cfg.get(f"{mode}_model", cfg["analysis_model"]), cfg["coach_style"]
     if style not in coach.STYLES:
         style = coach.DEFAULT_STYLE
     h = coach.cache_key(packet, model_id, style)
@@ -425,6 +436,293 @@ def coach_feedback(log_id: int, body: Feedback) -> dict:
     if not get_store().coach_feedback(log_id, body.rating or None):
         raise HTTPException(404, "No such coach reply")
     return {"ok": True}
+
+
+# Objective, plan, weekly review and chat. Every number is the engine's; the coach explains.
+
+def _plan_history(store: Store, day: date) -> list[ledger.LedgerDay]:
+    return ledger.current_span(store.ledgers(day - timedelta(days=ledger.FITNESS_DAYS * 2)))
+
+
+def _descent_fitness(history: list[ledger.LedgerDay]) -> float:
+    return next((d.fitness for d in reversed(history) if d.ledger == "descent"), 0.0)
+
+
+def _constraints(store: Store) -> planner.Constraints:
+    return planner.Constraints.from_json(store.settings().get("plan_constraints"))
+
+
+def _readiness_json(r: dict) -> dict:
+    return {k: r[k] for k in ("dims", "limiter", "verdict")}
+
+
+def _sessions(store: Store, accepted: dict | None, acts: list[dict], day: date, aet: float, days: int = 7) -> list[dict]:
+    if accepted is None:
+        return []
+    name = accepted["objective"]["name"]
+    return [s | planner.session_text(s, aet, name) for s in planner.upcoming_sessions(accepted, acts, day, days)]
+
+
+def _planned_today(store: Store, day: date, aet: float) -> dict | None:
+    accepted = store.plan("accepted")
+    if accepted is None:
+        return None
+    s = _sessions(store, accepted, _activities(store, day - timedelta(days=7)), day, aet, 1)
+    return s[0] if s and s[0]["kind"] != "done" else None
+
+
+def _build_draft(store: Store, obj: planner.Objective, reason: str) -> dict:
+    day = date.today()
+    acts = _activities(store)
+    history = _plan_history(store, day)
+    c = _constraints(store)
+    if planner.baseline(acts, day)["miles"] < 1:
+        raise HTTPException(409, "Talus builds the plan from your last four weeks of training, and there's none in "
+                                 "them yet. Sync your recent activities first.")
+    try:
+        body = planner.build(obj, acts, history, c, day)
+        body["options"] = planner.options(obj, acts, history, c, day, body)
+    except planner.PlanError as e:
+        raise HTTPException(422, str(e))
+    body["now"] = _readiness_json(planner.readiness_now(obj, acts, _descent_fitness(history), day))
+    body["changes"] = planner.diff(store.plan("accepted"), body)
+    store.save_draft(obj.id, reason, body)
+    return body
+
+
+def _last_week_review(store: Store, accepted: dict | None, acts: list[dict], day: date) -> dict:
+    start = day - timedelta(days=day.weekday() + 7)
+    review = planner.weekly_review(start, acts, accepted, store.ledgers(start - timedelta(days=1), day),
+                                   store.pains(start, day))
+    # Today's state counts too: a flag raised since Sunday, or pain reported this week.
+    now = [d for d in store.ledgers(day) if d.day == day and d.ledger in planner.PLAN_LEDGERS]
+    if "flag" not in review["replan"] and any(f in ("ramp", "overreach") for d in now for f in d.flags):
+        review["replan"].append("flag")
+    if accepted is None:
+        review["replan"] = []
+    review["replan_text"] = [planner.REPLAN_TEXT[r] for r in review["replan"]]
+    return review
+
+
+def _plan_json(p: dict | None) -> dict | None:
+    if p is None:
+        return None
+    return {k: p.get(k) for k in ("id", "status", "reason", "created_at", "decided_at", "built_on", "constraints",
+                                  "baseline", "pace", "demand", "peak", "weeks", "projected", "reachable",
+                                  "options", "now", "changes")} | {"reason_text": planner.REPLAN_TEXT.get(p["reason"], p["reason"])}
+
+
+@app.get("/api/plan")
+def get_plan() -> dict:
+    store = get_store()
+    day = date.today()
+    th = store.thresholds()
+    obj = store.objective()
+    c = _constraints(store)
+    acts = _activities(store)
+    accepted = store.plan("accepted")
+    out = {"date": day.isoformat(), "constraints": asdict(c), "objective": None, "readiness": None,
+           "accepted": None, "draft": None, "sessions": [], "review": None,
+           "fitness_only": planner.FITNESS_ONLY, "thresholds": _thresholds(store)}
+    if obj is None:
+        return out
+    history = _plan_history(store, day)
+    now = planner.readiness_now(obj, acts, _descent_fitness(history), day)
+    draft = store.plan("draft")
+    return out | {
+        "objective": obj.json() | {"days_to_go": (obj.day - day).days},
+        "readiness": {**_readiness_json(now), "demand": now["demand"], "capacity": now["capacity"],
+                      "pace": now["pace"]},
+        "accepted": _plan_json(accepted), "draft": _plan_json(draft),
+        "sessions": _sessions(store, accepted, acts, day, th.aet if th else 150),
+        "review": _last_week_review(store, accepted, acts, day) if accepted else None,
+    }
+
+
+class ObjectiveIn(BaseModel):
+    name: str = Field(min_length=1, max_length=80)
+    day: date
+    distance_mi: float = Field(gt=0, le=300)
+    gain_ft: float = Field(ge=0, le=80000)
+    loss_ft: float = Field(ge=0, le=80000)
+    longest_climb_ft: float | None = Field(default=None, ge=0, le=30000)
+    longest_descent_ft: float | None = Field(default=None, ge=0, le=30000)
+    high_point_ft: float | None = Field(default=None, ge=-1500, le=30000)
+    source: str = Field(default="manual", pattern="^(manual|gpx)$")
+    new: bool = False  # true replaces the objective; false edits the active one
+
+
+@app.put("/api/plan/objective")
+def put_objective(body: ObjectiveIn) -> dict:
+    """Set the objective and draft a plan for it. Editing the active objective drafts a new plan
+    shown against the accepted one; a new objective starts over."""
+    if body.day <= date.today():
+        raise HTTPException(422, "Pick an objective date after today.")
+    store = get_store()
+    fields = body.model_dump(exclude={"new"})
+    fields["name"] = fields["name"].strip()
+    current = store.objective()
+    if current is None or body.new:
+        obj = planner.Objective(**fields)
+        obj.id = store.save_objective(obj)
+        reason = "new"
+    else:
+        obj = planner.Objective(**fields, id=current.id)
+        store.update_objective(obj)
+        reason = "objective"
+    try:
+        _build_draft(store, obj, reason)
+    except HTTPException as e:
+        if e.status_code != 409:
+            raise
+    return get_plan()
+
+
+@app.delete("/api/plan/objective")
+def delete_objective() -> dict:
+    get_store().clear_objective()
+    return {"ok": True}
+
+
+@app.post("/api/plan/route")
+async def parse_route(request: Request) -> dict:
+    """A GPX route's numbers, to fill in the objective form. The track itself is not kept."""
+    data = await request.body()
+    if len(data) > 20_000_000:
+        raise HTTPException(413, "That file is over 20 MB.")
+    try:
+        return route_numbers(data)
+    except Exception as e:
+        raise HTTPException(422, str(e) if isinstance(e, ValueError) else "Could not read that GPX file.")
+
+
+class ConstraintsIn(BaseModel):
+    days: list[int] = Field(min_length=1, max_length=7)
+    weekday_min: int = Field(ge=15, le=600)
+    weekend_min: int = Field(ge=15, le=900)
+    long_day: int = Field(ge=0, le=6)
+    notes: str = Field(default="", max_length=500)
+
+
+@app.put("/api/plan/constraints")
+def put_constraints(body: ConstraintsIn) -> dict:
+    """Training days and time limits. With an objective set, a new plan is drafted from them."""
+    if any(d < 0 or d > 6 for d in body.days):
+        raise HTTPException(422, "Days are 0 (Monday) to 6 (Sunday).")
+    if body.long_day not in body.days:
+        raise HTTPException(422, "Your long day has to be one of your training days.")
+    store = get_store()
+    c = planner.Constraints.from_json(body.model_dump())
+    store.save_settings({"plan_constraints": asdict(c)})
+    obj = store.objective()
+    if obj is not None:
+        _build_draft(store, obj, "constraints")
+    return get_plan()
+
+
+class DraftIn(BaseModel):
+    reason: str = Field(default="request", pattern="^(request|missed|flag|pain)$")
+
+
+@app.post("/api/plan/draft")
+def new_draft(body: DraftIn) -> dict:
+    store = get_store()
+    obj = store.objective()
+    if obj is None:
+        raise HTTPException(409, "Add an objective first.")
+    _build_draft(store, obj, body.reason)
+    return get_plan()
+
+
+@app.post("/api/plan/{plan_id}/{decision}")
+def decide_plan(plan_id: int, decision: str) -> dict:
+    if decision not in ("accept", "decline"):
+        raise HTTPException(404, "Accept or decline.")
+    if not get_store().decide_draft(plan_id, decision == "accept"):
+        raise HTTPException(404, "No draft plan with that id.")
+    return get_plan()
+
+
+def _plan_for_coach(store: Store) -> dict | None:
+    return store.plan("draft") or store.plan("accepted")
+
+
+@app.get("/api/coach/plan")
+def coach_plan(refresh: bool = False) -> dict:
+    store = get_store()
+    p = _plan_for_coach(store)
+    if p is None:
+        raise HTTPException(404, "No plan yet.")
+    packet = coach.plan_packet(p, p["now"], date.fromisoformat(p["built_on"]),
+                               planner.REPLAN_TEXT.get(p["reason"], p["reason"]), p.get("changes") or [])
+    return _coach(store, "plan", f"plan-{p['id']}", packet, coach.rules_plan(packet), refresh) | {"plan_id": p["id"]}
+
+
+@app.get("/api/coach/review")
+def coach_review(refresh: bool = False) -> dict:
+    store = get_store()
+    day = date.today()
+    accepted = store.plan("accepted")
+    if accepted is None:
+        raise HTTPException(404, "No accepted plan yet.")
+    review = _last_week_review(store, accepted, _activities(store), day)
+    next_week = planner.plan_for_day(accepted, day + timedelta(days=7 - day.weekday()))
+    obj = coach._objective(accepted, day)
+    packet = coach.review_packet(review, next_week, {"date": obj["date"], "days_to_go": obj["days_to_go"]},
+                                 review["replan_text"])
+    return _coach(store, "review", review["start"], packet, coach.rules_review(packet), refresh) | {"review": review}
+
+
+CHAT_HISTORY = 6  # earlier turns sent with each question
+
+
+class ChatIn(BaseModel):
+    question: str = Field(min_length=1, max_length=1000)
+
+
+@app.get("/api/coach/chat")
+def get_chat() -> dict:
+    return {"messages": get_store().chat()}
+
+
+@app.delete("/api/coach/chat")
+def clear_chat() -> dict:
+    get_store().clear_chat()
+    return {"ok": True}
+
+
+CHAT_UNAVAILABLE = {
+    "no_key": "The AI coach isn't set up: add an Anthropic API key to the engine's .env to chat.",
+    "off": "The AI coach is turned off in Settings, so it can't answer questions.",
+    "cap": "This month's coach spending limit is reached, so chat is paused until next month.",
+}
+
+
+@app.post("/api/coach/chat")
+def post_chat(body: ChatIn) -> dict:
+    store = get_store()
+    day = date.today()
+    question = body.question.strip()
+    history = store.chat(CHAT_HISTORY)
+    try:
+        t = today()
+    except HTTPException:
+        t = None
+    accepted = store.plan("accepted")
+    obj = store.objective()
+    acts = _activities(store)
+    now = None
+    if obj is not None:
+        now = _readiness_json(planner.readiness_now(obj, acts, _descent_fitness(_plan_history(store, day)), day))
+    plan_ctx = accepted if accepted is not None and obj is not None else None
+    sessions = _sessions(store, plan_ctx, acts, day, t["thresholds"]["aet"] if t else 150)
+    packet = coach.chat_packet(question, history, t, plan_ctx, now if plan_ctx else None, sessions,
+                               [a for a in acts if a["day"] >= (day - timedelta(days=13)).isoformat()], day)
+    store.add_chat("athlete", question)
+    out = _coach(store, "chat", "chat", packet, {"answer": coach.CHAT_FALLBACK, "used": []}, False)
+    answer = CHAT_UNAVAILABLE.get(out["fallback_reason"] or "", out["reply"]["answer"])
+    store.add_chat("coach", answer, out["source"], out["log_id"])
+    return {"messages": store.chat(), "source": out["source"], "fallback_reason": out["fallback_reason"]}
 
 
 # Settings. Keys stay in .env: the engine reports whether each one is set, never its value.

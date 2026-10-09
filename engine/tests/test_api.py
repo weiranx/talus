@@ -1,7 +1,8 @@
 from datetime import date, datetime, timedelta
 
+from fastapi.testclient import TestClient
 
-from talus import cli
+from talus import api, cli
 from tests.conftest import sign_in
 
 
@@ -111,7 +112,7 @@ def test_reads_never_write(tmp_path, monkeypatch):
     def no_writes(self):
         raise AssertionError("a read wrote to the database")
     monkeypatch.setattr(Store, "_write", no_writes)
-    client = TestClient(app)
+    client = sign_in()
     assert client.get("/api/today").status_code == 200
     assert client.get("/api/load").status_code == 200
     aid = client.get("/api/activities").json()[0]["id"]
@@ -124,7 +125,7 @@ def test_refresh_rewrites_only_from_the_changed_day(tmp_path, monkeypatch):
     from talus.config import data_dir
     from talus.store import Store
     _import_runs(tmp_path, monkeypatch, n=25)  # 50 days: past the opening weeks, so the seed is fixed
-    store = Store(data_dir())
+    store = Store(data_dir() / "users" / "1")
     assert store.refresh_ledgers() is None  # nothing changed since the import
     before = {(d.day, d.ledger): d.fitness for d in store.ledger_days()}
 
@@ -158,8 +159,10 @@ def test_concurrent_requests_dont_lock_the_database(tmp_path, monkeypatch):
     _import_runs(tmp_path, monkeypatch, n=40)  # big enough that the old engine hit "database is locked"
     thresholds = {"resting": 45, "aet": 150, "ant": 170, "max": 190}
 
+    cookie = sign_in().cookies.get(api.COOKIE)
+
     def hit(i):
-        client = TestClient(app)
+        client = TestClient(api.app, cookies={api.COOKIE: cookie})
         kind = i % 6
         if kind == 0:
             return client.get("/api/today").status_code
@@ -176,7 +179,21 @@ def test_concurrent_requests_dont_lock_the_database(tmp_path, monkeypatch):
     with ThreadPoolExecutor(24) as pool:
         codes = list(pool.map(hit, range(96)))
     assert codes == [200] * 96
-    store = Store(data_dir())
+    store = Store(data_dir() / "users" / "1")
     assert not store._ledgers_stale()
     built = ledger.build(store.scored_loads())
     assert _rows(store.ledgers()) == _rows(built)
+
+
+def test_a_database_made_before_wal_still_opens(tmp_path):
+    import sqlite3
+
+    from talus.store import Store
+    old = sqlite3.connect(tmp_path / "talus.db")
+    old.execute("CREATE TABLE setting (key TEXT PRIMARY KEY, value TEXT NOT NULL, updated_at TEXT NOT NULL)")
+    old.execute("INSERT INTO setting VALUES ('x', '1', 'now')")
+    old.commit()
+    old.close()
+    store = Store(tmp_path)
+    assert store.db.execute("PRAGMA journal_mode").fetchone()[0] == "wal"
+    assert store.settings() == {"x": 1}

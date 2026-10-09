@@ -124,8 +124,10 @@ class Accounts:
         self.root = Path(root)
         self.root.mkdir(parents=True, exist_ok=True)
         migrate_legacy(self.root)
-        self.db = sqlite3.connect(self.root / "accounts.db", check_same_thread=False)
+        # Opened per request; WAL and a busy timeout let sign-ins write while other requests read.
+        self.db = sqlite3.connect(self.root / "accounts.db", timeout=30)
         self.db.row_factory = sqlite3.Row
+        self.db.execute("PRAGMA journal_mode = WAL").fetchone()
         self.db.execute("PRAGMA foreign_keys = ON")
         self.db.executescript(SCHEMA)
         self._fernet = None

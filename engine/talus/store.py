@@ -141,8 +141,11 @@ class Store:
         with _guard:
             self._lock = _write_locks.setdefault(path, threading.RLock())
         if path not in _ready:
-            with self._write():
+            with self._lock:
+                # Switching to WAL can't happen inside a transaction, and an existing database
+                # made before WAL is still in rollback mode, so switch first.
                 self.db.execute("PRAGMA journal_mode = WAL").fetchone()
+            with self._write():
                 self.db.executescript(SCHEMA)
             _ready.add(path)
 

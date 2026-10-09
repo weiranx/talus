@@ -62,3 +62,27 @@ def test_api_end_to_end(tmp_path, monkeypatch):
     assert len(detail["streams"]["altitude_ft"]) <= 1000
     assert set(detail["streams"]["zone"]) == {1}
     assert client.get("/api/activities/999").status_code == 404
+
+
+def test_load_skips_a_gap_in_synced_data(tmp_path, monkeypatch):
+    monkeypatch.setenv("TALUS_DATA_DIR", str(tmp_path / "data"))
+    files = []
+    for k in list(range(200, 190, -1)) + list(range(10, 0, -1)):  # spring, nothing for months, now
+        d = datetime.combine(date.today() - timedelta(days=k), datetime.min.time()) + timedelta(hours=14)
+        f = tmp_path / f"run{k:03d}.gpx"
+        f.write_bytes(_gpx(d))
+        files.append(str(f))
+    cli.main(["thresholds", "--resting", "45", "--aet", "150", "--ant", "172", "--max", "190"])
+    cli.main(["import", *files])
+    client = TestClient(app)
+
+    data = client.get("/api/load?days=365").json()
+    since = (date.today() - timedelta(days=10)).isoformat()
+    assert data["history"]["since"] == since
+    assert data["history"]["gap"]["to"] == (date.today() - timedelta(days=11)).isoformat()
+    series = data["ledgers"]["descent"]["series"]
+    assert series[0]["day"] == since and len(series) == 11
+    assert data["ledgers"]["descent"]["today"]["building"] is True
+    assert not data["ledgers"]["descent"]["today"]["flags"]
+    t = client.get("/api/today").json()
+    assert t["ledgers"]["climb"]["building"] is True and len(t["ledgers"]["climb"]["spark"]) == 11

@@ -1,0 +1,119 @@
+"""The three load ledgers: daily load, fitness, fatigue and form for cardio, climb and descent.
+
+Each ledger is kept separately and never blended. Fitness is a 42-day exponentially weighted
+average of daily load, fatigue a 7-day one, form is fitness minus fatigue. Flags are prompts
+for the coach, not injury predictions; their thresholds are the spec's starting rules.
+"""
+
+from __future__ import annotations
+
+from collections import defaultdict
+from dataclasses import dataclass, field
+from datetime import date, timedelta
+
+LEDGERS = ("cardio", "climb", "descent")
+FITNESS_DAYS = 42
+FATIGUE_DAYS = 7
+RAMP_RATIO = 1.3
+OVERREACH_RATIO = 1.5
+SPIKE_RATIO = 1.3  # one day 30% larger than any day in the last 42
+DETRAINING_DROP = 0.10  # fitness down 10% in 14 days
+DETRAINING_DAYS = 14
+MIN_HISTORY_DAYS = 28  # ratio flags are noise before the averages warm up
+
+
+@dataclass
+class LedgerDay:
+    day: date
+    ledger: str
+    load: float
+    fitness: float
+    fatigue: float
+    flags: list[str] = field(default_factory=list)
+
+    @property
+    def form(self) -> float:
+        return self.fitness - self.fatigue
+
+    @property
+    def vs_normal(self) -> float | None:
+        """Last 7 days against your normal: 0.4 reads as "40% above your normal"."""
+        return self.fatigue / self.fitness - 1 if self.fitness > 0 else None
+
+
+def daily_loads(activities: list[tuple[date, dict[str, float | None]]]) -> dict[date, dict[str, float]]:
+    """Sum activity loads into one total per day and ledger. Missing loads count as zero."""
+    days: dict[date, dict[str, float]] = defaultdict(lambda: dict.fromkeys(LEDGERS, 0.0))
+    for day, loads in activities:
+        for ledger in LEDGERS:
+            days[day][ledger] += loads.get(ledger) or 0.0
+    return dict(days)
+
+
+def build(activities: list[tuple[date, dict[str, float | None]]], until: date | None = None) -> list[LedgerDay]:
+    """Run all three ledgers from the first activity day through `until` (default today)."""
+    loads = daily_loads(activities)
+    if not loads:
+        return []
+    start = min(loads)
+    end = max(until or date.today(), max(loads))
+    a_fit, a_fat = 1 / FITNESS_DAYS, 1 / FATIGUE_DAYS
+    out: list[LedgerDay] = []
+    seed_days = [start + timedelta(days=i) for i in range(min(FITNESS_DAYS, (end - start).days + 1))]
+    for ledger in LEDGERS:
+        # Seed both averages with the opening weeks' mean, so a history that starts mid-season
+        # does not read as a huge ramp while the 42-day average warms up from zero.
+        fitness = fatigue = sum(loads.get(d, {}).get(ledger, 0.0) for d in seed_days) / len(seed_days)
+        history: list[LedgerDay] = []
+        day = start
+        while day <= end:
+            load = loads.get(day, {}).get(ledger, 0.0)
+            fitness += (load - fitness) * a_fit
+            fatigue += (load - fatigue) * a_fat
+            today = LedgerDay(day, ledger, load, fitness, fatigue)
+            today.flags = _flags(today, history)
+            history.append(today)
+            day += timedelta(days=1)
+        out.extend(history)
+    return out
+
+
+def _flags(today: LedgerDay, history: list[LedgerDay]) -> list[str]:
+    flags = []
+    if len(history) + 1 < MIN_HISTORY_DAYS or today.fitness <= 0:
+        return flags
+    ratio = today.fatigue / today.fitness
+    if ratio > OVERREACH_RATIO:
+        flags.append("overreach")
+    elif ratio > RAMP_RATIO:
+        flags.append("ramp")
+    recent_max = max((d.load for d in history[-FITNESS_DAYS:]), default=0.0)
+    if recent_max > 0 and today.load > recent_max * SPIKE_RATIO:
+        flags.append("spike")
+    if len(history) >= DETRAINING_DAYS:
+        before = history[-DETRAINING_DAYS].fitness
+        if before > 0 and today.fitness < before * (1 - DETRAINING_DROP):
+            flags.append("detraining")
+    return flags
+
+
+FLAG_TEXT = {
+    "ramp": "Ramping too fast",
+    "overreach": "Too much, back off",
+    "spike": "Biggest day in 6 weeks by a wide margin",
+    "detraining": "Fitness down over 10% in 2 weeks",
+}
+
+
+def describe_vs_normal(value: float | None) -> str:
+    if value is None:
+        return "no history yet"
+    pct = round(value * 100)
+    if pct == 0:
+        return "at your normal"
+    return f"{abs(pct)}% {'above' if pct > 0 else 'below'} your normal"
+
+
+def times_usual_day(load: float, fitness_before: float) -> float | None:
+    """An activity's load against a usual day, i.e. the fitness average going into it."""
+    return load / fitness_before if fitness_before > 0 else None

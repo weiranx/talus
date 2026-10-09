@@ -6,7 +6,7 @@ Spec: [Talus product design spec](https://claude.ai/artifact/VVYacLk1UGmNoBB4ds3
 
 ## Status
 
-Single-user prototype. Milestones 1 and 2 are here: sync from intervals.icu, file import, and per-activity scoring. Ledgers, web screens and the coach come next.
+Single-user prototype. Milestones 1 to 3 are here: sync from intervals.icu, file import, per-activity scoring, and the three load ledgers. Web screens and the coach come next.
 
 ## Layout
 
@@ -18,6 +18,7 @@ Single-user prototype. Milestones 1 and 2 are here: sync from intervals.icu, fil
 | `engine/talus/elevation.py` | Spike filter, hysteresis gain and loss, smoothed grade |
 | `engine/talus/loads.py` | Cardio (Banister TRIMP, 100 = 1 h at AnT), climb and descent loads by grade band |
 | `engine/talus/score.py` | Scores one activity: vert, segments, zones, loads |
+| `engine/talus/ledger.py` | Cardio, climb and descent ledgers: daily load, fitness (42-day), fatigue (7-day), form and flags |
 | `engine/talus/store.py` | SQLite plus raw files kept on disk for rescoring |
 
 ## Getting started
@@ -31,7 +32,8 @@ uv sync
 uv run talus thresholds --resting 45 --aet 150 --ant 172 --max 190
 uv run talus sync --days 180  # pulls original FIT files from intervals.icu
 uv run talus list             # mi, ft up, ft down, effort mi and the three loads
-uv run talus score 12         # full breakdown for one activity
+uv run talus score 12         # full breakdown for one activity, with "times a usual day"
+uv run talus load             # each ledger against your normal, flags, last 14 days
 uv run pytest
 ```
 
@@ -44,6 +46,7 @@ Other commands: `talus import <files>` for FIT/GPX/TCX, `talus rescore` after ch
 - Hysteresis of 3 m (~10 ft) for barometric altitude and 6 m for GPS-only. Compare `talus list` gain and loss with your watch's totals on a few runs.
 - Hiking is cadence under 135 steps/min, or speed under 1.5 m/s when there is no cadence.
 - intervals.icu streams cadence under 110 is treated as per foot and doubled.
+- Ledger flags use the spec's starting rules: ramp when the last 7 days run over 1.3 times your normal, overreach over 1.5, spike for a day 30% above any in the last 6 weeks, detraining for fitness down 10% in 2 weeks. Flags start after 28 days of history, and both averages are seeded from the first 6 weeks so a mid-season start does not read as a ramp.
 - Grade-band factors are the spec's starting values: climb 0.75 / 1.0 / 1.25, descent 0.5 / 1.0 / 1.5, times 0.7 when hiking down.
 
 ## Data source notes

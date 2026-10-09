@@ -13,13 +13,20 @@ from .models import ActivityScore, Streams, Thresholds
 
 LEDGER_UNIT = {
     "cardio": "Cardio load: 100 is one hour at your threshold heart rate.",
+    "distance": "Distance: miles covered, flat or steep. Climb and descent carry the vert.",
     "climb": "Climb load: 1 is one foot gained on a moderate grade. Steeper feet count more.",
     "descent": "Descent load: 1 is one foot lost on a moderate grade. Steeper feet count more.",
 }
 BAND_LABEL = {"<8": "under 8%", "8-20": "8 to 20%", ">20": "over 20%"}
 LEDGER_METRICS = ("load", "fatigue", "fitness", "vs_normal")
-ACTIVITY_METRICS = ("effort_mi", "cardio_load", "climb_load", "descent_load",
-                    "times_usual_cardio", "times_usual_climb", "times_usual_descent")
+ACTIVITY_METRICS = ("effort_mi", "cardio_load", "climb_load", "descent_load", "times_usual_cardio",
+                    "times_usual_distance", "times_usual_climb", "times_usual_descent")
+# Miles read to a tenth; the other loads to the whole number.
+DECIMALS = {"distance": 1}
+
+
+def _what(name: str) -> str:
+    return "miles" if name == "distance" else f"{name} load"
 
 
 def _n(v: float, nd: int = 0) -> str:
@@ -39,10 +46,12 @@ def ledger_metric(name: str, metric: str, today: ledger.LedgerDay, yesterday: le
     """One ledger number on one day. `activities` are (label, load) for that day."""
     label = name.capitalize()
     unit = LEDGER_UNIT[name]
+    nd = DECIMALS.get(name, 0)
     if metric == "load":
-        parts = [(a, _n(v or 0)) for a, v in activities]
-        steps = [" + ".join(v for _, v in parts) + f" = {_n(today.load)}"] if len(parts) > 1 else []
-        return _out(f"{label} load today", today.load, "Sum of the day's activity loads. Rest days count as 0.",
+        parts = [(a, _n(v or 0, nd)) for a, v in activities]
+        steps = [" + ".join(v for _, v in parts) + f" = {_n(today.load, nd)}"] if len(parts) > 1 else []
+        return _out(f"{_what(name).capitalize()} today", today.load,
+                    f"Sum of the day's activity {_what(name)}. Rest days count as 0.",
                     parts or [("No activities", "0")], steps, unit=unit)
     if metric in ("fatigue", "fitness"):
         days = ledger.FATIGUE_DAYS if metric == "fatigue" else ledger.FITNESS_DAYS
@@ -51,7 +60,7 @@ def ledger_metric(name: str, metric: str, today: ledger.LedgerDay, yesterday: le
         formula = (f"A {days}-day rolling average that weights recent days more: "
                    f"today = yesterday + (today's load − yesterday) ÷ {days}.")
         if yesterday is None:
-            return _out(title, value, formula, [("Today's load", _n(today.load))],
+            return _out(title, value, formula, [("Today's load", _n(today.load, nd))],
                         note="First day of history: the average starts from the opening weeks' mean load.", unit=unit)
         prev = yesterday.fatigue if metric == "fatigue" else yesterday.fitness
         return _out(title, value, formula,
@@ -142,10 +151,11 @@ def cardio_load(r: ActivityScore, s: Streams, dt: np.ndarray, th: Thresholds) ->
 
 def times_usual(name: str, load: float | None, normal_before: float | None) -> dict:
     x = None if load is None or not normal_before else ledger.times_usual_day(load, normal_before)
-    inputs = [(f"This activity's {name} load", "–" if load is None else _n(load)),
+    nd = DECIMALS.get(name, 0)
+    inputs = [(f"This activity's {_what(name)}", "–" if load is None else _n(load, nd)),
               ("Your normal the day before (42-day average)", "–" if normal_before is None else _n(normal_before, 1))]
     if x is None:
         return _out(f"{name.capitalize()} vs a usual day", None, "Activity load ÷ your normal day.", inputs,
                     note="No normal yet, or no load, so there is no ratio.")
     return _out(f"{name.capitalize()} vs a usual day", x, "Activity load ÷ your normal day going into it.", inputs,
-                [f"{_n(load)} ÷ {_n(normal_before, 1)} = {x:.1f}x"])
+                [f"{_n(load, nd)} ÷ {_n(normal_before, 1)} = {x:.1f}x"])

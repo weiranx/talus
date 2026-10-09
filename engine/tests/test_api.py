@@ -34,7 +34,7 @@ def test_api_end_to_end(tmp_path, monkeypatch):
     client = sign_in()
 
     t = client.get("/api/today").json()
-    assert set(t["ledgers"]) == {"cardio", "climb", "descent"}
+    assert set(t["ledgers"]) == {"cardio", "distance", "climb", "descent"}
     assert t["readiness"]["legs"]["state"] in ("loaded", "overreached")
     assert t["call"]["source"] == "rules"
     assert len(t["ledgers"]["descent"]["spark"]) == 41  # history starts 40 days ago
@@ -56,6 +56,16 @@ def test_api_end_to_end(tmp_path, monkeypatch):
     assert abs(detail["gain_ft"] - big["gain_ft"]) < 1
     assert detail["loads"]["descent"]["six_week_high"] is True
     assert detail["loads"]["descent"]["times_usual_day"] > 2
+    # Distance is plain miles: every run is the same length, so this one is a usual day for miles.
+    assert detail["loads"]["distance"]["load"] == detail["distance_mi"]
+    assert abs(detail["loads"]["distance"]["times_usual_day"] - 1) < 0.1
+    today_mi = client.get("/api/today").json()["ledgers"]["distance"]
+    assert today_mi["load"] == 0 and abs(today_mi["fitness"] - big["distance_mi"]) < 0.2  # no run today
+    yesterday = (date.today() - timedelta(days=1)).isoformat()
+    ex = client.get(f"/api/explain/ledger/distance/load?day={yesterday}").json()
+    assert ex["title"] == "Miles today" and ex["inputs"][0]["value"] == f"{big['distance_mi']:.1f}"
+    ex = client.get(f"/api/explain/activity/{big['id']}/times_usual_distance").json()
+    assert ex["value"] is not None and "miles" in ex["inputs"][0]["label"]
     assert [s["kind"] for s in detail["segments"]] == ["climb", "descent"]
     assert abs(sum(s["climb_load"] for s in detail["segments"]) - big["climb_load"]) < 1
     assert abs(sum(s["descent_load"] for s in detail["segments"]) - big["descent_load"]) < 1

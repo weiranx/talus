@@ -10,7 +10,7 @@ import Pill, { statePill } from "@/components/Pill";
 import Sparkline from "@/components/Sparkline";
 import ZoneBar from "@/components/ZoneBar";
 import { engine, EngineError } from "@/lib/api";
-import { dayLabel, LEDGER_LABEL, ledgerBadge, mi, n0, stateLabel } from "@/lib/format";
+import { dayLabel, LEDGER_LABEL, ledgerBadge, ledgerDecimals, ledgerNum, ledgerUnit, mi, n0, stateLabel } from "@/lib/format";
 import { LEDGERS, type Today } from "@/lib/types";
 
 export const dynamic = "force-dynamic";
@@ -69,6 +69,7 @@ export default async function TodayPage() {
           if (!d) return null;
           const badge = ledgerBadge(d);
           const limiter = t.readiness.legs.limiter === name && t.readiness.legs.state !== "fresh";
+          const nd = ledgerDecimals(name), unit = ledgerUnit(name);
           return (
             <section key={name} className="card" style={{ flex: "1 1 260px", gap: 10, outline: limiter ? `2px solid var(--${name})` : undefined }}>
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
@@ -83,11 +84,11 @@ export default async function TodayPage() {
                   <Explain path={`ledger/${name}/vs_normal`}>{d.vs_normal_text.replace(/^./, (c) => c.toUpperCase())}</Explain>
                 </div>
                 <div className="muted">
-                  Last 7 days <span className="mono" style={{ color: "var(--ink)" }}><Explain path={`ledger/${name}/fatigue`}>{n0(d.fatigue)}</Explain></span> a day. Your normal{" "}
-                  <span className="mono" style={{ color: "var(--ink)" }}><Explain path={`ledger/${name}/fitness`}>{n0(d.fitness)}</Explain></span>.
+                  Last 7 days <span className="mono" style={{ color: "var(--ink)" }}><Explain path={`ledger/${name}/fatigue`}>{ledgerNum(d.fatigue, nd) + unit}</Explain></span> a day. Your normal{" "}
+                  <span className="mono" style={{ color: "var(--ink)" }}><Explain path={`ledger/${name}/fitness`}>{ledgerNum(d.fitness, nd) + unit}</Explain></span>.
                 </div>
               </div>
-              <Sparkline data={d.spark} color={`var(--${name})`} label={LEDGER_LABEL[name]} />
+              <Sparkline data={d.spark} color={`var(--${name})`} label={LEDGER_LABEL[name]} decimals={nd} unit={unit} />
             </section>
           );
         })}

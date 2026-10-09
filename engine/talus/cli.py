@@ -62,7 +62,7 @@ def main(argv: list[str] | None = None) -> None:
     ls = sub.add_parser("list", help="recent activities in mi and ft")
     ls.add_argument("-n", type=int, default=20)
 
-    ld = sub.add_parser("load", help="cardio, climb and descent ledgers: today and recent days")
+    ld = sub.add_parser("load", help="cardio, distance, climb and descent ledgers: today and recent days")
     ld.add_argument("--days", type=int, default=14)
 
     dm = sub.add_parser("demo", help="fill an empty data dir with 10 weeks of sample training")
@@ -353,22 +353,25 @@ def cmd_load(store: Store, args) -> None:
     print(f"Ledgers on {latest}")
     for d in (d for d in days if d.day == latest):
         flags = "; ".join(ledger.FLAG_TEXT[f] for f in d.flags)
+        nd = 1 if d.ledger == "distance" else 0
         print(f"  {d.ledger:8} last 7 days {ledger.describe_vs_normal(d.vs_normal):24} "
-              f"(fitness {d.fitness:,.0f}, fatigue {d.fatigue:,.0f}, form {d.form:+,.0f})"
+              f"(fitness {d.fitness:,.{nd}f}, fatigue {d.fatigue:,.{nd}f}, form {d.form:+,.{nd}f})"
               + (f"  ! {flags}" if flags else ""))
     history_days = len(store.ledgers()) // len(ledger.LEDGERS)
     if history_days < ledger.MIN_HISTORY_DAYS:
         print(f"  Thin history: flags start after {ledger.MIN_HISTORY_DAYS} days of data")
     print()
-    print(f"{'day':10}  {'cardio':>6}  {'climb':>6}  {'descent':>7}  flags")
+    print(f"{'day':10}  {'cardio':>6}  {'mi':>5}  {'climb':>6}  {'descent':>7}  flags")
     by_day: dict = {}
     for d in days:
         by_day.setdefault(d.day, {})[d.ledger] = d
     for day in sorted(by_day):
         row = by_day[day]
         flags = ", ".join(f"{k} {f}" for k, v in row.items() for f in v.flags)
-        print(f"{day}  {row['cardio'].load:6,.0f}  {row['climb'].load:6,.0f}  {row['descent'].load:7,.0f}  {flags}")
-    print("\nLoads: cardio 100 = 1 hour at threshold HR; climb and descent 1 = one foot on a moderate grade.")
+        print(f"{day}  {row['cardio'].load:6,.0f}  {row['distance'].load:5.1f}  {row['climb'].load:6,.0f}  "
+              f"{row['descent'].load:7,.0f}  {flags}")
+    print("\nLoads: cardio 100 = 1 hour at threshold HR; distance in miles; "
+          "climb and descent 1 = one foot on a moderate grade.")
 
 
 def cmd_demo(store: Store, args) -> None:
@@ -396,7 +399,8 @@ def usual_day_line(store: Store, row, r: ActivityScore) -> str:
     day = date.fromisoformat(row["start_time"][:10])
     before = {d.ledger: d.fitness for d in store.ledgers(day - timedelta(days=1)) if d.day == day - timedelta(days=1)}
     parts = []
-    for name, load in (("cardio", r.cardio_load), ("climb", r.climb_load), ("descent", r.descent_load)):
+    for name, key in ledger.ACTIVITY_KEY.items():
+        load = getattr(r, key)
         x = None if load is None else ledger.times_usual_day(load, before.get(name, 0.0))
         parts.append(f"{name} {'n/a' if x is None else f'{x:.1f}x'}")
     return "Vs a usual day     " + ", ".join(parts)

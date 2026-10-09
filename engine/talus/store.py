@@ -254,7 +254,7 @@ class Store:
         for r in rows:
             m = json.loads(r["summary"])
             out.append((date.fromisoformat(r["start_time"][:10]),
-                        {"cardio": m["cardio_load"], "climb": m["climb_load"], "descent": m["descent_load"]}))
+                        {name: m[key] for name, key in ledger.ACTIVITY_KEY.items()}))
         return out
 
     # The daily ledgers are derived from activity scores and kept in daily_load. Anything that

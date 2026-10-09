@@ -1,5 +1,5 @@
-export type Ledger = "cardio" | "climb" | "descent";
-export const LEDGERS: Ledger[] = ["cardio", "climb", "descent"];
+export type Ledger = "cardio" | "distance" | "climb" | "descent";
+export const LEDGERS: Ledger[] = ["cardio", "distance", "climb", "descent"];
 export type State = "fresh" | "loaded" | "overreached";
 
 export interface Flag { key: string; text: string }

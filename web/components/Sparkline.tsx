@@ -1,11 +1,14 @@
 "use client";
 
 import { Line, LineChart, ResponsiveContainer, Tooltip, YAxis } from "recharts";
-import { dayLabel, n0 } from "@/lib/format";
+import { dayLabel, ledgerNum } from "@/lib/format";
 
 type Point = { day: string; fitness: number; fatigue: number };
 
-export default function Sparkline({ data, color, label }: { data: Point[]; color: string; label: string }) {
+export default function Sparkline({ data, color, label, decimals = 0, unit = "" }: {
+  data: Point[]; color: string; label: string; decimals?: number; unit?: string;
+}) {
+  const num = (v: number) => ledgerNum(v, decimals) + unit;
   return (
     <div role="img" aria-label={`${label}: your normal and your last 7 days over 6 weeks`} style={{ height: 56 }}>
       <ResponsiveContainer width="100%" height="100%">
@@ -17,8 +20,8 @@ export default function Sparkline({ data, color, label }: { data: Point[]; color
               active && payload?.length ? (
                 <div className="tip">
                   <div style={{ fontWeight: 600 }}>{dayLabel(String(payload[0].payload.day), { month: "short", day: "numeric" })}</div>
-                  <div>Your normal <span className="mono">{n0(payload[0].payload.fitness)}</span></div>
-                  <div>Last 7 days <span className="mono">{n0(payload[0].payload.fatigue)}</span></div>
+                  <div>Your normal <span className="mono">{num(payload[0].payload.fitness)}</span></div>
+                  <div>Last 7 days <span className="mono">{num(payload[0].payload.fatigue)}</span></div>
                 </div>
               ) : null
             }

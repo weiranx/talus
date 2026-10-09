@@ -88,7 +88,7 @@ def cmd_sync(store: Store, args) -> None:
         _score_and_save(store, activity_id, raw, th, act.sport, label=f"{act.start_time:%Y-%m-%d} {act.name}")
     if th is None:
         print("Set thresholds with `talus thresholds` to score these activities.")
-    elif new:
+    else:
         rebuild_ledgers(store)
 
 
@@ -152,6 +152,7 @@ def cmd_list(store: Store, args) -> None:
 
 
 def cmd_load(store: Store, args) -> None:
+    rebuild_ledgers(store)  # extends the ledgers through today, so rest days count
     days = store.ledger_days(date.today() - timedelta(days=args.days - 1))
     if not days:
         sys.exit("No ledger yet: set thresholds, then sync or import activities")
@@ -186,7 +187,7 @@ def usual_day_line(store: Store, row, r: ActivityScore) -> str:
     before = {d.ledger: d.fitness for d in store.ledger_days(day - timedelta(days=1)) if d.day == day - timedelta(days=1)}
     parts = []
     for name, load in (("cardio", r.cardio_load), ("climb", r.climb_load), ("descent", r.descent_load)):
-        x = ledger.times_usual_day(load or 0.0, before.get(name, 0.0))
+        x = None if load is None else ledger.times_usual_day(load, before.get(name, 0.0))
         parts.append(f"{name} {'n/a' if x is None else f'{x:.1f}x'}")
     return "Vs a usual day     " + ", ".join(parts)
 

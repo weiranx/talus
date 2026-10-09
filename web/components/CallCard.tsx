@@ -5,8 +5,8 @@ import type { Call } from "@/lib/types";
 const CALL_TONE = { go: "good", modify: "warn", rest: "bad" } as const;
 const CALL_TEXT = { go: "Go", modify: "Modify", rest: "Rest" } as const;
 
-export default function CallCard({ call, note, logId, feedback }: {
-  call: Call; note: string; logId?: number | null; feedback?: number | null;
+export default function CallCard({ call, note, logId, feedback, planned }: {
+  call: Call; note: string; logId?: number | null; feedback?: number | null; planned?: boolean;
 }) {
   return (
     <section className="card dark" style={{ padding: "22px 24px 18px" }}>
@@ -14,6 +14,7 @@ export default function CallCard({ call, note, logId, feedback }: {
         <h2 className="label">Today&apos;s call</h2>
         <Pill tone={CALL_TONE[call.call]}>{CALL_TEXT[call.call]}</Pill>
       </div>
+      {planned ? <div style={{ color: "#b9c6c0", fontSize: 13, marginBottom: -8 }}>From your plan</div> : null}
       <div style={{ fontSize: 28, lineHeight: "33px", fontWeight: 700, letterSpacing: "-0.01em" }}>{call.session}</div>
       <div style={{ color: "#e4eae7", maxWidth: 620 }}>{call.detail}</div>
       <div style={{ color: "#b9c6c0", fontSize: 14, maxWidth: 620 }}>Why: {call.why}</div>

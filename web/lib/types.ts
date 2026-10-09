@@ -77,7 +77,7 @@ export interface Today {
     engine: { state: State; detail: string; reason: string };
     legs: { state: State; detail: string; limiter: Ledger; reason: string };
   };
-  call: { call: "go" | "modify" | "rest"; session: string; detail: string; why: string; source: string };
+  call: { call: "go" | "modify" | "rest"; session: string; detail: string; why: string; source: string; planned?: boolean };
   ledgers: Record<Ledger, LedgerDay & { spark: { day: string; fitness: number; fatigue: number }[] }>;
   week: { start: string; activities: ActivitySummary[]; distance_mi: number; gain_ft: number; loss_ft: number };
   intensity_28d: ZoneShare;
@@ -240,3 +240,133 @@ export interface Explanation {
   steps: string[];
   note: string | null;
 }
+
+// Objective, plan, weekly review and chat. Every number is the engine's.
+export type DimStatus = "ready" | "close" | "gap" | "unknown" | "context";
+
+export interface Dim {
+  key: string;
+  name: string;
+  demand_label: string;
+  capacity_label: string;
+  demand: number | null;
+  capacity: number;
+  unit: "effort mi" | "h" | "ft" | null;
+  rule: number | null;
+  ratio: number | null;
+  status: DimStatus;
+  status_text: string;
+}
+
+export interface ReadinessEval { dims: Dim[]; limiter: string | null; verdict: "ready" | "close" | "gap" }
+
+export interface Objective {
+  id: number;
+  name: string;
+  day: string;
+  distance_mi: number;
+  gain_ft: number;
+  loss_ft: number;
+  longest_climb_ft: number | null;
+  longest_descent_ft: number | null;
+  high_point_ft: number | null;
+  source: "manual" | "gpx";
+  days_to_go: number;
+}
+
+export interface Constraints { days: number[]; weekday_min: number; weekend_min: number; long_day: number; notes: string }
+
+export interface LongDay {
+  day: string;
+  miles: number;
+  gain_ft: number;
+  loss_ft: number;
+  minutes: number;
+  effort_mi: number;
+  longest_descent_ft: number | null;
+}
+
+export type Focus = "build" | "peak" | "recovery" | "taper" | "race";
+
+export interface PlanWeek {
+  index: number;
+  start: string;
+  focus: Focus;
+  miles: number;
+  gain_ft: number;
+  loss_ft: number;
+  hours: number;
+  below_aet_hours: number;
+  long: LongDay | null;
+  limited_by: string[];
+  notes: string[];
+}
+
+export interface WeekBrief { focus: Focus; miles: number; gain_ft: number; loss_ft: number; hours: number }
+
+export interface Plan {
+  id: number;
+  status: "draft" | "accepted";
+  reason: string;
+  reason_text: string;
+  created_at: string;
+  decided_at: string | null;
+  built_on: string;
+  constraints: Constraints;
+  baseline: { miles: number; gain_ft: number; loss_ft: number; hours: number };
+  pace: { min_per_effort_mi: number; learned: boolean; days: number };
+  demand: { effort_mi: number; time: { low_h: number; mid_h: number; high_h: number; pace_learned: boolean } };
+  peak: { miles: number; gain_ft: number; loss_ft: number };
+  weeks: PlanWeek[];
+  projected: ReadinessEval & { capacity: Record<string, number> };
+  reachable: boolean;
+  options: { smaller: { factor: number; distance_mi: number; gain_ft: number; loss_ft: number } | null; later: string | null };
+  now: ReadinessEval;
+  changes: { start: string; before: WeekBrief | null; after: WeekBrief }[];
+}
+
+export type SessionKind = "long" | "hills" | "easy" | "rest" | "objective" | "done";
+
+export interface PlanSession {
+  day: string;
+  kind: SessionKind;
+  miles: number;
+  gain_ft: number;
+  loss_ft: number;
+  minutes: number;
+  focus: Focus;
+  title: string;
+  how: string;
+  detail: string;
+  longest_descent_ft?: number | null;
+}
+
+export interface WeekReview {
+  start: string;
+  end: string;
+  actual: { activities: number; miles: number; gain_ft: number; loss_ft: number; hours: number; below_aet_pct: number | null; longest_day_effort_mi: number };
+  target: (WeekBrief & { focus: Focus }) | null;
+  share: { miles: number | null; gain_ft: number | null; loss_ft: number | null } | null;
+  flags: { ledger: Ledger; key: string; text: string }[];
+  max_pain: number | null;
+  replan: string[];
+  replan_text: string[];
+}
+
+export interface PlanPage {
+  date: string;
+  constraints: Constraints;
+  objective: Objective | null;
+  readiness: (ReadinessEval & { demand: Plan["demand"] & { distance_mi: number; gain_ft: number; loss_ft: number }; pace: Plan["pace"] }) | null;
+  accepted: Plan | null;
+  draft: Plan | null;
+  sessions: PlanSession[];
+  review: WeekReview | null;
+  fitness_only: string;
+  thresholds: Thresholds | null;
+}
+
+export interface PlanReply { verdict: string; limiter: string; plan: string }
+export interface ReviewReply { week: string; next: string }
+
+export interface ChatMessage { id: number; created_at: string; role: "athlete" | "coach"; text: string; source: string | null; log_id: number | null }

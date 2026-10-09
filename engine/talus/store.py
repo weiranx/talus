@@ -14,6 +14,7 @@ from pathlib import Path
 from . import MODEL_VERSION, ledger
 from .ledger import LedgerDay
 from .models import ActivityScore, Thresholds
+from .plan import Objective
 from .sources.base import RawFile, RemoteActivity, WellnessDay
 
 SCHEMA = """
@@ -97,6 +98,37 @@ CREATE TABLE IF NOT EXISTS ledger_state (
     id INTEGER PRIMARY KEY CHECK (id = 1),
     stale INTEGER NOT NULL,
     model_version TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS objective (
+    id INTEGER PRIMARY KEY,
+    name TEXT NOT NULL,
+    day TEXT NOT NULL,
+    distance_mi REAL NOT NULL,
+    gain_ft REAL NOT NULL,
+    loss_ft REAL NOT NULL,
+    longest_climb_ft REAL,
+    longest_descent_ft REAL,
+    high_point_ft REAL,
+    source TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    active INTEGER NOT NULL
+);
+CREATE TABLE IF NOT EXISTS plan (
+    id INTEGER PRIMARY KEY,
+    objective_id INTEGER NOT NULL REFERENCES objective(id),
+    created_at TEXT NOT NULL,
+    status TEXT NOT NULL,
+    reason TEXT NOT NULL,
+    body TEXT NOT NULL,
+    decided_at TEXT
+);
+CREATE TABLE IF NOT EXISTS chat (
+    id INTEGER PRIMARY KEY,
+    created_at TEXT NOT NULL,
+    role TEXT NOT NULL,
+    text TEXT NOT NULL,
+    source TEXT,
+    log_id INTEGER
 );
 CREATE TABLE IF NOT EXISTS setting (
     key TEXT PRIMARY KEY,
@@ -388,3 +420,90 @@ class Store:
         cur = self.db.execute("UPDATE coach_log SET feedback = ? WHERE id = ?", (rating, log_id))
         self.db.commit()
         return cur.rowcount == 1
+
+    # Objectives and plans. One objective is active at a time; adding one retires the last.
+    # Plans are versioned: a draft waits for the athlete, accepting it supersedes the plan before,
+    # and every version is kept.
+    def objective(self) -> Objective | None:
+        r = self.db.execute("SELECT * FROM objective WHERE active = 1 ORDER BY id DESC LIMIT 1").fetchone()
+        if r is None:
+            return None
+        return Objective(r["name"], date.fromisoformat(r["day"]), r["distance_mi"], r["gain_ft"], r["loss_ft"],
+                         r["longest_climb_ft"], r["longest_descent_ft"], r["high_point_ft"], r["source"], r["id"])
+
+    @_writes
+    def save_objective(self, obj: Objective) -> int:
+        """Replace the active objective. Its plans go with it: they were built for the old one."""
+        self.db.execute("UPDATE objective SET active = 0 WHERE active = 1")
+        self.db.execute("UPDATE plan SET status = 'superseded' WHERE status IN ('draft', 'accepted')")
+        cur = self.db.execute(
+            "INSERT INTO objective (name, day, distance_mi, gain_ft, loss_ft, longest_climb_ft, longest_descent_ft,"
+            " high_point_ft, source, created_at, active) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)",
+            (obj.name, obj.day.isoformat(), obj.distance_mi, obj.gain_ft, obj.loss_ft, obj.longest_climb_ft,
+             obj.longest_descent_ft, obj.high_point_ft, obj.source, datetime.now().isoformat(timespec="seconds")))
+        return cur.lastrowid
+
+    @_writes
+    def update_objective(self, obj: Objective) -> None:
+        """Change the active objective in place; its accepted plan stands until a new one is accepted."""
+        self.db.execute(
+            "UPDATE objective SET name = ?, day = ?, distance_mi = ?, gain_ft = ?, loss_ft = ?, longest_climb_ft = ?,"
+            " longest_descent_ft = ?, high_point_ft = ?, source = ? WHERE id = ? AND active = 1",
+            (obj.name, obj.day.isoformat(), obj.distance_mi, obj.gain_ft, obj.loss_ft, obj.longest_climb_ft,
+             obj.longest_descent_ft, obj.high_point_ft, obj.source, obj.id))
+
+    @_writes
+    def clear_objective(self) -> None:
+        self.db.execute("UPDATE objective SET active = 0 WHERE active = 1")
+        self.db.execute("UPDATE plan SET status = 'superseded' WHERE status IN ('draft', 'accepted')")
+
+    def plan(self, status: str) -> dict | None:
+        """The current draft or accepted plan for the active objective, with its row fields."""
+        r = self.db.execute(
+            "SELECT p.* FROM plan p JOIN objective o ON o.id = p.objective_id"
+            " WHERE o.active = 1 AND p.status = ? ORDER BY p.id DESC LIMIT 1", (status,)).fetchone()
+        if r is None:
+            return None
+        return json.loads(r["body"]) | {"id": r["id"], "status": r["status"], "reason": r["reason"],
+                                        "created_at": r["created_at"], "decided_at": r["decided_at"]}
+
+    @_writes
+    def save_draft(self, objective_id: int, reason: str, body: dict) -> int:
+        """A new draft replaces any draft still waiting."""
+        self.db.execute("UPDATE plan SET status = 'declined', decided_at = ? WHERE status = 'draft'",
+                        (datetime.now().isoformat(timespec="seconds"),))
+        cur = self.db.execute("INSERT INTO plan (objective_id, created_at, status, reason, body) VALUES (?, ?, 'draft', ?, ?)",
+                              (objective_id, datetime.now().isoformat(timespec="seconds"), reason, json.dumps(body)))
+        return cur.lastrowid
+
+    @_writes
+    def decide_draft(self, plan_id: int, accept: bool) -> bool:
+        now = datetime.now().isoformat(timespec="seconds")
+        r = self.db.execute("SELECT 1 FROM plan WHERE id = ? AND status = 'draft'", (plan_id,)).fetchone()
+        if r is None:
+            return False
+        if accept:
+            self.db.execute("UPDATE plan SET status = 'superseded' WHERE status = 'accepted'")
+        self.db.execute("UPDATE plan SET status = ?, decided_at = ? WHERE id = ?",
+                        ("accepted" if accept else "declined", now, plan_id))
+        return True
+
+    def pains(self, since: date, until: date) -> list[int]:
+        rows = self.db.execute("SELECT pain FROM daily_health WHERE day BETWEEN ? AND ? AND pain IS NOT NULL",
+                               (since.isoformat(), until.isoformat())).fetchall()
+        return [r["pain"] for r in rows]
+
+    # Coach chat
+    def chat(self, limit: int = 50) -> list[dict]:
+        rows = self.db.execute("SELECT * FROM chat ORDER BY id DESC LIMIT ?", (limit,)).fetchall()
+        return [{k: r[k] for k in ("id", "created_at", "role", "text", "source", "log_id")} for r in reversed(rows)]
+
+    @_writes
+    def add_chat(self, role: str, text: str, source: str | None = None, log_id: int | None = None) -> int:
+        cur = self.db.execute("INSERT INTO chat (created_at, role, text, source, log_id) VALUES (?, ?, ?, ?, ?)",
+                              (datetime.now().isoformat(timespec="seconds"), role, text, source, log_id))
+        return cur.lastrowid
+
+    @_writes
+    def clear_chat(self) -> None:
+        self.db.execute("DELETE FROM chat")

@@ -22,7 +22,7 @@ import httpx
 import numpy as np
 from fastapi import BackgroundTasks, FastAPI, HTTPException, Request, Response
 from fastapi.responses import JSONResponse, RedirectResponse, StreamingResponse
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 from . import cli, coach, explain, google_auth, ledger, wellness, zones
 from . import settings as app_settings
@@ -267,6 +267,16 @@ def activities(limit: int = 50) -> list[dict]:
     return _activities(get_store())[:limit]
 
 
+def _streams(store: Store, row):
+    """An activity's parsed file, or a 422 that says why it can't be read."""
+    try:
+        streams = parse(store.raw(row))
+    except Exception as e:
+        raise HTTPException(422, f"Could not read this activity's file ({type(e).__name__}: {e}).") from e
+    streams.sport = streams.sport or row["sport"]
+    return streams
+
+
 @app.get("/api/activities/{activity_id}")
 def activity(activity_id: int) -> dict:
     store = get_store()
@@ -274,8 +284,7 @@ def activity(activity_id: int) -> dict:
     th = store.thresholds()
     if row is None or th is None:
         raise HTTPException(404, "No such activity, or thresholds not set")
-    streams = parse(store.raw(row))
-    streams.sport = streams.sport or row["sport"]
+    streams = _streams(store, row)
     result = score(streams, th)
     day = date.fromisoformat(row["start_time"][:10])
     before = {d.ledger: d.fitness for d in store.ledgers(day - timedelta(days=1))
@@ -430,22 +439,24 @@ def _inferred_thresholds(store: Store) -> dict | None:
     the set of activities changes."""
     from .infer import infer
 
+    global _inferred_cache
     rows = [r for r in store.activities() if r["start_time"]]
     key = (str(store.dir), tuple(sorted(r["id"] for r in rows)), date.today())
-    if key not in _inferred_cache:
-        _inferred_cache.clear()
-        acts, _ = cli.infer_inputs(store, INFER_DAYS)
-        r = infer(acts)
-        if not r["runs_with_hr"]:
-            _inferred_cache[key] = None
-        else:
-            info = {row["id"]: {"id": row["id"], "day": row["start_time"][:10], "name": row["name"]} for row in rows}
-            _inferred_cache[key] = {
-                "days": INFER_DAYS, "runs_with_hr": r["runs_with_hr"],
-                **{k: {"value": e.value, "confidence": e.confidence, "method": e.method,
-                       "activities": [info[i] for i in e.activities if i in info]}
-                   for k, e in ((k, r[k]) for k in ("aet", "ant", "max"))}}
-    return _inferred_cache[key]
+    cache = _inferred_cache  # one read: another request may swap in a new cache meanwhile
+    if key in cache:
+        return cache[key]
+    acts, _ = cli.infer_inputs(store, INFER_DAYS)
+    r = infer(acts)
+    value = None
+    if r["runs_with_hr"]:
+        info = {row["id"]: {"id": row["id"], "day": row["start_time"][:10], "name": row["name"]} for row in rows}
+        value = {
+            "days": INFER_DAYS, "runs_with_hr": r["runs_with_hr"],
+            **{k: {"value": e.value, "confidence": e.confidence, "method": e.method,
+                   "activities": [info[i] for i in e.activities if i in info]}
+               for k, e in ((k, r[k]) for k in ("aet", "ant", "max"))}}
+    _inferred_cache = {key: value}  # replaced, never cleared, so a concurrent reader keeps its copy
+    return value
 
 
 def _usage_estimate(store: Store, mode: str, model_id: str, calls_per_month: int) -> dict:
@@ -612,6 +623,7 @@ def _intervals_credential() -> dict | None:
 
 
 class SourceIn(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True)  # so 8 spaces are not a key
     api_key: str = Field(min_length=8, max_length=200)
     athlete_id: str = Field(default="0", pattern=r"^(0|i?\d{1,12})$")
 
@@ -863,8 +875,7 @@ def explain_activity(activity_id: int, metric: str) -> dict:
     th = store.thresholds()
     if row is None or th is None:
         raise HTTPException(404, "No such activity, or thresholds not set")
-    streams = parse(store.raw(row))
-    streams.sport = streams.sport or row["sport"]
+    streams = _streams(store, row)
     r = score(streams, th)
     if metric.startswith("times_usual_"):
         name = metric.removeprefix("times_usual_")

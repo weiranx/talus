@@ -37,6 +37,16 @@ def cost_per_call(model: str, tokens: tuple[float, float]) -> float | None:
     return (tokens[0] * m["input"] + tokens[1] * m["output"]) / 1e6
 
 
+def _priced_as(model: str | None) -> str:
+    """The price list entry for a logged model. The API can answer with a dated id or, with the
+    server-side fallback, another model; anything not recognised is priced as the dearest, so the
+    cap errs on the safe side."""
+    for name in MODELS:
+        if model and (model == name or model.startswith(name + "-")):
+            return name
+    return max(MODELS, key=lambda m: MODELS[m]["output"])
+
+
 def server_ceiling() -> float:
     """Most an account other than the owner's can spend on coach calls each month, in USD."""
     try:
@@ -54,5 +64,5 @@ def spent_since(store, since) -> float:
         u = json.loads(r["usage"])
         tokens = (sum(u.get(k) or 0 for k in ("input_tokens", "cache_read_input_tokens",
                                               "cache_creation_input_tokens")), u.get("output_tokens") or 0)
-        total += cost_per_call(r["model"], tokens) or 0.0
+        total += cost_per_call(_priced_as(r["model"]), tokens)
     return round(total, 4)

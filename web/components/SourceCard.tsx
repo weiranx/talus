@@ -30,7 +30,7 @@ export async function runSync(source: "intervals" | "garmin", days: number): Pro
   if (!res.ok) return { ok: false, text: body.detail ?? `Sync failed (${res.status}).` };
   if (body.error) return { ok: false, text: `Sync failed: ${body.error}` };
   const dups = body.duplicates ? ` ${body.duplicates} already here from another source.` : "";
-  return { ok: true, text: (body.new ? `Pulled ${body.new} new ${body.new === 1 ? "activity" : "activities"}.` : "Up to date, nothing new.") + dups };
+  return { ok: true, text: (body.saved ? `Pulled ${body.saved} new ${body.saved === 1 ? "activity" : "activities"}.` : "Up to date, nothing new.") + dups };
 }
 
 export default function SourceCard({ source, lastSync }: { source: Settings["source"]; lastSync: LastSync | null }) {
@@ -40,7 +40,9 @@ export default function SourceCard({ source, lastSync }: { source: Settings["sou
   const [message, setMessage] = useState<{ ok: boolean; text: string } | null>(null);
   const [editing, setEditing] = useState(!source.key_set);
   const [key, setKey] = useState("");
-  const [athlete, setAthlete] = useState(source.athlete_id ?? "");
+  // "0" means whoever owns the key, the same as leaving the field blank.
+  const athleteId = source.athlete_id && source.athlete_id !== "0" ? source.athlete_id : null;
+  const [athlete, setAthlete] = useState(athleteId ?? "");
   const [saving, setSaving] = useState(false);
 
   async function saveKey(e: React.FormEvent) {
@@ -54,7 +56,11 @@ export default function SourceCard({ source, lastSync }: { source: Settings["sou
     }).catch(() => null);
     setSaving(false);
     if (!res) return setMessage({ ok: false, text: "Could not reach the engine. Is it running?" });
-    if (!res.ok) return setMessage({ ok: false, text: "Check the key, and that the athlete id looks like i123456." });
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}));
+      return setMessage({ ok: false, text: res.status === 422 ? "Check the key, and that the athlete id looks like i123456."
+        : typeof body.detail === "string" ? body.detail : `Could not save the key (${res.status}).` });
+    }
     setKey("");
     setEditing(false);
     setMessage({ ok: true, text: "Saved. Sync to pull your activities." });
@@ -62,7 +68,8 @@ export default function SourceCard({ source, lastSync }: { source: Settings["sou
   }
 
   async function removeKey() {
-    await fetch("/api/settings/source", { method: "DELETE" }).catch(() => null);
+    const res = await fetch("/api/settings/source", { method: "DELETE" }).catch(() => null);
+    if (!res?.ok) return setMessage({ ok: false, text: res ? `Could not remove the key (${res.status}).` : "Could not reach the engine. Is it running?" });
     setEditing(true);
     router.refresh();
   }
@@ -85,7 +92,7 @@ export default function SourceCard({ source, lastSync }: { source: Settings["sou
         <dt>API key</dt>
         <dd>{source.key_set ? (source.updated_at ? `Saved ${when(source.updated_at)}` : "From the engine's .env") : "Not added yet"}</dd>
         <dt>Athlete</dt>
-        <dd>{source.athlete_id ? <span className="mono">{source.athlete_id}</span> : "Whoever owns the key"}</dd>
+        <dd>{athleteId ? <span className="mono">{athleteId}</span> : "Whoever owns the key"}</dd>
         <dt>In Talus</dt>
         <dd><span className="mono">{n0(source.activities)}</span>{source.latest_activity ? `, latest ${dayLabel(source.latest_activity, { month: "short", day: "numeric", year: "numeric" })}` : ""}</dd>
         <dt>Last sync</dt>

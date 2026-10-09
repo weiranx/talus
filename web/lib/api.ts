@@ -20,7 +20,8 @@ export async function engine<T>(path: string): Promise<T> {
   }
   if (!res.ok) {
     const body = await res.json().catch(() => ({}));
-    throw new EngineError(res.status, body.detail ?? `Engine returned ${res.status}`);
+    // FastAPI's validation errors put a list in detail; only show it when it is a sentence.
+    throw new EngineError(res.status, typeof body.detail === "string" ? body.detail : `Engine returned ${res.status}`);
   }
   return res.json() as Promise<T>;
 }

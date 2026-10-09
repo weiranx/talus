@@ -32,12 +32,14 @@ export default function CoachSettings({ coach }: { coach: Settings["coach"] }) {
   const [message, setMessage] = useState<{ ok: boolean; text: string } | null>(null);
   const capValue = cap.trim() === "" ? null : Number(cap);
   const capDirty = capValue !== coach.cap.limit;
+  const capValid = capValue == null || (Number.isFinite(capValue) && capValue >= 0 && capValue <= 1000);
   const dirty = capDirty || enabled !== coach.enabled || style !== coach.style ||
     models.brief_model !== coach.brief_model || models.analysis_model !== coach.analysis_model;
   const capped = coach.cap.limit != null && coach.cap.spent >= coach.cap.limit;
   const haiku = coach.models.find((m) => m.id.startsWith("claude-haiku"));
 
   async function save() {
+    if (!capValid) return setMessage({ ok: false, text: "The cap is a dollar amount from 0 to 1000, or blank." });
     setSaving(true);
     setMessage(null);
     const res = await fetch("/api/settings/coach", {
@@ -46,7 +48,8 @@ export default function CoachSettings({ coach }: { coach: Settings["coach"] }) {
       body: JSON.stringify({ enabled, ...models, style, ...(capDirty ? { monthly_cap_usd: capValue } : {}) }),
     }).catch(() => null);
     setSaving(false);
-    if (!res?.ok) return setMessage({ ok: false, text: "Could not save. Is the engine running?" });
+    if (!res) return setMessage({ ok: false, text: "Could not save. Is the engine running?" });
+    if (!res.ok) return setMessage({ ok: false, text: `Could not save (${res.status}).` });
     setMessage({ ok: true, text: "Saved. The next brief and analysis use these settings." });
     router.refresh();
   }

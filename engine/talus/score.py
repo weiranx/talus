@@ -21,11 +21,12 @@ MAX_GAIN_FT_PER_HOUR = 5000  # beyond a vertical-kilometer race pace: the elevat
 
 def score(s: Streams, th: Thresholds) -> ActivityScore:
     notes: list[str] = []
-    dt = np.diff(s.time, prepend=s.time[0])
-    dt = np.minimum(dt, MAX_DT_S)
+    raw_dt = np.diff(s.time, prepend=s.time[0])
+    dt = np.minimum(raw_dt, MAX_DT_S)  # a long gap counts as at most 10 s of time
     dd = np.diff(s.distance, prepend=s.distance[0])
     with np.errstate(divide="ignore", invalid="ignore"):
-        speed = np.where(dt > 0, dd / dt, 0.0)
+        # Speed over the real gap: 360 m in a 120 s GPS dropout is 3 m/s, not 36.
+        speed = np.where(raw_dt > 0, dd / raw_dt, 0.0)
     moving = speed > MOVING_MPS
     distance_m = float(s.distance[-1] - s.distance[0])
 

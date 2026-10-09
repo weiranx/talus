@@ -78,7 +78,9 @@ def main(argv: list[str] | None = None) -> None:
     args = p.parse_args(argv)
     if args.cmd == "serve":
         import uvicorn
-        Store(data_dir()).refresh_ledgers()  # once, so pages read stored ledgers from the start
+        accounts = Accounts(data_dir())  # moves a single-user install into account 1 first
+        for a in accounts.all():  # once, so pages read stored ledgers from the start
+            Store(accounts.user_dir(a.id)).refresh_ledgers()
         uvicorn.run("talus.api:app", host="127.0.0.1", port=args.port)
         return
     accounts = Accounts(data_dir())
@@ -210,6 +212,8 @@ def cmd_thresholds(store: Store, args) -> None:
                     "manual" if args.aet else "manual, AeT provisional (88% of AnT)")
     store.set_thresholds(th)
     print(f"Saved: resting {th.resting:.0f}, AeT {th.aet:.0f}, AnT {th.ant:.0f}, max {th.max:.0f} ({th.source})")
+    if store.activities():  # as Settings does, so scores and ledgers match the new thresholds
+        print(f"Rescored {rescore(store, th, log=lambda _: None)} activities and rebuilt the ledgers")
 
 
 def cmd_sync(store: Store, args) -> None:
@@ -362,7 +366,7 @@ def cmd_rescore(store: Store, args) -> None:
 def rescore(store: Store, th: Thresholds, log=print) -> int:
     rows = store.activities()
     for row in rows:
-        _score_and_save(store, row["id"], store.raw(row), th, row["sport"],
+        _score_and_save(store, row["id"], lambda row=row: store.raw(row), th, row["sport"],
                         label=f"{row['start_time'][:10]} {row['name']}", log=log)
     rebuild_ledgers(store)
     return len(rows)
@@ -456,11 +460,11 @@ def _score_and_save(store, activity_id, raw, th, sport, label, log=print) -> Non
         log(f"  saved {label}")
         return
     try:
-        streams = parse(raw)
+        streams = parse(raw() if callable(raw) else raw)
         streams.sport = streams.sport or sport
         result = score(streams, th)
-    except ValueError as e:
-        log(f"  saved {label}, not scored: {e}")
+    except Exception as e:  # a damaged, truncated or missing file leaves that activity unscored, not the batch
+        log(f"  saved {label}, not scored: {type(e).__name__}: {e}")
         return
     store.save_score(activity_id, result)
     log(f"  {label}: {result.distance_mi:.1f} mi, {result.gain_ft:,.0f} ft up, {result.loss_ft:,.0f} ft down")

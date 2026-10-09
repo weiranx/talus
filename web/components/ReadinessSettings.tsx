@@ -27,7 +27,9 @@ export default function ReadinessSettings({ readiness }: { readiness: Settings["
       body: JSON.stringify({ sleep_need_h: value }),
     }).catch(() => null);
     setSaving(false);
-    if (!res?.ok) return setMessage({ ok: false, text: "Could not save. Is the engine running?" });
+    if (!res) return setMessage({ ok: false, text: "Could not save. Is the engine running?" });
+    if (!res.ok) return setMessage({ ok: false, text: `Could not save (${res.status}).` });
+    setHours(String(Math.round(value * 4) / 4)); // the engine keeps quarter hours
     setMessage({ ok: true, text: "Saved. Today reads your sleep against this from now on." });
     router.refresh();
   }

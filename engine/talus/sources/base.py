@@ -62,6 +62,12 @@ def unwrap(data: bytes) -> bytes:
     return data
 
 
+def local_naive(dt: datetime) -> datetime:
+    """Wall-clock time where the activity happened, without a zone: what intervals.icu and Garmin
+    call start_date_local. Files carry UTC, which is read as this machine's local time."""
+    return dt.astimezone().replace(tzinfo=None) if dt.tzinfo else dt
+
+
 def sniff_format(data: bytes) -> str:
     if len(data) >= 12 and data[8:12] == b".FIT":
         return "fit"

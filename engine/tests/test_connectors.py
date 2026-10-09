@@ -1,0 +1,259 @@
+"""More than one data source: Garmin direct, file upload, Apple Health, and de-duplication."""
+
+from __future__ import annotations
+
+import io
+import zipfile
+from datetime import date, datetime, timedelta
+
+import pytest
+
+from talus import cli
+from talus.accounts import Accounts
+from talus.config import data_dir
+from talus.sources import garmin as garmin_mod
+from talus.sources.apple_health import read_export
+from talus.sources.base import RemoteActivity, WellnessDay
+from talus.sources.garmin import GarminSource
+from talus.store import Store
+
+from .conftest import sign_in
+from .test_parse import _gpx
+
+DAY = datetime(2026, 10, 1, 15, 0)  # the _gpx() run starts 2026-10-01 15:00Z
+
+
+class FakeSource:
+    def __init__(self, name, acts, tokens=None):
+        self.name, self.acts, self.fetched, self._tokens = name, acts, [], tokens
+
+    def list_activities(self, since, until=None):
+        return self.acts
+
+    def fetch(self, act):
+        from talus.sources.base import RawFile
+        self.fetched.append(act.source_id)
+        return RawFile(_gpx(), "gpx")
+
+
+def _store(tmp_path, monkeypatch) -> Store:
+    monkeypatch.setenv("TALUS_DATA_DIR", str(tmp_path / "data"))
+    cli.main(["thresholds", "--resting", "45", "--ant", "172", "--max", "190"])
+    return Store(cli.default_user_dir(Accounts(data_dir())))
+
+
+def test_same_run_from_two_sources_is_kept_once(tmp_path, monkeypatch):
+    store = _store(tmp_path, monkeypatch)
+    run = RemoteActivity("intervals", "i1", DAY, "Run", "Run", distance_m=2000)
+    cli.sync(store, "intervals", date(2026, 9, 1), log=lambda *_: None, source=FakeSource("intervals", [run]))
+    assert len(store.activities()) == 1
+
+    # Garmin lists the same run a minute off with nearly the same distance, and a different run.
+    same = RemoteActivity("garmin", "g1", DAY + timedelta(seconds=60), "Run", "running", distance_m=2050)
+    other = RemoteActivity("garmin", "g2", DAY + timedelta(days=1), "Hike", "hiking", distance_m=8000)
+    src = FakeSource("garmin", [same, other])
+    r = cli.sync(store, "garmin", date(2026, 9, 1), log=lambda *_: None, source=src)
+    assert (r["duplicates"], r["new"], r["saved"]) == (1, 1, 1)
+    assert src.fetched == ["g2"]  # the duplicate is never downloaded
+    assert store.settings()["last_sync_garmin"]["duplicates"] == 1
+
+    # Same start but a clearly different distance is a different activity (a double session).
+    assert store.duplicate_of(DAY, 9000) is None
+    assert store.duplicate_of(DAY + timedelta(minutes=2)) is not None
+    assert store.duplicate_of(DAY + timedelta(minutes=10)) is None
+
+
+def test_garmin_source_reads_activities_files_and_nights():
+    class Api:
+        class client:
+            @staticmethod
+            def dumps():
+                return '{"di_token": "new"}'
+
+        def get_activities_by_date(self, start, end):
+            return [{"activityId": 7, "startTimeLocal": "2026-10-01 08:00:00", "activityName": "Ridge",
+                     "activityType": {"typeKey": "trail_running"}, "distance": 16093.4, "elevationGain": 914.4}]
+
+        def download_activity(self, activity_id, dl_fmt=None):
+            buf = io.BytesIO()
+            with zipfile.ZipFile(buf, "w") as zf:
+                zf.writestr("7_ACTIVITY.gpx", _gpx())
+            return buf.getvalue()
+
+        def get_sleep_data(self, day):
+            if day == "2026-10-02":
+                return {}
+            return {"dailySleepDTO": {"sleepTimeSeconds": 27000, "sleepScores": {"overall": {"value": 81}}},
+                    "avgOvernightHrv": 62.0, "restingHeartRate": 48}
+
+    src = GarminSource(tokens='{"di_token": "old"}', api=Api())
+    [a] = src.list_activities(date(2026, 9, 1))
+    assert (a.source_id, a.sport, a.start_time) == ("7", "trail_running", datetime(2026, 10, 1, 8))
+    assert src.fetch(a).fmt == "gpx"
+    nights = src.list_wellness(date(2026, 10, 1), date(2026, 10, 3))
+    assert [n.day.day for n in nights] == [1, 3]
+    assert (nights[0].hrv, nights[0].resting_hr, nights[0].sleep_s, nights[0].sleep_score) == (62.0, 48, 27000, 81)
+    assert src.tokens() == '{"di_token": "new"}'
+
+
+def test_garmin_sync_saves_refreshed_tokens_and_asks_only_for_missing_nights(tmp_path, monkeypatch):
+    store = _store(tmp_path, monkeypatch)
+    store.save_wellness([WellnessDay("garmin", date.today() - timedelta(days=1), hrv=60)])
+    asked = []
+
+    class Src(FakeSource):
+        wellness_per_day = True
+
+        def tokens(self):
+            return "refreshed"
+
+        def list_wellness(self, since, until=None):
+            asked.append(since)
+            return []
+
+    saved = []
+    cli.sync(store, "garmin", date.today() - timedelta(days=30), log=lambda *_: None,
+             credential={"kind": "tokens", "tokens": "old"}, save_credential=saved.append, source=Src("garmin", []))
+    assert saved == [{"tokens": "refreshed"}]
+    assert asked == [date.today() - timedelta(days=3)]
+
+
+def test_garmin_connect_is_owner_only_and_keeps_no_password(tmp_path, monkeypatch):
+    monkeypatch.setenv("TALUS_DATA_DIR", str(tmp_path / "data"))
+    owner = sign_in()
+    calls = []
+
+    def start(account_id, email, password):
+        calls.append((email, password))
+        return None  # Garmin asks for an MFA code
+
+    monkeypatch.setattr(garmin_mod, "start_login", start)
+    monkeypatch.setattr(garmin_mod, "finish_login", lambda account_id, code: '{"di_token": "t"}')
+    r = owner.post("/api/sources/garmin", json={"email": "me@example.com", "password": "hunter2hunter2"})
+    assert r.json() == {"status": "needs_mfa"}
+    assert owner.post("/api/sources/garmin/mfa", json={"code": "123456"}).json() == {"status": "connected"}
+
+    accounts = Accounts(data_dir())
+    cred = accounts.credential(1, "garmin")
+    assert cred["tokens"] == '{"di_token": "t"}' and "password" not in cred
+    assert b"hunter2" not in (data_dir() / "accounts.db").read_bytes()
+    g = owner.get("/api/settings").json()["sources"]["garmin"]
+    assert g["available"] and g["connected"]
+
+    other = sign_in("friend@example.com", "another long password")
+    assert other.post("/api/sources/garmin", json={"email": "x@y.z", "password": "p"}).status_code == 403
+    assert other.post("/api/sync", json={"source": "garmin"}).status_code == 403
+    assert not other.get("/api/settings").json()["sources"]["garmin"]["available"]
+
+    assert owner.delete("/api/sources/garmin").json() == {"ok": True}
+    assert Accounts(data_dir()).credential(1, "garmin") is None
+
+
+def _health_export(tmp_path, with_route=True) -> bytes:
+    """A tiny Health app export: one run with a route and heart rate, one treadmill run, nights."""
+    hr = "".join(
+        f'<Record type="HKQuantityTypeIdentifierHeartRate" sourceName="Watch" unit="count/min" '
+        f'startDate="2026-10-01 08:{m:02d}:00 -0700" endDate="2026-10-01 08:{m:02d}:00 -0700" value="150"/>'
+        for m in range(0, 10))
+    hr += "".join(
+        f'<Record type="HKQuantityTypeIdentifierHeartRate" sourceName="Watch" unit="count/min" '
+        f'startDate="2026-10-03 18:{m:02d}:00 -0700" endDate="2026-10-03 18:{m:02d}:00 -0700" value="140"/>'
+        for m in range(0, 30, 2))
+    route = ('<WorkoutRoute sourceName="Watch"><FileReference path="/workout-routes/route_2026-10-01_8.00am.gpx"/>'
+             "</WorkoutRoute>") if with_route else ""
+    xml = f"""<?xml version="1.0" encoding="UTF-8"?>
+<HealthData locale="en_US">
+ <Record type="HKQuantityTypeIdentifierRestingHeartRate" sourceName="Watch" unit="count/min"
+   startDate="2026-10-02 00:00:00 -0700" endDate="2026-10-02 23:59:00 -0700" value="47"/>
+ <Record type="HKCategoryTypeIdentifierSleepAnalysis" sourceName="Watch"
+   startDate="2026-10-01 23:00:00 -0700" endDate="2026-10-02 06:30:00 -0700" value="HKCategoryValueSleepAnalysisAsleepCore"/>
+ <Record type="HKCategoryTypeIdentifierSleepAnalysis" sourceName="iPhone"
+   startDate="2026-10-01 22:30:00 -0700" endDate="2026-10-02 06:45:00 -0700" value="HKCategoryValueSleepAnalysisInBed"/>
+ <Record type="HKCategoryTypeIdentifierSleepAnalysis" sourceName="iPhone"
+   startDate="2026-10-01 23:30:00 -0700" endDate="2026-10-02 06:00:00 -0700" value="HKCategoryValueSleepAnalysisAsleepUnspecified"/>
+ {hr}
+ <Workout workoutActivityType="HKWorkoutActivityTypeRunning" duration="10" durationUnit="min" sourceName="Watch"
+   startDate="2026-10-01 08:00:00 -0700" endDate="2026-10-01 08:10:00 -0700">
+  <MetadataEntry key="HKElevationAscended" value="18000 cm"/>
+  <WorkoutStatistics type="HKQuantityTypeIdentifierDistanceWalkingRunning" sum="1.24" unit="mi"/>
+  {route}
+ </Workout>
+ <Workout workoutActivityType="HKWorkoutActivityTypeRunning" duration="30" durationUnit="min" sourceName="Watch"
+   startDate="2026-10-03 18:00:00 -0700" endDate="2026-10-03 18:30:00 -0700">
+  <WorkoutStatistics type="HKQuantityTypeIdentifierDistanceWalkingRunning" sum="5" unit="km"/>
+ </Workout>
+ <Workout workoutActivityType="HKWorkoutActivityTypeYoga" sourceName="Watch"
+   startDate="2026-10-04 18:00:00 -0700" endDate="2026-10-04 18:30:00 -0700"/>
+</HealthData>"""
+    pts = "".join(
+        f'<trkpt lat="{37 + i * 0.00003:.6f}" lon="-118.0"><ele>{2000 + i * 0.3:.1f}</ele>'
+        f"<time>2026-10-01T15:{i // 60:02d}:{i % 60:02d}Z</time></trkpt>" for i in range(600))
+    gpx = ('<?xml version="1.0"?><gpx version="1.1" xmlns="http://www.topografix.com/GPX/1/1"><trk><trkseg>'
+           + pts + "</trkseg></trk></gpx>")
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as zf:
+        zf.writestr("apple_health_export/export.xml", xml)
+        zf.writestr("apple_health_export/workout-routes/route_2026-10-01_8.00am.gpx", gpx)
+    return buf.getvalue()
+
+
+def test_apple_health_export(tmp_path):
+    from talus.parse import parse
+
+    path = tmp_path / "export.zip"
+    path.write_bytes(_health_export(tmp_path))
+    ex = read_export(path)
+    assert ex.skipped == 1  # yoga: no route and no heart rate
+    run, treadmill = ex.activities
+    act, raw = run
+    assert act.start_time == datetime(2026, 10, 1, 8, 0)  # the wall-clock time where it happened
+    assert act.distance_m == pytest.approx(1.24 * 1609.344)
+    assert act.gain_m == pytest.approx(180)
+    s = parse(raw)
+    assert s.heart_rate is not None and s.heart_rate.mean() == pytest.approx(150)
+    assert s.altitude[-1] == pytest.approx(2000 + 599 * 0.3)
+
+    t = parse(treadmill[1])
+    assert t.distance[-1] == pytest.approx(5000 * 28 / 30, rel=0.01)  # spread evenly to the last sample
+    assert t.heart_rate.mean() == pytest.approx(140)
+
+    [night] = [w for w in ex.wellness if w.day == date(2026, 10, 2)]
+    assert night.resting_hr == 47
+    assert night.sleep_s == 7.5 * 3600  # the watch's night, not the phone's added to it
+    assert night.hrv is None
+
+
+def test_upload_files_zip_batches_and_health_export(tmp_path, monkeypatch):
+    monkeypatch.setenv("TALUS_DATA_DIR", str(tmp_path / "data"))
+    cli.main(["thresholds", "--resting", "45", "--ant", "172", "--max", "190"])
+    client = sign_in()
+
+    r = client.post("/api/import?name=run.gpx", content=_gpx()).json()
+    assert (r["new"], r["saved"], r["error"]) == (1, 1, None)
+    again = client.post("/api/import?name=run.gpx", content=_gpx()).json()
+    assert again["new"] == 0  # the same file twice
+
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as zf:
+        zf.writestr("a.gpx", _gpx().replace(b"2026-10-01", b"2026-10-05"))
+        zf.writestr("b.gpx", _gpx().replace(b"2026-10-01", b"2026-10-06"))
+        zf.writestr("notes.txt", "hi")
+    r = client.post("/api/import?name=batch.zip", content=buf.getvalue()).json()
+    assert (r["listed"], r["new"]) == (2, 2)
+
+    bad = client.post("/api/import?name=x.fit", content=b"not a file").json()
+    assert bad["new"] == 0 and bad["failed"]
+
+    store = Store(cli.default_user_dir(Accounts(data_dir())))
+    store.save_wellness([WellnessDay("intervals", date(2026, 10, 2), hrv=61, resting_hr=50, sleep_s=25000)])
+    # The export's route run is the first upload: files carry UTC, which the engine reads in its
+    # own zone, so put that run at the export's wall-clock time as a Mac in California would.
+    store.db.execute("UPDATE activity SET start_time = '2026-10-01T08:00:00' WHERE id = 1")
+    store.db.commit()
+    r = client.post("/api/import?name=export.zip", content=_health_export(tmp_path)).json()
+    assert r["source"] == "apple_health"
+    assert (r["listed"], r["new"], r["duplicates"], r["no_data"]) == (2, 1, 1, 1)
+    w = store.wellness(date(2026, 10, 2), date(2026, 10, 2))[date(2026, 10, 2)]
+    assert w["hrv"] == 61 and w["resting_hr"] == 50  # a watch's night is never replaced
+    sources = client.get("/api/settings").json()["sources"]
+    assert sources["upload"]["last_import"]["source"] == "apple_health"

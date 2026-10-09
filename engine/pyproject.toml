@@ -14,7 +14,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-garmin = ["garminconnect>=0.2.30"]
+garmin = ["garminconnect>=0.3.17"]
 
 [project.scripts]
 talus = "talus.cli:main"

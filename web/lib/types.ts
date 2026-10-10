@@ -511,3 +511,11 @@ export interface AdminOverview {
   };
   log: { id: number; at: string; action: string; admin: string | null; target: string | null; detail: Record<string, unknown> | null }[];
 }
+
+// Planning with the coach: the conversation that fills the plan's inputs.
+export interface TalkGroup { key: string; options: string[]; multi?: boolean; label?: string; value?: string | string[] | null }
+export interface TalkMessage {
+  role: "athlete" | "coach"; text: string; step?: string | null;
+  groups?: TalkGroup[]; actions?: { id: "accept" | "keep" | "retry"; label: string }[]; cost?: AiCost | null;
+}
+export interface Talk { messages: TalkMessage[]; step: string; mode: "setup" | "change"; reads_with_ai: boolean }

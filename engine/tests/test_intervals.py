@@ -51,3 +51,16 @@ def test_fetch_original_fit_then_streams_fallback():
     assert raw.fmt == "fit" and raw.data == FIT_HEADER
     raw = src.fetch(b)
     assert raw.fmt == "icu-streams" and json.loads(raw.data)[0]["type"] == "time"
+
+
+def test_revoked_oauth_token_says_to_reconnect():
+    import httpx
+    import pytest
+
+    from talus.sources.intervals import IntervalsSource
+
+    client = httpx.Client(base_url="https://intervals.icu/api/v1",
+                          transport=httpx.MockTransport(lambda req: httpx.Response(401)))
+    src = IntervalsSource.from_credential({"kind": "oauth", "access_token": "gone", "athlete_id": "i1"}, client=client)
+    with pytest.raises(RuntimeError, match="Connect again"):
+        src.list_activities(date(2026, 10, 1))

@@ -1,7 +1,7 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import Pill from "@/components/Pill";
 import { dayLabel, n0 } from "@/lib/format";
 import type { LastSync, Settings } from "@/lib/types";
@@ -38,12 +38,19 @@ export default function SourceCard({ source, lastSync }: { source: Settings["sou
   const [days, setDays] = useState(30);
   const [syncing, setSyncing] = useState(false);
   const [message, setMessage] = useState<{ ok: boolean; text: string } | null>(null);
-  const [editing, setEditing] = useState(!source.key_set);
+  const oauth = source.kind === "oauth";
+  // With OAuth on offer, the key form is the fallback and stays closed until asked for.
+  const [editing, setEditing] = useState(!source.key_set && !source.oauth_available);
   const [key, setKey] = useState("");
   // "0" means whoever owns the key, the same as leaving the field blank.
   const athleteId = source.athlete_id && source.athlete_id !== "0" ? source.athlete_id : null;
   const [athlete, setAthlete] = useState(athleteId ?? "");
   const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    const err = new URLSearchParams(window.location.search).get("intervals_error");
+    if (err) setMessage({ ok: false, text: err });
+  }, []);
 
   async function saveKey(e: React.FormEvent) {
     e.preventDefault();
@@ -69,8 +76,10 @@ export default function SourceCard({ source, lastSync }: { source: Settings["sou
 
   async function removeKey() {
     const res = await fetch("/api/settings/source", { method: "DELETE" }).catch(() => null);
-    if (!res?.ok) return setMessage({ ok: false, text: res ? `Could not remove the key (${res.status}).` : "Could not reach the engine. Is it running?" });
-    setEditing(true);
+    const what = oauth ? "disconnect" : "remove the key";
+    if (!res?.ok) return setMessage({ ok: false, text: res ? `Could not ${what} (${res.status}).` : "Could not reach the engine. Is it running?" });
+    setMessage(null);
+    setEditing(!source.oauth_available);
     router.refresh();
   }
 
@@ -86,18 +95,40 @@ export default function SourceCard({ source, lastSync }: { source: Settings["sou
     <section className="card">
       <div style={{ display: "flex", flexWrap: "wrap", justifyContent: "space-between", alignItems: "center", gap: 8 }}>
         <h2 className="label">intervals.icu</h2>
-        {source.key_set ? <Pill tone="good">Connected</Pill> : <Pill tone="bad">No API key</Pill>}
+        {source.key_set ? <Pill tone="good">Connected</Pill> : <Pill tone="bad">{source.oauth_available ? "Not connected" : "No API key"}</Pill>}
       </div>
       <dl className="kv">
-        <dt>API key</dt>
-        <dd>{source.key_set ? (source.updated_at ? `Saved ${when(source.updated_at)}` : "From the engine's .env") : "Not added yet"}</dd>
-        <dt>Athlete</dt>
-        <dd>{athleteId ? <span className="mono">{athleteId}</span> : "Whoever owns the key"}</dd>
+        {oauth ? (
+          <>
+            <dt>Connection</dt>
+            <dd>{source.updated_at ? `Approved ${when(source.updated_at)}` : "Approved"}</dd>
+            <dt>Athlete</dt>
+            <dd>{source.athlete_name ?? ""}{source.athlete_name && athleteId ? " " : ""}{athleteId ? <span className="mono">{athleteId}</span> : null}</dd>
+          </>
+        ) : (
+          <>
+            <dt>{source.oauth_available && !source.key_set ? "Connection" : "API key"}</dt>
+            <dd>{source.key_set ? (source.updated_at ? `Saved ${when(source.updated_at)}` : "From the engine's .env") : "Not added yet"}</dd>
+            {source.key_set || editing ? (
+              <>
+                <dt>Athlete</dt>
+                <dd>{athleteId ? <span className="mono">{athleteId}</span> : "Whoever owns the key"}</dd>
+              </>
+            ) : null}
+          </>
+        )}
         <dt>In Talus</dt>
         <dd><span className="mono">{n0(source.activities)}</span>{source.latest_activity ? `, latest ${dayLabel(source.latest_activity, { month: "short", day: "numeric", year: "numeric" })}` : ""}</dd>
         <dt>Last sync</dt>
         <dd>{lastSync ? syncLine(lastSync) : "Not from here yet"}</dd>
       </dl>
+      {source.oauth_available && !oauth && !editing ? (
+        <div className="actions">
+          <a className="btn" href="/api/auth/intervals/start">Connect intervals.icu</a>
+          {source.key_set ? <span className="muted">Replaces the API key. Talus asks to read activities and wellness only.</span>
+            : <span className="muted">Approve Talus on intervals.icu to read your activities and wellness.</span>}
+        </div>
+      ) : null}
       {editing ? (
         <form className="form" onSubmit={saveKey}>
           <div className="form-grid">
@@ -114,12 +145,17 @@ export default function SourceCard({ source, lastSync }: { source: Settings["sou
           </div>
           <div className="actions">
             <button className="btn" type="submit" disabled={saving || key.trim().length < 8} aria-busy={saving}>{saving ? "Saving" : "Save key"}</button>
-            {source.key_set ? <button type="button" className="btn light outline" onClick={() => setEditing(false)}>Cancel</button> : null}
+            {source.key_set || source.oauth_available ? <button type="button" className="btn light outline" onClick={() => setEditing(false)}>Cancel</button> : null}
           </div>
         </form>
+      ) : oauth ? (
+        <div className="actions">
+          <button className="link-btn" style={{ fontSize: 13 }} onClick={removeKey}>Disconnect</button>
+        </div>
       ) : (
         <div className="actions">
-          <button className="btn light outline" onClick={() => setEditing(true)}>Replace key</button>
+          <button className={source.oauth_available ? "link-btn" : "btn light outline"} style={source.oauth_available ? { fontSize: 13 } : undefined}
+            onClick={() => setEditing(true)}>{source.key_set ? "Replace key" : "Use an API key instead"}</button>
           {source.updated_at ? <button className="link-btn" style={{ fontSize: 13 }} onClick={removeKey}>Remove key</button> : null}
         </div>
       )}
@@ -133,7 +169,7 @@ export default function SourceCard({ source, lastSync }: { source: Settings["sou
         <button className="btn" onClick={sync} disabled={syncing || !source.key_set} aria-busy={syncing}>{syncing ? "Syncing" : "Sync now"}</button>
       </div>
       {message ? <div className={message.ok ? "ok-text" : "error-text"} role="status">{message.text}</div> : null}
-      <div className="muted">Your key is stored encrypted on the Talus server and never sent back to the browser. Only new activities are downloaded.</div>
+      <div className="muted">{oauth ? "The connection is" : "Your key is"} stored encrypted on the Talus server and never sent back to the browser. Only new activities are downloaded.</div>
     </section>
   );
 }

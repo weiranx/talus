@@ -12,7 +12,7 @@ from tests.test_intervals import source
 
 @pytest.fixture(autouse=True)
 def no_keys(monkeypatch):
-    for k in ("INTERVALS_API_KEY", "INTERVALS_ATHLETE_ID", "ANTHROPIC_API_KEY", "GARMIN_EMAIL", "TALUS_COACH_MODEL",
+    for k in ("INTERVALS_API_KEY", "INTERVALS_ATHLETE_ID", "INTERVALS_CLIENT_ID", "ANTHROPIC_API_KEY", "GARMIN_EMAIL", "TALUS_COACH_MODEL",
               "TALUS_SLEEP_NEED_H"):
         monkeypatch.delenv(k, raising=False)
     monkeypatch.setattr(api, "load_env", lambda: None)
@@ -22,7 +22,7 @@ def test_settings_before_anything_is_set(tmp_path, monkeypatch):
     monkeypatch.setenv("TALUS_DATA_DIR", str(tmp_path / "data"))
     s = sign_in().get("/api/settings").json()
     assert s["thresholds"] is None and s["inferred"] is None
-    assert s["source"] == {"name": "intervals.icu", "key_set": False, "kind": None, "athlete_id": None,
+    assert s["source"] == {"name": "intervals.icu", "key_set": False, "kind": None, "athlete_id": None, "athlete_name": None, "oauth_available": False,
                            "updated_at": None, "garmin_fallback_set": False, "activities": 0,
                            "latest_activity": None, "last_sync": None}
     assert s["coach"]["enabled"] and not s["coach"]["key_set"]

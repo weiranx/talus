@@ -284,11 +284,12 @@ def open_source(source_name: str, credential: dict | None):
 
 
 def sync(store: Store, source_name: str, since: date, log=print, credential: dict | None = None,
-         save_credential=None, source=None) -> dict:
+         save_credential=None, source=None, progress=None) -> dict:
     """Pull new activities since a day, score them and rebuild the ledgers. An activity another
     source already brought in (intervals.icu and Garmin both carry your watch's runs) is skipped
     before it is downloaded. The outcome is kept as that source's last sync, so the Settings
-    screen can show it whether the sync ran here or from the web."""
+    screen can show it whether the sync ran here or from the web. `progress(done, total)` is
+    called once the list is in and after each download, for the first-run import screen."""
     started = datetime.now().isoformat(timespec="seconds")
     result = {"at": started, "source": source_name, "since": since.isoformat(), "listed": 0, "new": 0,
               "saved": 0, "duplicates": 0, "error": None}
@@ -303,7 +304,11 @@ def sync(store: Store, source_name: str, since: date, log=print, credential: dic
         log(f"{len(remote)} activities since {since}, {len(new)} new"
             + (f", {len(dups)} already here from another source" if dups else ""))
         th = store.thresholds()
-        for act in sorted(new, key=lambda a: a.start_time):
+        if progress:
+            progress(0, len(new))
+        for i, act in enumerate(sorted(new, key=lambda a: a.start_time)):
+            if progress and i:
+                progress(i, len(new))
             raw = source.fetch(act)
             if raw is None:
                 log(f"  skip {act.start_time:%Y-%m-%d} {act.name}: no file or streams")
@@ -313,6 +318,8 @@ def sync(store: Store, source_name: str, since: date, log=print, credential: dic
             result["saved"] += 1
             _score_and_save(store, activity_id, raw, th, act.sport,
                             label=f"{act.start_time:%Y-%m-%d} {act.name}", log=log)
+        if progress:
+            progress(len(new), len(new))
         if hasattr(source, "list_wellness"):
             # Readiness reads overnight signals against a 60-day baseline, so always pull that far back.
             # Best effort: activities are already saved, and readiness works without overnight data.

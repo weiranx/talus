@@ -511,3 +511,36 @@ export interface AdminOverview {
   };
   log: { id: number; at: string; action: string; admin: string | null; target: string | null; detail: Record<string, unknown> | null }[];
 }
+
+export type OnboardingStep = "connect" | "import" | "thresholds" | "sleep" | "coach" | "tour";
+export type ImportRange = "6w" | "6m" | "all";
+
+export interface ImportStatus {
+  state: "running" | "done";
+  source: "intervals" | "garmin";
+  range: ImportRange;
+  days: number;
+  started: string;
+  finished?: string;
+  done: number;
+  total: number | null;
+  saved: number;
+  duplicates?: number;
+  wellness_days?: number;
+  error: string | null;
+}
+
+export interface Onboarding {
+  needed: boolean;
+  started: string | null;
+  finished: string | null;
+  established: boolean;
+  steps: { key: OnboardingStep; done: boolean; skipped: boolean; required: boolean }[];
+  next: OnboardingStep | null;
+  import: ImportStatus | null;
+  activities: number;
+  sources: { intervals: boolean; garmin: boolean; garmin_available: boolean };
+  resting_hint: number | null;
+  coach: { enabled: boolean; style: string; key_set: boolean; styles: { key: string; label: string; description: string }[] };
+  import_choices: Record<ImportRange, number>;
+}

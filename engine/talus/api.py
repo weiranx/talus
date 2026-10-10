@@ -1227,6 +1227,179 @@ def sync_now(body: SyncIn, background: BackgroundTasks) -> dict:
     return result | {"log": lines}
 
 
+# First run. A new account is walked through six steps; only connecting a source is required.
+# Progress lives in the account's own settings (`onboarding`), so the flow resumes where it
+# stopped, and an account already set up before the flow existed never sees it.
+
+ONBOARDING_STEPS = ("connect", "import", "thresholds", "sleep", "coach", "tour")
+OPTIONAL_STEPS = ("thresholds", "sleep", "coach", "tour")
+IMPORT_DAYS = {"6w": 42, "6m": 180, "all": 730}
+
+_imports: dict[str, dict] = {}
+_imports_guard = threading.Lock()
+
+
+def _resting_hint(store: Store) -> int | None:
+    """A resting heart rate to start from: the median of the last 30 nights' readings, if any."""
+    nights = store.wellness(date.today() - timedelta(days=30), date.today())
+    values = sorted(n["resting_hr"] for n in nights.values() if n["resting_hr"])
+    return round(values[len(values) // 2]) if values else None
+
+
+def _import_status(store: Store) -> dict | None:
+    with _imports_guard:
+        live = _imports.get(str(store.dir))
+    return dict(live) if live else store.settings().get("onboarding_import")
+
+
+def _onboarding(store: Store) -> dict:
+    saved = store.settings()
+    ob = saved.get("onboarding") or {}
+    th = store.thresholds()
+    activities = store.db.execute("SELECT COUNT(*) FROM activity WHERE start_time IS NOT NULL").fetchone()[0]
+    if not ob and th is not None and activities:
+        # Set up before this flow existed: recorded once as finished, so it never opens on its own.
+        ob = {"finished": datetime.now().isoformat(timespec="seconds"), "established": True}
+        store.save_settings({"onboarding": ob})
+    done, skipped = set(ob.get("done") or []), set(ob.get("skipped") or [])
+    accounts, account = get_accounts(), _account.get()
+    garmin = bool(account) and accounts.credential(account.id, "garmin") is not None
+    intervals = _intervals_credential() is not None
+    imp = _import_status(store)
+    state = {
+        "connect": intervals or garmin or activities > 0,
+        "import": activities > 0 or bool(imp and imp.get("state") == "done" and not imp.get("error")),
+        "thresholds": th is not None,
+        "sleep": wellness.sleep_need(saved)[1] == "saved",
+        "coach": "coach" in done,
+        "tour": "tour" in done,
+    }
+    steps = [{"key": k, "done": state[k] or k in done, "skipped": k in skipped and not state[k],
+              "required": k not in OPTIONAL_STEPS} for k in ONBOARDING_STEPS]
+    nxt = next((s["key"] for s in steps if not s["done"] and not s["skipped"]), None)
+    return {
+        "needed": not ob.get("finished"),
+        "started": ob.get("started"), "finished": ob.get("finished"),
+        "established": bool(ob.get("established")),
+        "steps": steps, "next": nxt,
+        "import": imp, "activities": activities,
+        "sources": {"intervals": intervals, "garmin": garmin, "garmin_available": _is_owner()},
+        "resting_hint": _resting_hint(store),
+        "coach": {"enabled": _coach_settings(store)["coach_enabled"], "style": _coach_settings(store)["coach_style"],
+                  "key_set": bool(os.environ.get("ANTHROPIC_API_KEY")),
+                  "styles": [{"key": k, "label": v["label"], "description": v["description"]}
+                             for k, v in coach.STYLES.items()]},
+        "import_choices": IMPORT_DAYS,
+    }
+
+
+@app.get("/api/onboarding")
+def get_onboarding() -> dict:
+    return _onboarding(get_store())
+
+
+class OnboardingIn(BaseModel):
+    action: str = Field(pattern="^(start|done|skip|finish|restart)$")
+    step: str | None = None
+    coach_enabled: bool | None = None
+    coach_style: str | None = None
+
+
+@app.put("/api/onboarding")
+def put_onboarding(body: OnboardingIn) -> dict:
+    """start: the flow was opened. done or skip: one step, with the coach choice on the coach
+    step. finish: land on Today, also how "skip setup" ends it. restart: open it again."""
+    store = get_store()
+    _onboarding(store)  # records an account set up before this flow as established
+    ob = dict(store.settings().get("onboarding") or {})
+    now = datetime.now().isoformat(timespec="seconds")
+    if body.action in ("done", "skip"):
+        if body.step not in ONBOARDING_STEPS:
+            raise HTTPException(422, f"Unknown step {body.step}")
+        if body.action == "skip" and body.step not in OPTIONAL_STEPS:
+            raise HTTPException(422, "Connect a data source and import some history first; those can't be skipped.")
+        if body.step == "coach" and body.action == "done":
+            if body.coach_style is not None and body.coach_style not in coach.STYLES:
+                raise HTTPException(422, f"Unknown style {body.coach_style}")
+            values = {"coach_enabled": bool(body.coach_enabled)}
+            if body.coach_style is not None:
+                values["coach_style"] = body.coach_style
+            store.save_settings(values)
+        if body.step == "coach" and body.action == "skip" and not ob.get("established"):
+            # The spec's default without consent: load tracking only. Settings can turn it on.
+            store.save_settings({"coach_enabled": False})
+        key, other = ("done", "skipped") if body.action == "done" else ("skipped", "done")
+        ob[key] = sorted(set(ob.get(key) or []) | {body.step})
+        ob[other] = sorted(set(ob.get(other) or []) - {body.step})
+    if body.action == "start" or not ob.get("started"):
+        ob["started"] = ob.get("started") or now
+    if body.action == "finish":
+        ob["finished"] = now
+        if not ob.get("established") and "coach" not in set(ob.get("done") or []) | set(ob.get("skipped") or []):
+            store.save_settings({"coach_enabled": False})  # left setup before consenting
+    if body.action == "restart":
+        ob.pop("finished", None)
+        ob["started"] = now
+    store.save_settings({"onboarding": ob})
+    return _onboarding(store)
+
+
+class ImportIn(BaseModel):
+    source: str = Field(default="intervals", pattern="^(intervals|garmin)$")
+    range: str = Field(default="6m", pattern="^(6w|6m|all)$")
+
+
+@app.post("/api/onboarding/import")
+def start_import(body: ImportIn) -> dict:
+    """Pull history from a synced source in the background, so the athlete can carry on with the
+    next steps while it runs. GET /api/onboarding reports the progress."""
+    store = get_store()
+    account = current_account()
+    save = None
+    if body.source == "intervals":
+        cred = _intervals_credential()
+        if cred is None:
+            raise HTTPException(409, "Connect intervals.icu first.")
+    else:
+        if not account.is_owner:
+            raise HTTPException(403, "Garmin Connect is for the owner account only.")
+        cred = get_accounts().credential(account.id, "garmin")
+        if cred is None:
+            raise HTTPException(409, "Connect Garmin first.")
+
+        def save(values: dict) -> None:
+            get_accounts().set_credential(account.id, "garmin", "tokens", values)
+    key, folder, days = str(store.dir), store.dir, IMPORT_DAYS[body.range]
+    status = {"state": "running", "source": body.source, "range": body.range, "days": days,
+              "started": datetime.now().isoformat(timespec="seconds"), "done": 0, "total": None,
+              "saved": 0, "error": None}
+
+    def progress(done: int, total: int) -> None:
+        with _imports_guard:
+            _imports[key].update(done=done, total=total)
+
+    def run() -> None:
+        s = Store(folder)
+        try:
+            result = cli.sync(s, body.source, date.today() - timedelta(days=days), log=lambda _: None,
+                              credential=cred, save_credential=save, progress=progress)
+            final = {"saved": result["saved"], "duplicates": result["duplicates"],
+                     "wellness_days": result.get("wellness_days", 0)}
+        except Exception as e:
+            final = {"error": f"{type(e).__name__}: {e}"}
+        with _imports_guard:
+            done = _imports.pop(key) | final | {"state": "done", "finished": datetime.now().isoformat(timespec="seconds")}
+        s.save_settings({"onboarding_import": done})
+        start_inferring(folder)
+
+    with _imports_guard:
+        if key in _imports:
+            return dict(_imports[key])
+        _imports[key] = status
+        threading.Thread(target=run, name=f"import {key}", daemon=True).start()
+    return status
+
+
 class GarminIn(BaseModel):
     email: str = Field(min_length=3, max_length=200)
     password: str = Field(min_length=1, max_length=200)
@@ -1603,7 +1776,7 @@ def _back(path: str, error: str | None = None, param: str = "google_error",
           cookie: str = OAUTH_COOKIE) -> RedirectResponse:
     from urllib.parse import urlencode
 
-    target = path if error is None else f"{path}?{urlencode({param: error})}"
+    target = path if error is None else f"{path}{'&' if '?' in path else '?'}{urlencode({param: error})}"
     response = RedirectResponse(target, status_code=303)
     response.delete_cookie(cookie, path="/")
     return response

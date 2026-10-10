@@ -5,9 +5,10 @@ https://talus.weiranxiong.com, alongside the other sites there.
 
 | Piece | Where |
 |---|---|
-| Engine (FastAPI) | `talus-engine-1` container, port 8000 on the compose network only |
-| Web (Next.js) | `talus-web-1` container, published on `127.0.0.1:3020` |
-| Reverse proxy | host nginx, `/etc/nginx/sites-available/talus` (copy of `nginx-talus.conf`) |
+| Web (Next.js) | Cloudflare Worker `talus-web` (built with `@opennextjs/cloudflare`), serving `talus.weiranxiong.com/*` |
+| Engine (FastAPI) | `talus-engine-1` container, published on `127.0.0.1:3021` |
+| Web fallback | `talus-web-1` container on `127.0.0.1:3020`, serves the site if the Worker route is removed |
+| Reverse proxy | host nginx, `/etc/nginx/sites-available/talus` (copy of `nginx-talus.conf`): `/api/` to the engine, `/` to the fallback |
 | TLS | Let's Encrypt via certbot on the host; Cloudflare proxied, SSL mode Full (strict) |
 | Data | `/opt/talus/data` (accounts, per-user databases, raw files, `secret.key`) |
 | Secrets | `/opt/talus/.env`, mode 600 |
@@ -22,6 +23,30 @@ deploy/deploy.sh
 
 It ships the committed tree with `git archive`, rebuilds both images on the server and restarts
 them. Data and `.env` stay put. The first build takes a few minutes on the 1 vCPU droplet.
+
+## The web app on Cloudflare
+
+Pushing to `main` deploys the droplet first, then the Worker (the `web-cloudflare` job, which needs
+the `CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID` repository secrets; the token needs the
+*Edit Cloudflare Workers* template). By hand, from `web/`: `npx wrangler login`, then `npm run cf:deploy`.
+
+The Worker serves pages; the droplet serves everything under `/api/`. Two Worker routes on the
+`weiranxiong.com` zone (Workers Routes in the dashboard) split them:
+
+| Route | Worker |
+|---|---|
+| `talus.weiranxiong.com/api/*` | None (goes to the droplet) |
+| `talus.weiranxiong.com/*` | `talus-web` |
+
+So the browser, the iOS app and Google sign-in all keep one hostname and one session cookie, and
+uploads never pass through the Worker. The Worker's own engine calls (`ENGINE_URL` in
+`web/wrangler.jsonc`) go to `https://talus.weiranxiong.com/api/...`, which the first route sends
+to the droplet.
+
+**Rollback:** delete the `talus.weiranxiong.com/*` route. Every request goes to the droplet again,
+where nginx still sends `/` to the web container, which keeps deploying on every push.
+
+`npm run cf:preview` runs the Worker build locally (set `ENGINE_URL` in `web/.dev.vars`).
 
 ## Server `.env`
 

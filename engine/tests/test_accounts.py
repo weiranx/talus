@@ -23,6 +23,7 @@ FRIEND = {"email": "friend@example.com", "password": "another long password"}
 def isolated(tmp_path, monkeypatch):
     for k in ("INTERVALS_API_KEY", "INTERVALS_ATHLETE_ID", "ANTHROPIC_API_KEY", "GARMIN_EMAIL", "TALUS_SIGNUP",
               "GOOGLE_CLIENT_ID", "GOOGLE_CLIENT_SECRET", "TALUS_PUBLIC_URL",
+              "INTERVALS_CLIENT_ID", "INTERVALS_CLIENT_SECRET",
               "TALUS_COACH_CAP_USD", "TALUS_SECRET_KEY"):
         monkeypatch.delenv(k, raising=False)
     monkeypatch.setattr(api, "load_env", lambda: None)
@@ -379,3 +380,99 @@ def test_link_google_from_settings(monkeypatch):
 def test_a_fresh_install_does_not_claim_existing_data(tmp_path):
     Store(tmp_path / "data" / "users" / "1")  # opened before anyone signs up, still empty
     assert TestClient(api.app).get("/api/auth/status").json()["existing_data"] is False
+
+
+# Connect intervals.icu with OAuth
+
+def _intervals_oauth(monkeypatch, athlete_id="i42", scope="ACTIVITY:READ,WELLNESS:READ"):
+    monkeypatch.setenv("INTERVALS_CLIENT_ID", "99")
+    monkeypatch.setenv("INTERVALS_CLIENT_SECRET", "shh")
+    from talus import intervals_auth
+
+    class Resp:
+        status_code = 200
+
+        def json(self):
+            return {"token_type": "Bearer", "access_token": "tok-1", "scope": scope,
+                    "athlete": {"id": athlete_id, "name": "Weiran"}}
+    posted, deleted = [], []
+    monkeypatch.setattr(intervals_auth.httpx, "post", lambda url, **kw: posted.append((url, kw["data"])) or Resp())
+    monkeypatch.setattr(intervals_auth.httpx, "delete", lambda url, **kw: deleted.append(kw["headers"]))
+    return posted, deleted
+
+
+def _intervals_round_trip(client, code="the-code", state=None):
+    from urllib.parse import parse_qs, urlparse
+
+    start = client.get("/api/auth/intervals/start", follow_redirects=False)
+    assert start.status_code == 303
+    url = urlparse(start.headers["location"])
+    assert url.netloc == "intervals.icu" and url.path == "/oauth/authorize"
+    q = parse_qs(url.query)
+    assert q["redirect_uri"] == ["http://localhost:3000/api/auth/intervals/callback"]
+    assert q["scope"] == ["ACTIVITY:READ,WELLNESS:READ"] and q["client_id"] == ["99"]
+    return client.get(f"/api/auth/intervals/callback?code={code}&state={state or q['state'][0]}",
+                      follow_redirects=False)
+
+
+def test_intervals_oauth_off_without_a_client_id():
+    client = sign_in()
+    assert client.get("/api/settings").json()["source"]["oauth_available"] is False
+    r = client.get("/api/auth/intervals/start", follow_redirects=False)
+    assert r.status_code == 303 and r.headers["location"].startswith("/settings?intervals_error=")
+
+
+def test_intervals_oauth_connects_and_syncs_with_the_token(monkeypatch):
+    client = sign_in()
+    client.put("/api/settings/source", json={"api_key": "old-personal-key", "athlete_id": "i42"})
+    posted, _ = _intervals_oauth(monkeypatch)
+    r = _intervals_round_trip(client)
+    assert r.status_code == 303 and r.headers["location"] == "/settings"
+    assert posted == [("https://intervals.icu/api/oauth/token",
+                       {"client_id": "99", "client_secret": "shh", "code": "the-code"})]
+    src = client.get("/api/settings").json()["source"]
+    assert src["kind"] == "oauth" and src["athlete_id"] == "i42" and src["athlete_name"] == "Weiran"
+    assert src["oauth_available"] is True and "tok-1" not in str(client.get("/api/settings").json())
+    # The saved token is what sync uses, as a Bearer header.
+    cred = cli.credential_for(api.get_accounts(), api.get_accounts().owner())
+    from talus.sources.intervals import IntervalsSource
+    source = IntervalsSource.from_credential(cred)
+    assert source.client.headers["Authorization"] == "Bearer tok-1" and source.athlete_id == "i42"
+
+
+def test_intervals_oauth_rejects_a_foreign_state_and_cancel(monkeypatch):
+    client = sign_in()
+    posted, _ = _intervals_oauth(monkeypatch)
+    r = _intervals_round_trip(client, state="forged")
+    assert "intervals_error=" in r.headers["location"] and posted == []
+    # A callback in another browser has no flow cookie.
+    r = TestClient(api.app).get("/api/auth/intervals/callback?code=x&state=y", follow_redirects=False)
+    assert "intervals_error=" in r.headers["location"]
+    start = client.get("/api/auth/intervals/start", follow_redirects=False)
+    r = client.get("/api/auth/intervals/callback?error=access_denied", follow_redirects=False)
+    assert "cancelled" in r.headers["location"]
+    assert client.get("/api/settings").json()["source"]["key_set"] is False
+
+
+def test_intervals_oauth_needs_activity_and_wellness(monkeypatch):
+    client = sign_in()
+    _intervals_oauth(monkeypatch, scope="ACTIVITY:READ")
+    r = _intervals_round_trip(client)
+    assert "intervals_error=" in r.headers["location"]
+    assert client.get("/api/settings").json()["source"]["key_set"] is False
+
+
+def test_intervals_disconnect_tells_intervals(monkeypatch):
+    client = sign_in()
+    _, deleted = _intervals_oauth(monkeypatch)
+    _intervals_round_trip(client)
+    assert client.delete("/api/settings/source").status_code == 200
+    assert deleted == [{"Authorization": "Bearer tok-1"}]
+    assert client.get("/api/settings").json()["source"]["key_set"] is False
+
+
+def test_intervals_oauth_start_needs_sign_in(monkeypatch):
+    _intervals_oauth(monkeypatch)
+    sign_in()
+    r = TestClient(api.app).get("/api/auth/intervals/start", follow_redirects=False)
+    assert r.headers["location"].startswith("/login")

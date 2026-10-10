@@ -35,7 +35,7 @@ export default async function FullPlan() {
           a recovery week follows every three builds, and every week was checked against the load limits by projecting your ledgers forward.
           Starting point: your last four weeks, {mi(plan.baseline.miles)} mi and {n0(plan.baseline.gain_ft)} ft up a week.
         </div>
-        <WeeksTable weeks={plan.weeks} current={current} full />
+        <WeeksTable weeks={plan.weeks} current={current} full actuals={p.accepted ? p.actuals : undefined} />
       </section>
     </>
   );

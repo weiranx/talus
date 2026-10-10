@@ -15,7 +15,7 @@ miles, vert is feet, time is hours or minutes.
 
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, replace
 from datetime import date, timedelta
 
 from . import ledger
@@ -318,7 +318,11 @@ def sessions_for_week(target: dict, week_start: date, first_day: date, c: Constr
                     "minutes": effort_miles(alloc[d]["miles"], alloc[d]["gain_ft"]) * pace_min,
                     "capped": d in capped})
     short = any(v > 0.5 for v in left.values()) and not open_days
-    notes = [f"{DAY_NAMES[d.weekday()]} is held to your {c.cap(d)} min limit" for d in sorted(capped)]
+    by_cap: dict[int, list[str]] = {}
+    for d in sorted(capped):
+        by_cap.setdefault(c.cap(d), []).append(DAY_NAMES[d.weekday()])
+    notes = [f"{_join(names)} {'are' if len(names) > 1 else 'is'} held to your {cap} min limit"
+             for cap, names in by_cap.items()]
     if short:
         notes.append("The week doesn't fit in your available time, so it comes in under target")
     return out, notes
@@ -502,10 +506,42 @@ def plan_for_day(plan: dict, day: date) -> dict | None:
     return None
 
 
-def upcoming_sessions(plan: dict, acts: list[dict], today: date, days: int = 7) -> list[dict]:
+OWN_LONG_SHARE = 0.80  # an own run this big, against the week's long day, is the long day
+MIN_SESSION_MI, MIN_SESSION_FT = 2.0, 500.0  # a session smaller than both is rest
+
+
+def _around_own(c: Constraints, mine: dict[str, dict], week: dict) -> Constraints:
+    """The week's constraints with the athlete's own run days taken out. If one of their runs is
+    the week's long day, the plan adds no other; if their run sits on the long day, the long day
+    moves to the nearest free day, a weekend day first."""
+    taken = {date.fromisoformat(d).weekday() for d in mine}
+    free = [d for d in c.days if d not in taken]
+    long_effort = (week.get("long") or {}).get("effort_mi") or 0.0
+    has_long = any(r["kind"] in ("long", "race") or
+                   (long_effort and effort_miles(r["miles"], r["gain_ft"]) >= OWN_LONG_SHARE * long_effort)
+                   for r in mine.values())
+    long_day = c.long_day
+    if has_long:
+        long_day = -1
+    elif long_day in taken:
+        long_day = min(free, key=lambda d: (d < 5, abs(d - c.long_day), -d), default=-1)
+    return replace(c, days=free, long_day=long_day)
+
+
+def _own_kind(kind: str) -> str:
+    return "long" if kind in ("long", "race") else "hills" if kind == "hills" else "easy"
+
+
+def upcoming_sessions(plan: dict, acts: list[dict], today: date, days: int = 7,
+                      own: dict[str, dict] | None = None) -> list[dict]:
     """Dated sessions for the next `days` days, cut fresh from each week's targets less what is
     already done that week. Only these days get sessions: later weeks stay as targets, because a
-    list of fixed sessions weeks out is wrong by the second week."""
+    list of fixed sessions weeks out is wrong by the second week.
+
+    `own` holds the athlete's own scheduled runs by ISO day. They count toward the week the same
+    as what's done: the plan spreads only what's left over the other days, and an own run on a
+    day takes that day (marked `own`)."""
+    own = own or {}
     c = Constraints.from_json(plan["constraints"])
     obj = plan["objective"]
     obj_day = date.fromisoformat(obj["day"])
@@ -523,11 +559,23 @@ def upcoming_sessions(plan: dict, acts: list[dict], today: date, days: int = 7) 
         if w["start"] not in weeks:
             start = date.fromisoformat(w["start"])
             done = [a for a in foot if w["start"] <= a["day"] <= today.isoformat()]
-            left = {d: max(0.0, w[d] - sum(a[{"miles": "distance_mi"}.get(d, d)] for a in done)) for d in DIMS}
+            mine = {d: r for d, r in own.items()
+                    if _in_week(date.fromisoformat(d), start) and d >= first.isoformat() and d != obj["day"]}
+            left = {d: max(0.0, w[d] - sum(a[{"miles": "distance_mi"}.get(d, d)] for a in done)
+                           - sum(r[d] for r in mine.values())) for d in DIMS}
             race = _in_week(obj_day, start)
-            ss, _ = sessions_for_week(left, start, max(first, start), _before(c, obj_day) if race else c, pace_min)
+            cw = _around_own(_before(c, obj_day) if race else c, mine, w)
+            ss, _ = sessions_for_week(left, start, max(first, start), cw, pace_min)
             for s in ss:
-                if s["kind"] == "long":
+                r = mine.get(s["day"])
+                if r is not None:
+                    s.update(kind=_own_kind(r["kind"]), miles=r["miles"], gain_ft=r["gain_ft"], loss_ft=r["loss_ft"],
+                             minutes=r.get("minutes") or effort_miles(r["miles"], r["gain_ft"]) * pace_min, own=True)
+                elif s["kind"] != "rest" and s["miles"] < MIN_SESSION_MI and s["gain_ft"] < MIN_SESSION_FT:
+                    # What's done and your own runs all but cover the week: a scrap of a run isn't worth it.
+                    s.update(kind="rest", miles=0.0, gain_ft=0.0, loss_ft=0.0, minutes=0.0)
+            for s in ss:
+                if s["kind"] == "long" and not s.get("own"):
                     if race:
                         s["kind"] = "easy"
                     elif w.get("long") and w["long"].get("longest_descent_ft"):

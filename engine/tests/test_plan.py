@@ -160,6 +160,37 @@ def test_upcoming_sessions_take_off_what_is_done_and_mark_the_objective():
     assert "150 bpm" in text["detail"] and "ft up" in text["detail"]
 
 
+def test_plan_sessions_work_around_own_runs():
+    acts = _acts()
+    p = planner.build(_obj(), acts, _history(acts), planner.Constraints(), TODAY)
+    week = planner.plan_for_day(p, date(2026, 10, 12))
+    nxt = lambda ss: [x for x in ss if x["day"] >= "2026-10-12"]  # noqa: E731
+
+    def total(ss):
+        return {k: sum(x[k] for x in ss) for k in planner.DIMS}
+
+    # An easy run on the long day: it counts toward the week and the long day moves to Sunday.
+    own = {"2026-10-17": {"kind": "easy", "miles": 4.0, "gain_ft": 300.0, "loss_ft": 300.0, "minutes": None}}
+    s = nxt(planner.upcoming_sessions(p, acts, TODAY, days=10, own=own))
+    sat = next(x for x in s if x["day"] == "2026-10-17")
+    assert sat["own"] and sat["miles"] == 4.0
+    assert next(x for x in s if x["kind"] == "long")["day"] == "2026-10-18"
+    for k, v in total(s).items():
+        assert v == pytest.approx(week[k], rel=0.02)
+    # A big run of their own is the week's long day: no second one, and the week still adds up.
+    own = {"2026-10-18": {"kind": "long", "miles": week["long"]["miles"] + 2, "gain_ft": week["long"]["gain_ft"],
+                          "loss_ft": week["long"]["loss_ft"], "minutes": None}}
+    s = nxt(planner.upcoming_sessions(p, acts, TODAY, days=10, own=own))
+    assert [x["day"] for x in s if x["kind"] == "long"] == ["2026-10-18"]
+    for k, v in total(s).items():
+        assert v == pytest.approx(week[k], rel=0.02)
+    # Own runs that already cover the week leave the plan's days as rest.
+    own = {"2026-10-13": {"kind": "long", "miles": week["miles"], "gain_ft": week["gain_ft"],
+                          "loss_ft": week["loss_ft"], "minutes": None}}
+    s = nxt(planner.upcoming_sessions(p, acts, TODAY, days=10, own=own))
+    assert {x["kind"] for x in s if not x.get("own")} == {"rest"}
+
+
 def test_weekly_review_flags_a_missed_week_and_pain():
     acts = _acts()
     p = planner.build(_obj(), acts, _history(acts), planner.Constraints(), TODAY - timedelta(days=11))
@@ -399,7 +430,11 @@ def test_own_run_replaces_the_plan_session_that_day(tmp_path, monkeypatch):
     p = client.get("/api/plan").json()
     s = next(x for x in p["sessions"] if x["day"] == target["day"])
     assert s["own"] and s["title"] == "Hike" and s["how"] == "Peak with friends"
-    cal = client.get("/api/schedule").json()["items"]
+    assert p["this_week"]["target"]["miles"] > 0 and p["this_week"]["done"] is not None
+    assert all(a["miles"] >= 0 for a in p["actuals"].values()) and p["actuals"]
+    sched = client.get("/api/schedule").json()
+    assert sched["weeks"][0]["target"] and len(sched["weeks"]) == 5
+    cal = sched["items"]
     on_day = [i for i in cal if i["day"] == target["day"]]
     assert [i["source"] for i in on_day] == ["manual"]
     assert any(i["source"] == "plan" for i in cal)

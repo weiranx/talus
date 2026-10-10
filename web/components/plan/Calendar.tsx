@@ -1,10 +1,10 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useCallback, useEffect, useState } from "react";
+import { Fragment, useCallback, useEffect, useState } from "react";
 import { dayLabel, mi, n0 } from "@/lib/format";
-import { DAY_SHORT } from "@/lib/plan";
-import type { RunKind, Schedule, ScheduledRun } from "@/lib/types";
+import { cover, DAY_SHORT, FOCUS_TEXT } from "@/lib/plan";
+import type { RunKind, Schedule, ScheduledRun, WeekProgress } from "@/lib/types";
 
 const WEEKS = 5;
 const STATUS_TEXT = { done: "Done", missed: "Missed", today: "Today", planned: "" } as const;
@@ -29,6 +29,30 @@ function formFor(r: ScheduledRun | null, day: string): Form {
     minutes: r.estimated_minutes ? "" : String(Math.round(r.minutes)), zone: r.zone ? String(r.zone) : "", notes: r.notes };
 }
 
+const COVER_COLOR = { covered: "var(--good-ink)", close: "var(--warn-ink)", short: "var(--bad-ink)", over: "var(--warn-ink)" } as const;
+
+// A line under each week: the plan's target against done plus scheduled, in mi and ft up.
+function WeekLine({ w, past }: { w: WeekProgress | undefined; past: boolean }) {
+  if (!w) return null;
+  const have = { miles: (w.done?.miles ?? 0) + w.ahead.miles, gain_ft: (w.done?.gain_ft ?? 0) + w.ahead.gain_ft };
+  const all = cover(w);
+  const c = w.dated || all?.state === "over" ? all : null;  // over is over, dated or not
+  const sum = `${past ? "Done" : w.done ? "Done + scheduled" : "Scheduled"} ${mi(have.miles)} mi · ${n0(have.gain_ft)} ft up`;
+  return (
+    <div style={{ gridColumn: "1 / -1", display: "flex", gap: 12, flexWrap: "wrap", fontSize: 12, padding: "0 4px 6px" }}>
+      {w.target ? (
+        <span>{FOCUS_TEXT[w.target.focus]} target <span className="mono">{mi(w.target.miles)} mi · {n0(w.target.gain_ft)} ft up</span></span>
+      ) : null}
+      <span className="muted">{sum}</span>
+      {c ? <span style={{ color: COVER_COLOR[c.state], fontWeight: 600 }}>
+        {c.state === "covered" ? "Covered" : c.state === "over"
+          ? `Over target: ${Math.round(Math.max(...Object.values(c.share)) * 100)}%`
+          : `${Math.round(Math.min(c.share.miles, c.share.gain_ft) * 100)}% of target`}
+      </span> : w.target ? <span className="muted">The plan&apos;s days show a week ahead</span> : null}
+    </div>
+  );
+}
+
 // The calendar of scheduled runs: your own, and the plan's next 7 days. Add a run on any day,
 // change its date to move it, or delete it. Editing a plan session saves it as your own run.
 export default function Calendar({ initial }: { initial: Schedule }) {
@@ -49,6 +73,7 @@ export default function Calendar({ initial }: { initial: Schedule }) {
   for (const it of data.items) byDay.set(it.day, [...(byDay.get(it.day) ?? []), it]);
   const days = Array.from({ length: WEEKS * 7 }, (_, i) => addDays(start, i));
   const warned = new Map(data.warnings.map((w) => [w.week, w]));
+  const weeks = new Map((data.weeks ?? []).map((w) => [w.start, w]));
 
   async function save() {
     if (!form) return;
@@ -99,10 +124,12 @@ export default function Calendar({ initial }: { initial: Schedule }) {
           {DAY_SHORT.map((d) => <div key={d} className="muted" style={{ fontSize: 12, padding: "0 4px" }}>{d}</div>)}
           {days.map((d, i) => {
             const items = byDay.get(d) ?? [];
+            const weekEnd = i % 7 === 6;
             const w = warned.get(days[i - (i % 7)]);
             const past = d < data.date;
             return (
-              <div key={d} style={{
+              <Fragment key={d}>
+              <div style={{
                 minHeight: 92, border: `1px solid ${d === data.date ? "var(--ink)" : "var(--line)"}`, borderRadius: 10,
                 padding: 6, display: "flex", flexDirection: "column", gap: 4, background: past ? "var(--bg)" : "#fff",
                 outline: w ? "2px solid var(--warn-ink)" : undefined,
@@ -126,6 +153,8 @@ export default function Calendar({ initial }: { initial: Schedule }) {
                   </button>
                 ))}
               </div>
+              {weekEnd ? <WeekLine w={weeks.get(days[i - 6])} past={d < data.date} /> : null}
+              </Fragment>
             );
           })}
         </div>

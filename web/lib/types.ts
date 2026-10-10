@@ -408,7 +408,13 @@ export interface PlanPage {
   review: WeekReview | null;
   fitness_only: string;
   thresholds: Thresholds | null;
+  this_week?: WeekProgress;
+  actuals?: Record<string, WeekActual>;
 }
+
+export interface Vol { miles: number; gain_ft: number; loss_ft: number }
+export interface WeekActual extends Vol { below_aet_pct: number | null }
+export interface WeekProgress { start: string; dated: boolean; target: (Vol & { focus: Focus }) | null; done: WeekActual | null; ahead: Vol }
 
 export interface PlanReply { verdict: string; limiter: string; plan: string }
 export interface ReviewReply { week: string; next: string }
@@ -441,6 +447,7 @@ export interface Schedule {
   start: string;
   days: number;
   items: ScheduledRun[];
+  weeks: WeekProgress[];
   warnings: ScheduleWarning[];
   kinds: { key: RunKind; label: string }[];
   zone_model: ZoneModel | null;

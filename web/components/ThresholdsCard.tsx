@@ -26,9 +26,9 @@ function paceSeconds(text: string): number | null | undefined {
   return m ? Number(m[1]) * 60 + Number(m[2]) : undefined;
 }
 
-function toForm(th: SettingsThresholds | null): Form {
+function toForm(th: SettingsThresholds | null, restingHint?: number | null): Form {
   return {
-    resting: th ? String(Math.round(th.resting)) : "",
+    resting: th ? String(Math.round(th.resting)) : restingHint ? String(restingHint) : "",
     // A provisional AeT is the 88% rule, so leave it blank and let the engine keep applying it.
     aet: th && !th.aet_provisional ? String(Math.round(th.aet)) : "",
     ant: th ? String(Math.round(th.ant)) : "",
@@ -45,9 +45,12 @@ const FIELDS: { key: "resting" | "aet" | "ant" | "max"; label: string; hint: str
   { key: "max", label: "Max", hint: "highest you have seen" },
 ];
 
-export default function ThresholdsCard({ current, inferred }: { current: SettingsThresholds | null; inferred: InferredThresholds | null }) {
+// `restingHint`: a resting heart rate from the watch's recent nights, to start the form with.
+export default function ThresholdsCard({ current, inferred, restingHint }: {
+  current: SettingsThresholds | null; inferred: InferredThresholds | null; restingHint?: number | null;
+}) {
   const router = useRouter();
-  const [form, setForm] = useState<Form>(toForm(current));
+  const [form, setForm] = useState<Form>(toForm(current, restingHint));
   const [editing, setEditing] = useState(current == null);
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState<{ ok: boolean; text: string } | null>(null);

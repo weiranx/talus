@@ -80,6 +80,19 @@ Talus has sign-in. Each account has its own folder, `data/users/<id>/`, with its
 - **CLI:** `talus account list`, `talus account create EMAIL`, `talus account password EMAIL` (resets a forgotten password and signs out its sessions).
 - **Serving beyond localhost:** put it behind HTTPS and set `TALUS_SECURE_COOKIE=1`.
 
+### First-run setup
+
+A new account opens on `/welcome`, six steps that resume where you left off (progress is the `onboarding` setting in the account's own database):
+
+1. **Connect** (required): intervals.icu (OAuth or key), Garmin for the owner, or file and Apple Health upload.
+2. **Import** (required for synced sources): 6 weeks, 6 months (recommended, it feeds the threshold estimate) or everything, up to 2 years. It runs in the background (`POST /api/onboarding/import`) with progress, so the next steps can be answered meanwhile.
+3. **Heart rate:** the estimate from your runs with its confidence, or your own numbers. Resting starts from the median of the last 30 nights when there are any.
+4. **Sleep need.**
+5. **Coach consent:** what is sent to the model and what never is, then the coach on or off and a style. Skipping leaves it off.
+6. **Tour** of Today's call, the check-in and the readiness score, ending on Today.
+
+Optional steps can be skipped, and **Skip setup** goes straight to Today, which lists what is still missing with links back. Accounts that had thresholds and activities before this flow existed never see it. **Setup guide** in Settings reopens it. The iPhone app shows the same missing steps on Today, with Apple Health as its source and a link to the web setup for the rest.
+
 SQLite per account is fine for one machine and a handful of people. Postgres is worth it once the engine runs as more than one process or host, or accounts need querying together.
 
 ### Settings

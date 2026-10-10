@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { redirect } from "next/navigation";
 import { Suspense } from "react";
 import CallCard from "@/components/CallCard";
 import CoachCall from "@/components/CoachCall";
@@ -10,19 +11,29 @@ import Pill, { statePill } from "@/components/Pill";
 import ReadinessScore from "@/components/ReadinessScore";
 import Sparkline from "@/components/Sparkline";
 import ZoneBar from "@/components/ZoneBar";
+import SetupList from "@/components/onboarding/SetupList";
 import { engine, EngineError } from "@/lib/api";
 import { dayLabel, LEDGER_LABEL, ledgerBadge, ledgerDecimals, ledgerNum, ledgerUnit, mi, n0, stateLabel } from "@/lib/format";
-import { LEDGERS, type Today } from "@/lib/types";
+import { LEDGERS, type Onboarding, type Today } from "@/lib/types";
 
 export const dynamic = "force-dynamic";
 
 export default async function TodayPage() {
-  let t: Today;
-  try {
-    t = await engine<Today>("/api/today");
-  } catch (e) {
+  // Both at once: setup status decides whether Today shows at all, and Today is the slow one.
+  const [obRes, tRes] = await Promise.allSettled([engine<Onboarding>("/api/onboarding"), engine<Today>("/api/today")]);
+  if (obRes.status === "rejected") {
+    const e = obRes.reason;
     return <EngineDown message={e instanceof EngineError ? e.message : "Could not reach the engine."} />;
   }
+  const ob = obRes.value;
+  // A new account goes through setup first; it resumes at the first unfinished step.
+  if (ob.needed) redirect("/welcome");
+  if (tRes.status === "rejected") {
+    const e = tRes.reason;
+    if (e instanceof EngineError && e.status === 409) return <SetupList ob={ob} empty />;
+    return <EngineDown message={e instanceof EngineError ? e.message : "Could not reach the engine."} />;
+  }
+  const t = tRes.value;
 
   return (
     <>
@@ -35,6 +46,8 @@ export default async function TodayPage() {
           {t.checkin ? "Check-in done." : "Check in to sharpen the legs reading."}
         </div>
       </header>
+
+      <SetupList ob={ob} />
 
       <div className="row">
         <div style={{ flex: "2 1 420px", minWidth: 0, display: "flex", flexDirection: "column", gap: 16 }}>

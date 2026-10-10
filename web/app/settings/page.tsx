@@ -1,3 +1,4 @@
+import Link from "next/link";
 import AccountCard from "@/components/AccountCard";
 import AppearanceCard from "@/components/AppearanceCard";
 import CoachSettings from "@/components/CoachSettings";
@@ -26,6 +27,7 @@ export default async function SettingsPage() {
     <>
       <header className="page-head">
         <h1 className="title">Settings</h1>
+        <Link href="/welcome" style={{ paddingBottom: 6 }}>Setup guide</Link>
       </header>
       <ThresholdsCard current={s.thresholds} inferred={s.inferred} />
       {s.thresholds ? <ZonesCard zones={s.thresholds.zones} /> : null}

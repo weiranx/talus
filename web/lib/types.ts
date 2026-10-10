@@ -69,6 +69,21 @@ export interface Wellness {
   sleep: { status: SignalStatus; text: string; last_night_h: number | null; avg_7d_h: number | null; need_h: number };
 }
 
+export interface ScoreItem { key: string; name: string; points: number; used: boolean; text: string; limiter?: string }
+export interface ScorePoint { day: string; score: number; label: string; call: "go" | "modify" | "rest" }
+export interface ReadinessScore {
+  score: number;
+  label: "Fresh" | "Ready" | "Ease off" | "Rest";
+  call: "go" | "modify" | "rest";
+  raw: number;
+  held: string | null;
+  items: ScoreItem[];
+  used: string[];
+  missing: string[];
+  basis: string;
+  trend: ScorePoint[];
+}
+
 export interface PlannedToday { title: string; detail: string; source: "manual" | "plan"; kind: string; miles: number; gain_ft: number; loss_ft: number }
 
 export interface Today {
@@ -80,6 +95,7 @@ export interface Today {
     engine: { state: State; detail: string; reason: string };
     legs: { state: State; detail: string; limiter: Ledger; reason: string };
   };
+  score: ReadinessScore;
   call: { call: "go" | "modify" | "rest"; session: string; detail: string; why: string; source: string; planned?: boolean };
   ledgers: Record<Ledger, LedgerDay & { spark: { day: string; fitness: number; fatigue: number }[] }>;
   week: { start: string; activities: ActivitySummary[]; distance_mi: number; gain_ft: number; loss_ft: number };

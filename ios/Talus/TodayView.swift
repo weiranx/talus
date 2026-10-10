@@ -13,7 +13,7 @@ struct TodayView: View {
                             .font(.subheadline).foregroundStyle(.secondary)
                         CoachCallCard(rules: t.call)
                         CheckInCard(initial: t.checkin, onSaved: reload)
-                        ReadinessCard(readiness: t.readiness)
+                        ReadinessCard(readiness: t.readiness, score: t.score)
                         if let w = t.wellness { OvernightCard(w: w) }
                         ForEach(LedgerName.sorted(t.ledgers.keys), id: \.self) { name in
                             if let d = t.ledgers[name] {
@@ -157,10 +157,15 @@ struct CheckInCard: View {
 
 struct ReadinessCard: View {
     let readiness: Readiness
+    let score: ReadinessScore?
 
     var body: some View {
         Card {
             SectionLabel("Readiness")
+            if let s = score {
+                ScoreView(s: s)
+                Divider()
+            }
             ForEach([("Engine", readiness.engine), ("Legs", readiness.legs)], id: \.0) { title, part in
                 if title == "Legs" { Divider() }
                 HStack(alignment: .top) {
@@ -171,6 +176,75 @@ struct ReadinessCard: View {
                     Spacer()
                     Pill(text: Fmt.state(part.state), tone: Tone.state(part.state))
                 }
+            }
+        }
+    }
+}
+
+/// The score, what cost it points, what it could not see, and the last 28 days.
+struct ScoreView: View {
+    let s: ReadinessScore
+
+    private static func tone(_ call: String) -> Tone {
+        switch call {
+        case "go": .good
+        case "modify": .warn
+        default: .bad
+        }
+    }
+
+    private static func lower(_ name: String) -> String {
+        name == "HRV" ? name : name == "Resting HR" ? "resting HR" : name.lowercased()
+    }
+
+    var body: some View {
+        let lost = s.items.filter { $0.points < 0 }.sorted { $0.points < $1.points }
+        let missing = s.items.filter { !$0.used }.map { Self.lower($0.name) }
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(alignment: .center, spacing: 12) {
+                Text("\(s.score)").font(.system(size: 44, weight: .semibold)).monospacedDigit()
+                    .accessibilityLabel("Readiness score \(s.score) of 100")
+                VStack(alignment: .leading, spacing: 4) {
+                    Pill(text: s.label, tone: Self.tone(s.call))
+                    Text("of 100").font(.subheadline).foregroundStyle(.secondary)
+                }
+            }
+            Text(s.basis + ".").font(.subheadline).foregroundStyle(.secondary)
+            if lost.isEmpty {
+                Text("Nothing reads worse than your normal.")
+            }
+            ForEach(lost, id: \.key) { i in
+                HStack(alignment: .top) {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(i.name).fontWeight(.semibold)
+                        Text(i.text).font(.subheadline).foregroundStyle(.secondary)
+                    }
+                    Spacer()
+                    Text("\(i.points)").monospacedDigit()
+                }
+            }
+            if let held = s.held {
+                Text(held + ".").font(.subheadline).foregroundStyle(.secondary)
+            }
+            if !missing.isEmpty {
+                Text("Not used, no data: " + ListFormatter.localizedString(byJoining: missing) + ".")
+                    .font(.subheadline).foregroundStyle(.secondary)
+            }
+            if s.trend.count > 1 {
+                Text("Last \(s.trend.count) days").font(.caption).foregroundStyle(.secondary)
+                Chart {
+                    ForEach(s.trend, id: \.day) { p in
+                        BarMark(x: .value("Day", Fmt.date(p.day) ?? .now, unit: .day), y: .value("Score", max(p.score, 3)))
+                            .foregroundStyle(Self.tone(p.call).ink)
+                    }
+                    RuleMark(y: .value("Go", 67)).foregroundStyle(Color.secondary.opacity(0.4))
+                        .lineStyle(StrokeStyle(lineWidth: 1, dash: [3, 3]))
+                }
+                .chartYScale(domain: 0...100)
+                .chartXAxis(.hidden)
+                .chartYAxis(.hidden)
+                .frame(height: 64)
+                .accessibilityLabel("Readiness score over the last \(s.trend.count) days")
             }
         }
     }
@@ -283,7 +357,7 @@ struct IntensityCard: View {
                 }
                 .clipShape(RoundedRectangle(cornerRadius: 4))
                 .overlay(alignment: .leading) {
-                    Rectangle().fill(Color(hex: 0xA3231B)).frame(width: 2).offset(x: geo.size.width * 0.8)
+                    Rectangle().fill(Color.target).frame(width: 2).offset(x: geo.size.width * 0.8)
                 }
             }
             .frame(height: 16)

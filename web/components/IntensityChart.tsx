@@ -21,13 +21,13 @@ export default function IntensityChart({ weeks, model }: { weeks: LoadData["inte
     <div role="img" aria-label="Share of time in each zone by week, against an 80% below-AeT target" style={{ height: 200 }}>
       <ResponsiveContainer width="100%" height="100%">
         <BarChart data={data} margin={{ top: 8, right: 8, bottom: 0, left: 0 }} barCategoryGap="25%">
-          <CartesianGrid vertical={false} stroke="#e3e8e5" />
-          <XAxis dataKey="start" tickLine={false} axisLine={{ stroke: "#e3e8e5" }} tick={{ fontSize: 12, fill: "#52605a" }}
+          <CartesianGrid vertical={false} stroke="var(--line)" />
+          <XAxis dataKey="start" tickLine={false} axisLine={{ stroke: "var(--line)" }} tick={{ fontSize: 12, fill: "var(--muted)" }}
             tickFormatter={(d: string) => dayLabel(d, { month: "numeric", day: "numeric" })} />
           <YAxis width={40} domain={[0, 100]} ticks={[0, 50, 100]} tickLine={false} axisLine={false}
-            tick={{ fontSize: 12, fill: "#52605a" }} tickFormatter={(v: number) => `${v}%`} />
+            tick={{ fontSize: 12, fill: "var(--muted)" }} tickFormatter={(v: number) => `${v}%`} />
           <Tooltip
-            cursor={{ fill: "rgba(21,33,29,0.04)" }}
+            cursor={{ fill: "var(--hover-bg)" }}
             content={({ active, payload }) => {
               if (!active || !payload?.length) return null;
               const d = payload[0].payload as (typeof data)[number];
@@ -48,7 +48,7 @@ export default function IntensityChart({ weeks, model }: { weeks: LoadData["inte
             }}
           />
           {keys.map((k, i) => (
-            <Bar key={k} dataKey={k} stackId="z" fill={colors[i]} stroke="#fff" strokeWidth={1}
+            <Bar key={k} dataKey={k} stackId="z" fill={colors[i]} stroke="var(--surface)" strokeWidth={1}
               radius={i === n - 1 ? [4, 4, 0, 0] : undefined} isAnimationActive={false} />
           ))}
           <ReferenceLine y={80} stroke="var(--target)" strokeWidth={2} />

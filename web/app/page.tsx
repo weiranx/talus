@@ -7,6 +7,7 @@ import EngineDown from "@/components/EngineDown";
 import Explain from "@/components/Explain";
 import Overnight from "@/components/Overnight";
 import Pill, { statePill } from "@/components/Pill";
+import ReadinessScore from "@/components/ReadinessScore";
 import Sparkline from "@/components/Sparkline";
 import ZoneBar from "@/components/ZoneBar";
 import { engine, EngineError } from "@/lib/api";
@@ -61,9 +62,10 @@ export default async function TodayPage() {
         <div style={{ flex: "1 1 300px", minWidth: 0, display: "flex", flexDirection: "column", gap: 16, alignSelf: "flex-start" }}>
         <section className="card" style={{ gap: 14 }}>
           <h2 className="label">Readiness</h2>
-          {(["engine", "legs"] as const).map((k, i) => (
+          <ReadinessScore s={t.score} />
+          <div className="divider" />
+          {(["engine", "legs"] as const).map((k) => (
             <div key={k} style={{ display: "flex", flexDirection: "column", gap: 14 }}>
-              {i > 0 ? <div className="divider" /> : null}
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12 }}>
                 <div>
                   <div style={{ fontSize: 17, fontWeight: 600 }}>{k === "engine" ? "Engine" : "Legs"}</div>

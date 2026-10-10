@@ -20,6 +20,7 @@ Single-user prototype. Milestones 1 to 5 are here: sync from intervals.icu, file
 | `engine/talus/score.py` | Scores one activity: vert, segments, zones, loads |
 | `engine/talus/ledger.py` | Cardio, climb and descent ledgers: daily load, fitness (42-day), fatigue (7-day), form and flags |
 | `engine/talus/readiness.py` | Engine and legs readiness, and the rule-based call for the day |
+| `engine/talus/readiness_score.py` | The 0 to 100 readiness score on Today, and what moved it |
 | `engine/talus/api.py` | HTTP API the web app reads (`talus serve`) |
 | `engine/talus/settings.py` | Coach settings and model prices for the Settings screen |
 | `engine/talus/explain.py` | Tap-a-number explanations: the inputs, formula and arithmetic behind each number |
@@ -128,6 +129,7 @@ Other commands: `talus import <files>` for FIT/GPX/TCX, `talus rescore` after ch
 - intervals.icu streams cadence under 110 is treated as per foot and doubled.
 - Ledger flags use the spec's starting rules: ramp when the last 7 days run over 1.3 times your normal, overreach over 1.5, spike for a day 30% above any in the last 6 weeks, detraining for fitness down 10% in 2 weeks. Flags start after 28 days of history, and both averages are seeded from the first 6 weeks so a mid-season start does not read as a ramp.
 - Readiness: a ledger reads loaded when the last 7 days run over 15% above normal or it is ramping, overreached on the overreach flag. Legs take the worse of climb and descent. The check-in only makes things worse: soreness 4 is loaded, 5 or pain over 3 is overreached, energy 2 or lower loads the engine.
+- Readiness score (0 to 100): the day's call sets the top of the band (go 100, modify 66, rest 33), then each input costs points within it, down to the band's floor (go 67, modify 34, rest 0). Cardio load up to 30 and leg load up to 30 (the worst of distance, climb and descent) once the last 7 days run over 5% above normal, full at 50%; a ramp flag costs at least half, overreach all of it. HRV up to 20 (7-day average 3% to 20% under baseline), resting HR up to 15 (1 to 8 bpm over baseline), sleep 8 a missing hour beyond 30 min last night or 15 min on the 7-day average, up to 15. Check-in: 7 a step of soreness over 2 and energy under 3, 8 a step of pain over 1. An input with no data costs nothing and is listed as not used. Labels: Fresh 85+, Ready 67+, Ease off 34+, Rest. Today shows the last 28 days, worked out the same way from what each morning knew.
 - Grade-band factors are the spec's starting values: climb 0.75 / 1.0 / 1.25, descent 0.5 / 1.0 / 1.5, times 0.7 when hiking down.
 
 ## Data source notes

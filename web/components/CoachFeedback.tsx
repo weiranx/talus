@@ -20,13 +20,13 @@ export default function CoachFeedback({ logId, initial, dark }: { logId: number;
 
   const style = (v: number) => ({
     minHeight: 32, padding: "0 12px", borderRadius: 999, fontSize: 13, cursor: "pointer",
-    border: `1px solid ${dark ? "#52605A" : "var(--line)"}`,
-    background: rating === v ? (dark ? "#fff" : "var(--ink)") : "transparent",
-    color: rating === v ? (dark ? "var(--ink)" : "#fff") : dark ? "#e4eae7" : "var(--ink)",
+    border: `1px solid ${dark ? "var(--feature-line)" : "var(--line)"}`,
+    background: rating === v ? (dark ? "var(--on-feature)" : "var(--strong)") : "transparent",
+    color: rating === v ? (dark ? "var(--feature)" : "var(--on-strong)") : dark ? "var(--feature-soft)" : "var(--ink)",
   });
 
   return (
-    <div style={{ display: "flex", gap: 8, alignItems: "center", fontSize: 12, color: dark ? "#b9c6c0" : "var(--muted)" }}>
+    <div style={{ display: "flex", gap: 8, alignItems: "center", fontSize: 12, color: dark ? "var(--feature-muted)" : "var(--muted)" }}>
       <span>Useful?</span>
       <button type="button" aria-pressed={rating === 1} style={style(1)} onClick={() => rate(1)}>Yes</button>
       <button type="button" aria-pressed={rating === -1} style={style(-1)} onClick={() => rate(-1)}>No</button>

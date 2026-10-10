@@ -29,7 +29,9 @@ function Numbers({ r }: { r: WeekReview }) {
 }
 
 // Last week against its targets, with the coach's review. Built from engine numbers.
-export default async function Review({ fallback }: { fallback: WeekReview }) {
+// `compact` leaves out the numbers table, for the Plan page where this week's progress and the
+// weekly chart already carry them.
+export default async function Review({ fallback, compact }: { fallback: WeekReview; compact?: boolean }) {
   let r: (CoachReply<ReviewReply> & { review: WeekReview }) | null = null;
   try {
     r = await engine<CoachReply<ReviewReply> & { review: WeekReview }>("/api/coach/review");
@@ -37,13 +39,15 @@ export default async function Review({ fallback }: { fallback: WeekReview }) {
     r = null;
   }
   const review = r?.review ?? fallback;
+  const Wrap = compact ? "div" : "section";
   return (
-    <section className="card">
+    <Wrap className={compact ? undefined : "card"}
+      style={compact ? { display: "flex", flexDirection: "column", gap: 10, borderTop: "1px solid var(--line)", paddingTop: 14 } : undefined}>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 8, flexWrap: "wrap" }}>
         <h2 className="label">Last week, {dayLabel(review.start, { month: "short", day: "numeric" })} to {dayLabel(review.end, { month: "short", day: "numeric" })}</h2>
         {review.actual.below_aet_pct != null ? <span className="muted">{pct(review.actual.below_aet_pct)} of time below AeT</span> : null}
       </div>
-      <Numbers r={review} />
+      {compact ? null : <Numbers r={review} />}
       {review.flags.length ? <div className="muted">Flags: {review.flags.map((f) => `${f.ledger} ${f.text.toLowerCase()}`).join("; ")}.</div> : null}
       {r ? (
         <>
@@ -61,6 +65,6 @@ export default async function Review({ fallback }: { fallback: WeekReview }) {
           <PlanActions replan reason={review.replan[0]} />
         </div>
       ) : null}
-    </section>
+    </Wrap>
   );
 }

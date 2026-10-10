@@ -33,6 +33,7 @@ TALUS_PUBLIC_URL=https://talus.weiranxiong.com
 TALUS_SECURE_COOKIE=1
 TALUS_SIGNUP=closed
 # GOOGLE_CLIENT_ID=...       redirect URI https://talus.weiranxiong.com/api/auth/google/callback
+# INTERVALS_CLIENT_ID=...    redirect URI https://talus.weiranxiong.com/api/auth/intervals/callback
 # GOOGLE_CLIENT_SECRET=...
 ```
 

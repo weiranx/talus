@@ -42,6 +42,10 @@ def test_api_end_to_end(tmp_path, monkeypatch):
     assert client.post("/api/checkin", json={"soreness": 5, "energy": 3, "pain": 1}).json() == {"ok": True}
     t = client.get("/api/today").json()
     assert t["checkin"]["soreness"] == 5 and t["readiness"]["legs"]["state"] == "overreached"
+    s = t["score"]
+    assert s["call"] == t["call"]["call"] == "rest" and s["score"] <= 33 and s["label"] == "Rest"
+    assert "Check-in" in s["used"] and "HRV" in s["missing"]
+    assert len(s["trend"]) == 28 and s["trend"][-1]["score"] == s["score"]
     assert client.post("/api/checkin", json={"soreness": 9, "energy": 3, "pain": 1}).status_code == 422
 
     load = client.get("/api/load?days=42").json()

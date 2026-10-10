@@ -112,6 +112,32 @@ struct Readiness: Codable, Hashable {
     let legs: ReadinessPart
 }
 
+struct ScoreItem: Codable, Hashable {
+    let key: String
+    let name: String
+    let points: Int
+    let used: Bool
+    let text: String
+}
+
+struct ScorePoint: Codable, Hashable {
+    let day: String
+    let score: Int
+    let label: String
+    let call: String
+}
+
+/// The engine's 0 to 100 readiness score. The day's call sets the top of its band.
+struct ReadinessScore: Codable, Hashable {
+    let score: Int
+    let label: String
+    let call: String
+    let held: String?
+    let items: [ScoreItem]
+    let basis: String
+    let trend: [ScorePoint]
+}
+
 struct Call: Codable, Hashable {
     let call: String
     let session: String
@@ -132,6 +158,7 @@ struct Today: Codable, Hashable {
     let checkin: CheckIn?
     let wellness: Wellness?
     let readiness: Readiness
+    let score: ReadinessScore?
     let call: Call
     let ledgers: [String: TodayLedger]
     let week: Week

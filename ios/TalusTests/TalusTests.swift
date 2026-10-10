@@ -32,6 +32,20 @@ struct DecodingTests {
         #expect(LedgerName.sorted(t.ledgers.keys) == ["cardio", "distance"])
         #expect(t.ledgers["distance"]?.building == nil)
         #expect(t.readiness.legs.limiter == "descent")
+        #expect(t.score == nil)  // an engine from before the score
+    }
+
+    @Test func readinessScoreDecodes() throws {
+        let json = """
+        {"score":53,"label":"Ease off","call":"modify","raw":53,"held":null,
+         "items":[{"key":"call","name":"Today's call: ease off","points":-34,"used":true,"text":"Descent load is 21% above"},
+                  {"key":"legs","name":"Leg load","points":-10,"used":true,"text":"t","limiter":"descent"},
+                  {"key":"checkin","name":"Check-in","points":0,"used":false,"text":"No check-in today"}],
+         "used":["Leg load"],"missing":["Check-in"],"basis":"Based on leg load",
+         "trend":[{"day":"2026-10-09","score":34,"label":"Ease off","call":"modify"}]}
+        """
+        let s = try decode(json, as: ReadinessScore.self)
+        #expect(s.score == 53 && s.items.count == 3 && s.trend.first?.score == 34)
     }
 
     @Test func activityDetailDecodes() throws {

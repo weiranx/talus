@@ -16,18 +16,23 @@ from .sources.base import RawFile
 SEMICIRCLE = 180.0 / 2**31
 
 
-def parse(raw: RawFile) -> Streams:
-    parsers = {"fit": parse_fit, "gpx": parse_gpx, "tcx": parse_tcx, "icu-streams": parse_icu_streams}
+def parse(raw: RawFile, check_crc: bool = True) -> Streams:
+    """check_crc=False skips FIT checksums (about a third of the read) for files already read
+    once at import, such as an activity page re-reading a stored file."""
+    if raw.fmt == "fit":
+        return finish(parse_fit(raw.data, check_crc))
+    parsers = {"gpx": parse_gpx, "tcx": parse_tcx, "icu-streams": parse_icu_streams}
     if raw.fmt not in parsers:
         raise ValueError(f"No parser for {raw.fmt}")
     return finish(parsers[raw.fmt](raw.data))
 
 
-def parse_fit(data: bytes) -> Streams:
+def parse_fit(data: bytes, check_crc: bool = True) -> Streams:
     rows: list[dict] = []
     sport = None
     activity = {}
-    with fitdecode.FitReader(io.BytesIO(data)) as fit:
+    crc = fitdecode.CrcCheck.WARN if check_crc else fitdecode.CrcCheck.DISABLED
+    with fitdecode.FitReader(io.BytesIO(data), check_crc=crc) as fit:
         for frame in fit:
             if not isinstance(frame, fitdecode.FitDataMessage):
                 continue

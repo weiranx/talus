@@ -14,6 +14,7 @@ import sqlite3
 import threading
 import time
 import zipfile
+from collections import OrderedDict
 from contextvars import ContextVar
 from dataclasses import asdict
 from datetime import date, datetime, timedelta
@@ -316,10 +317,29 @@ def activities(limit: int = 50) -> list[dict]:
     return _activities(get_store())[:limit]
 
 
+# Recently read activity files. Reading a FIT file takes about a second, and an activity page
+# reads it twice (the page, then the coach's read), so keep the last few parsed.
+_parsed: OrderedDict[tuple, object] = OrderedDict()
+_parsed_guard = threading.Lock()
+PARSED_KEEP = 8
+
+
 def _streams(store: Store, row):
     """An activity's parsed file, or a 422 that says why it can't be read."""
+    path = store.dir / row["raw_path"]
     try:
-        streams = parse(store.raw(row))
+        st = path.stat()
+        key = (str(path), st.st_mtime_ns, st.st_size, row["raw_fmt"])
+        with _parsed_guard:
+            streams = _parsed.get(key)
+            if streams is not None:
+                _parsed.move_to_end(key)
+        if streams is None:
+            streams = parse(store.raw(row), check_crc=False)
+            with _parsed_guard:
+                _parsed[key] = streams
+                while len(_parsed) > PARSED_KEEP:
+                    _parsed.popitem(last=False)
     except Exception as e:
         raise HTTPException(422, f"Could not read this activity's file ({type(e).__name__}: {e}).") from e
     streams.sport = streams.sport or row["sport"]

@@ -4,7 +4,7 @@ import { Bar, BarChart, Cell, ReferenceLine, ResponsiveContainer, Tooltip, YAxis
 import { dayLabel } from "@/lib/format";
 import type { ScorePoint } from "@/lib/types";
 
-const COLOR = { go: "var(--good-ink)", modify: "#c98a2b", rest: "var(--bad-ink)" } as const;
+const COLOR = { go: "var(--good-ink)", modify: "var(--climb)", rest: "var(--bad-ink)" } as const;
 
 /** The readiness score for each of the last 28 days, colored by that day's call. */
 export default function ScoreTrend({ data }: { data: ScorePoint[] }) {
@@ -14,9 +14,9 @@ export default function ScoreTrend({ data }: { data: ScorePoint[] }) {
       <ResponsiveContainer width="100%" height="100%">
         <BarChart data={data} margin={{ top: 4, right: 0, bottom: 0, left: 0 }} barCategoryGap={2}>
           <YAxis hide domain={[0, 100]} />
-          <ReferenceLine y={67} stroke="#c9d2ce" strokeDasharray="3 3" />
+          <ReferenceLine y={67} stroke="var(--line-strong)" strokeDasharray="3 3" />
           <Tooltip
-            cursor={{ fill: "rgba(0,0,0,0.05)" }}
+            cursor={{ fill: "var(--hover-bg)" }}
             content={({ active, payload }) =>
               active && payload?.length ? (
                 <div className="tip">

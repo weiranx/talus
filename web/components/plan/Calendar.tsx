@@ -2,6 +2,7 @@
 
 import { useRouter } from "next/navigation";
 import { Fragment, useCallback, useEffect, useState } from "react";
+import { Spinner } from "@/components/Loading";
 import { dayLabel, mi, n0 } from "@/lib/format";
 import { cover, DAY_SHORT, FOCUS_TEXT } from "@/lib/plan";
 import type { RunKind, Schedule, ScheduledRun, WeekProgress } from "@/lib/types";
@@ -60,12 +61,15 @@ export default function Calendar({ initial }: { initial: Schedule }) {
   const [data, setData] = useState(initial);
   const [start, setStart] = useState(initial.start);
   const [form, setForm] = useState<Form | null>(null);
-  const [busy, setBusy] = useState(false);
+  const [busy, setBusy] = useState<"save" | "delete" | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [loading, setLoading] = useState(false);
 
   const load = useCallback(async (s: string) => {
+    setLoading(true);
     const res = await fetch(`/api/schedule?start=${s}&days=${WEEKS * 7}`).catch(() => null);
     if (res?.ok) setData(await res.json());
+    setLoading(false);
   }, []);
   useEffect(() => { if (start !== initial.start) load(start); }, [start, initial.start, load]);
 
@@ -77,7 +81,7 @@ export default function Calendar({ initial }: { initial: Schedule }) {
 
   async function save() {
     if (!form) return;
-    setBusy(true);
+    setBusy("save");
     setError(null);
     const num = (v: string) => (v.trim() === "" ? null : Number(v.replace(/,/g, "")));
     const body = { day: form.day, kind: form.kind, miles: num(form.miles) ?? 0, gain_ft: num(form.gain_ft) ?? 0,
@@ -85,7 +89,7 @@ export default function Calendar({ initial }: { initial: Schedule }) {
     const res = await fetch(form.id ? `/api/schedule/${form.id}` : "/api/schedule", {
       method: form.id ? "PUT" : "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body),
     }).catch(() => null);
-    setBusy(false);
+    setBusy(null);
     if (!res?.ok) {
       const b = await res?.json().catch(() => ({}));
       return setError(typeof b?.detail === "string" ? b.detail : "Check the date and numbers.");
@@ -97,9 +101,9 @@ export default function Calendar({ initial }: { initial: Schedule }) {
 
   async function remove() {
     if (!form?.id) return;
-    setBusy(true);
+    setBusy("delete");
     const res = await fetch(`/api/schedule/${form.id}`, { method: "DELETE" }).catch(() => null);
-    setBusy(false);
+    setBusy(null);
     if (!res?.ok) return setError("Could not delete.");
     setForm(null);
     await load(start);
@@ -112,15 +116,18 @@ export default function Calendar({ initial }: { initial: Schedule }) {
   return (
     <section className="card">
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
-        <h2 className="label">Scheduled runs</h2>
+        <h2 className="label" style={{ display: "flex", alignItems: "center", gap: 8 }}>
+          Scheduled runs{loading ? <Spinner label="Loading these weeks" /> : null}
+        </h2>
         <div className="actions" style={{ gap: 6 }}>
           <button className="btn light outline" style={{ minHeight: 36, padding: "0 12px" }} onClick={() => setStart(addDays(start, -7 * WEEKS))}>Earlier</button>
           <button className="btn light outline" style={{ minHeight: 36, padding: "0 12px" }} onClick={() => setStart(initial.start)}>This week</button>
           <button className="btn light outline" style={{ minHeight: 36, padding: "0 12px" }} onClick={() => setStart(addDays(start, 7 * WEEKS))}>Later</button>
         </div>
       </div>
-      <div className="table-wrap">
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(7, minmax(92px, 1fr))", gap: 4, minWidth: 660 }}>
+      <div className="table-wrap" aria-busy={loading}>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(7, minmax(92px, 1fr))", gap: 4, minWidth: 660,
+          opacity: loading ? 0.55 : 1, transition: "opacity 0.15s" }}>
           {DAY_SHORT.map((d) => <div key={d} className="muted" style={{ fontSize: 12, padding: "0 4px" }}>{d}</div>)}
           {days.map((d, i) => {
             const items = byDay.get(d) ?? [];
@@ -187,8 +194,8 @@ export default function Calendar({ initial }: { initial: Schedule }) {
             <label className="field"><span className="field-label">Notes</span><input value={form.notes} onChange={set("notes")} maxLength={300} /></label>
           </div>
           <div className="actions">
-            <button className="btn" disabled={busy || !form.day} onClick={save}>{busy ? "Saving" : "Save run"}</button>
-            {form.id ? <button className="btn danger" disabled={busy} onClick={remove}>Delete</button> : null}
+            <button className="btn" disabled={!!busy || !form.day} onClick={save} aria-busy={busy === "save"}>{busy === "save" ? "Saving" : "Save run"}</button>
+            {form.id ? <button className="btn danger" disabled={!!busy} onClick={remove} aria-busy={busy === "delete"}>Delete</button> : null}
             <button className="btn light outline" onClick={() => { setForm(null); setError(null); }}>Cancel</button>
             {error ? <span className="error-text">{error}</span> : null}
           </div>

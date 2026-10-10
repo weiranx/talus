@@ -55,7 +55,7 @@ export default function UploadCard({ upload }: { upload: Settings["sources"]["up
       <div className="actions">
         <input ref={input} type="file" multiple accept=".fit,.gpx,.tcx,.zip,.gz" style={{ display: "none" }}
           onChange={(e) => send(e.target.files)} />
-        <button className="btn" onClick={() => input.current?.click()} disabled={busy !== null}>{busy ? "Uploading" : "Choose files"}</button>
+        <button className="btn" onClick={() => input.current?.click()} disabled={busy !== null} aria-busy={busy !== null}>{busy ? "Uploading" : "Choose files"}</button>
       </div>
       {busy ? <div className="muted" role="status">{busy}</div> : null}
       {lines.map((l, i) => <div key={i} className={l.ok ? "ok-text" : "error-text"}>{l.text}</div>)}

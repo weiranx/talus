@@ -2,6 +2,7 @@ import Link from "next/link";
 import EngineDown from "@/components/EngineDown";
 import IntensityChart from "@/components/IntensityChart";
 import LedgerChart from "@/components/LedgerChart";
+import LinkPending from "@/components/LinkPending";
 import Pill from "@/components/Pill";
 import { engine, EngineError } from "@/lib/api";
 import { dayLabel, duration, LEDGER_LABEL, LEDGER_UNIT, ledgerBadge, ledgerDecimals, ledgerNum, ledgerUnit, mi, n0, pct, zoneColors, zoneKeys } from "@/lib/format";
@@ -39,7 +40,7 @@ export default async function LoadPage({ searchParams }: { searchParams: Promise
         </div>
         <nav className="seg-tabs" aria-label="Time range">
           {Object.entries(RANGES).map(([k, v]) => (
-            <Link key={k} href={`/load?range=${k}`} aria-current={k === range ? "true" : undefined}>{v.label}</Link>
+            <Link key={k} href={`/load?range=${k}`} aria-current={k === range ? "true" : undefined}>{v.label}<LinkPending /></Link>
           ))}
         </nav>
       </header>

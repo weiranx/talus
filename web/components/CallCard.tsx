@@ -1,12 +1,13 @@
 import CoachFeedback from "@/components/CoachFeedback";
+import { Spinner } from "@/components/Loading";
 import Pill from "@/components/Pill";
 import type { Call } from "@/lib/types";
 
 const CALL_TONE = { go: "good", modify: "warn", rest: "bad" } as const;
 const CALL_TEXT = { go: "Go", modify: "Modify", rest: "Rest" } as const;
 
-export default function CallCard({ call, note, logId, feedback, planned }: {
-  call: Call; note: string; logId?: number | null; feedback?: number | null; planned?: boolean;
+export default function CallCard({ call, note, logId, feedback, planned, pending }: {
+  call: Call; note: string; logId?: number | null; feedback?: number | null; planned?: boolean; pending?: boolean;
 }) {
   return (
     <section className="card dark" style={{ padding: "22px 24px 18px" }}>
@@ -19,7 +20,9 @@ export default function CallCard({ call, note, logId, feedback, planned }: {
       <div style={{ color: "#e4eae7", maxWidth: 620 }}>{call.detail}</div>
       <div style={{ color: "#b9c6c0", fontSize: 14, maxWidth: 620 }}>Why: {call.why}</div>
       <div style={{ display: "flex", flexWrap: "wrap", justifyContent: "space-between", alignItems: "center", gap: 10 }}>
-        <div style={{ color: "#b9c6c0", fontSize: 12, maxWidth: 520 }}>{note}</div>
+        <div style={{ color: "#b9c6c0", fontSize: 12, maxWidth: 520, display: "flex", alignItems: "center", gap: 8 }} role={pending ? "status" : undefined}>
+          {pending ? <Spinner /> : null}<span>{note}</span>
+        </div>
         {logId ? <CoachFeedback logId={logId} initial={feedback ?? null} dark /> : null}
       </div>
     </section>

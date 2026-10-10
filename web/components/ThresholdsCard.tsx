@@ -2,6 +2,7 @@
 
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
+import { Spinner } from "@/components/Loading";
 import Pill from "@/components/Pill";
 import Link from "next/link";
 import { dayLabel, n0, pct } from "@/lib/format";
@@ -137,7 +138,11 @@ export default function ThresholdsCard({ current, inferred }: { current: Setting
 
       {inferred && !inferred.ant ? (
         <div className="inferred">
-          <div style={{ fontWeight: 600 }}>Estimating from your runs</div>
+          <div style={{ fontWeight: 600, display: "flex", alignItems: "center", gap: 8 }}><Spinner /> Estimating from your runs</div>
+          <div className="progress" role="progressbar" aria-label="Runs read" aria-valuemin={0}
+            aria-valuemax={inferred.runs_total} aria-valuenow={inferred.runs_read}>
+            <span style={{ width: `${inferred.runs_total ? Math.round((inferred.runs_read / inferred.runs_total) * 100) : 0}%` }} />
+          </div>
           <div className="muted">
             Reading {inferred.runs_total} runs from the last {inferred.days} days
             ({inferred.runs_read} done). This runs in the background, once; later visits are instant.
@@ -152,7 +157,7 @@ export default function ThresholdsCard({ current, inferred }: { current: Setting
               <div style={{ fontWeight: 600 }}>Estimated from your runs</div>
               <div className="muted">
                 {inferred.runs_with_hr} runs with heart rate in the last {inferred.days} days
-                {inferred.status === "computing" ? ` (still reading ${inferred.runs_total - inferred.runs_read} more)` : ""}
+                {inferred.status === "computing" ? <> <Spinner /> still reading {inferred.runs_total - inferred.runs_read} more</> : ""}
               </div>
             </div>
             <button className="btn light outline" onClick={useInferred}
@@ -227,7 +232,7 @@ export default function ThresholdsCard({ current, inferred }: { current: Setting
             </label>
           </div>
           <div className="actions">
-            <button className="btn" type="submit" disabled={!complete || saving}>{saving ? "Saving and rescoring" : "Save and rescore"}</button>
+            <button className="btn" type="submit" disabled={!complete || saving} aria-busy={saving}>{saving ? "Saving and rescoring" : "Save and rescore"}</button>
             {current ? <button className="btn light outline" type="button" onClick={() => { setForm(toForm(current)); setEditing(false); setMessage(null); }}>Cancel</button> : null}
           </div>
           <div className="muted">Saving rescores every activity, so loads and zone minutes use the new numbers.</div>

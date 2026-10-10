@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import CoachFeedback from "@/components/CoachFeedback";
+import { Dots } from "@/components/Loading";
 import type { ChatMessage } from "@/lib/types";
 
 // Ask the coach. Every number in an answer is checked against your data before it shows.
@@ -63,14 +64,19 @@ export default function Chat({ initial }: { initial: ChatMessage[] }) {
             ) : null}
           </div>
         ))}
-        {busy ? <div className="muted">The coach is reading your numbers.</div> : null}
+        {busy ? (
+          <div role="status" style={{ alignSelf: "flex-start", display: "flex", alignItems: "center", gap: 10, background: "var(--bg)", borderRadius: 12,
+            padding: "10px 12px", fontSize: 13, color: "var(--muted)" }}>
+            <Dots /><span>The coach is reading your numbers.</span>
+          </div>
+        ) : null}
         <div ref={end} />
       </div>
       <form onSubmit={ask} style={{ display: "flex", gap: 8 }}>
         <label className="visually-hidden" htmlFor="chat-q">Question</label>
         <input id="chat-q" value={question} onChange={(e) => setQuestion(e.target.value)} maxLength={1000}
           placeholder="Ask a question" style={{ flex: 1, minWidth: 0, minHeight: 44, border: "1px solid var(--line)", borderRadius: 10, padding: "0 12px", font: "inherit" }} />
-        <button className="btn" disabled={busy || !question.trim()}>Ask</button>
+        <button className="btn" disabled={busy || !question.trim()} aria-busy={busy}>Ask</button>
       </form>
       {error ? <span className="error-text">{error}</span> : null}
     </section>

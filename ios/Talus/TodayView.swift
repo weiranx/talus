@@ -41,6 +41,7 @@ struct CoachCallCard: View {
     let rules: Call
     @EnvironmentObject private var api: API
     @State private var coach: CoachReply?
+    @State private var waiting = true
 
     var body: some View {
         let call = coach?.reply ?? rules
@@ -53,17 +54,25 @@ struct CoachCallCard: View {
             Text(call.session).font(.title.bold()).foregroundStyle(.white)
             Text(call.detail).foregroundStyle(.white.opacity(0.92))
             Text("Why: \(call.why)").font(.subheadline).foregroundStyle(.white.opacity(0.75))
-            Text(note).font(.caption).foregroundStyle(.white.opacity(0.6))
+            HStack(spacing: 8) {
+                if waiting { ProgressView().controlSize(.small).tint(.white.opacity(0.7)) }
+                Text(note).font(.caption).foregroundStyle(.white.opacity(0.6))
+            }
         }
         .padding(18)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(Color(hex: 0x15211D, dark: 0x22302B), in: RoundedRectangle(cornerRadius: 16))
-        .task { coach = try? await api.get("/api/coach/brief", as: CoachReply.self) }
+        .task {
+            coach = try? await api.get("/api/coach/brief", as: CoachReply.self)
+            waiting = false
+        }
     }
 
     /// Same labels as web/lib/coach.ts.
     private var note: String {
-        guard let coach else { return "Rule-based call. The AI coach is writing today's brief." }
+        guard let coach else {
+            return waiting ? "Rule-based call. The AI coach is writing today's brief." : "Rule-based call. The AI coach could not answer this time."
+        }
         if coach.source == "coach" { return "Written by the AI coach from your engine numbers. Every number was checked against the data." }
         switch coach.fallbackReason {
         case "no_key": return "Rule-based call. Add an Anthropic API key to the engine's .env to turn on the AI coach."
@@ -123,7 +132,7 @@ struct CheckInCard: View {
                     }
                 }
                 HStack {
-                    Button(saving ? "Saving" : "Save check-in") { Task { await save() } }
+                    Button { Task { await save() } } label: { BusyLabel(title: saving ? "Saving" : "Save check-in", busy: saving) }
                         .buttonStyle(.borderedProminent)
                         .disabled(values.count < 3 || saving)
                     if let error { Text(error).font(.caption).foregroundStyle(Tone.bad.ink) }

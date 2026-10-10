@@ -82,7 +82,7 @@ export default function ObjectiveForm({ current, startNew }: { current: Objectiv
           <input type="file" accept=".gpx,application/gpx+xml" onChange={upload} style={{ paddingTop: 10 }} /></label>
       </div>
       <div className="actions">
-        <button className="btn" disabled={!ready || busy} onClick={save}>
+        <button className="btn" disabled={!ready || busy} onClick={save} aria-busy={busy}>
           {busy ? "Building the plan" : editing ? "Save and redraft the plan" : "Save and build a plan"}
         </button>
         {message ? <span className={message.ok ? "ok-text" : "error-text"}>{message.text}</span> : null}

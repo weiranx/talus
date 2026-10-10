@@ -113,7 +113,7 @@ export default function SourceCard({ source, lastSync }: { source: Settings["sou
             </label>
           </div>
           <div className="actions">
-            <button className="btn" type="submit" disabled={saving || key.trim().length < 8}>{saving ? "Saving" : "Save key"}</button>
+            <button className="btn" type="submit" disabled={saving || key.trim().length < 8} aria-busy={saving}>{saving ? "Saving" : "Save key"}</button>
             {source.key_set ? <button type="button" className="btn light outline" onClick={() => setEditing(false)}>Cancel</button> : null}
           </div>
         </form>
@@ -130,7 +130,7 @@ export default function SourceCard({ source, lastSync }: { source: Settings["sou
             {RANGES.map((d) => <option key={d} value={d}>{d} days</option>)}
           </select>
         </label>
-        <button className="btn" onClick={sync} disabled={syncing || !source.key_set}>{syncing ? "Syncing" : "Sync now"}</button>
+        <button className="btn" onClick={sync} disabled={syncing || !source.key_set} aria-busy={syncing}>{syncing ? "Syncing" : "Sync now"}</button>
       </div>
       {message ? <div className={message.ok ? "ok-text" : "error-text"} role="status">{message.text}</div> : null}
       <div className="muted">Your key is stored encrypted on the Talus server and never sent back to the browser. Only new activities are downloaded.</div>

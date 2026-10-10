@@ -105,7 +105,9 @@ struct SignInView: View {
                     }
                 }
                 Section {
-                    Button(creating || firstAccount ? "Create account" : "Sign in") { Task { await submit() } }
+                    Button { Task { await submit() } } label: {
+                        BusyLabel(title: creating || firstAccount ? "Create account" : "Sign in", busy: busy)
+                    }
                         .disabled(email.isEmpty || password.isEmpty || busy)
                     if signupOpen && !firstAccount {
                         Button(creating ? "I have an account" : "Create an account") { creating.toggle() }

@@ -37,7 +37,7 @@ export default async function TodayPage() {
 
       <div className="row">
         <div style={{ flex: "2 1 420px", minWidth: 0, display: "flex", flexDirection: "column", gap: 16 }}>
-        <Suspense fallback={<CallCard call={t.call} planned={t.call.planned} note="Rule-based call. The AI coach is writing today's brief." />}>
+        <Suspense fallback={<CallCard call={t.call} planned={t.call.planned} note="Rule-based call. The AI coach is writing today's brief." pending />}>
           <CoachCall rules={t.call} />
         </Suspense>
         {t.planned && !t.call.planned && t.planned.kind !== "rest" ? (

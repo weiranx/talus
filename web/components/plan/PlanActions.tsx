@@ -26,12 +26,12 @@ export default function PlanActions({ draftId, replan, reason }: { draftId?: num
     <div className="actions">
       {draftId ? (
         <>
-          <button className="btn" disabled={!!busy} onClick={() => go(`/api/plan/${draftId}/accept`)}>Accept plan</button>
-          <button className="btn light outline" disabled={!!busy} onClick={() => go(`/api/plan/${draftId}/decline`)}>Decline</button>
+          <button className="btn" disabled={!!busy} aria-busy={busy === `/api/plan/${draftId}/accept`} onClick={() => go(`/api/plan/${draftId}/accept`)}>Accept plan</button>
+          <button className="btn light outline" disabled={!!busy} aria-busy={busy === `/api/plan/${draftId}/decline`} onClick={() => go(`/api/plan/${draftId}/decline`)}>Decline</button>
         </>
       ) : null}
       {replan ? (
-        <button className={draftId ? "btn light outline" : "btn"} disabled={!!busy}
+        <button className={draftId ? "btn light outline" : "btn"} disabled={!!busy} aria-busy={busy === "/api/plan/draft"}
           onClick={() => go("/api/plan/draft", { reason: reason ?? "request" })}>
           {busy === "/api/plan/draft" ? "Building" : "Build a new plan from today"}
         </button>

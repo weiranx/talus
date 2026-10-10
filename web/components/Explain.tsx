@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
+import { Spinner } from "@/components/Loading";
 import type { Explanation } from "@/lib/types";
 
 // Tap a number to see what went into it: the inputs, the formula and the arithmetic, all from
@@ -53,7 +54,7 @@ export default function Explain({ path, children }: { path: string; children: Re
       </button>
       {open ? (
         <span ref={pop} className="explain-pop" style={{ left: shift }} role="dialog" aria-label={data?.title ?? "How this number is worked out"}>
-          {error ? <span>Could not load the explanation.</span> : !data ? <span>Loading…</span> : (
+          {error ? <span>Could not load the explanation.</span> : !data ? <span className="busy-line" role="status"><Spinner /> Loading…</span> : (
             <>
               <strong>{data.title}</strong>
               <span>{data.formula}</span>

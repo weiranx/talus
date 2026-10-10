@@ -57,7 +57,7 @@ export default function ConstraintsForm({ current, hasObjective }: { current: Co
           <input value={notes} onChange={(e) => setNotes(e.target.value)} maxLength={500} /></label>
       </div>
       <div className="actions">
-        <button className="btn" disabled={busy || !days.includes(longDay)} onClick={save}>{busy ? "Saving" : "Save training days"}</button>
+        <button className="btn" disabled={busy || !days.includes(longDay)} onClick={save} aria-busy={busy}>{busy ? "Saving" : "Save training days"}</button>
         {message ? <span className={message.ok ? "ok-text" : "error-text"}>{message.text}</span> : null}
       </div>
     </div>

@@ -23,7 +23,7 @@ export default function ZonesCard({ zones }: { zones: ZoneSettings }) {
   const startFor = (n: N) => zones.options[n].custom ?? zones.options[n].derived;
   const [n, setN] = useState<N>(zones.zones);
   const [draft, setDraft] = useState<string[]>(startFor(zones.zones).map(String));
-  const [saving, setSaving] = useState(false);
+  const [saving, setSaving] = useState<"save" | "reset" | null>(null);
   const [message, setMessage] = useState<{ ok: boolean; text: string } | null>(null);
 
   const floors = draft.map(Number);
@@ -40,14 +40,14 @@ export default function ZonesCard({ zones }: { zones: ZoneSettings }) {
   }
 
   async function save(reset = false) {
-    setSaving(true);
+    setSaving(reset ? "reset" : "save");
     setMessage(null);
     const res = await fetch("/api/settings/zones", {
       method: "PUT",
       headers: { "content-type": "application/json" },
       body: JSON.stringify(reset ? { zones: n, reset: true } : { zones: n, floors }),
     }).catch(() => null);
-    setSaving(false);
+    setSaving(null);
     if (!res) return setMessage({ ok: false, text: "Could not save. Is the engine running?" });
     const body = await res.json().catch(() => ({}));
     if (!res.ok) return setMessage({ ok: false, text: typeof body.detail === "string" ? body.detail : "Check the zone starts." });
@@ -100,9 +100,9 @@ export default function ZonesCard({ zones }: { zones: ZoneSettings }) {
       </div>
 
       <div className="actions">
-        <button className="btn" onClick={() => save()} disabled={!ok || saving || saved}>{saving ? "Saving" : "Save zones"}</button>
+        <button className="btn" onClick={() => save()} disabled={!ok || !!saving || saved} aria-busy={saving === "save"}>{saving === "save" ? "Saving" : "Save zones"}</button>
         {!isDerived ? (
-          <button className="btn light outline" onClick={() => save(true)} disabled={saving}>Reset to thresholds</button>
+          <button className="btn light outline" onClick={() => save(true)} disabled={!!saving} aria-busy={saving === "reset"}>Reset to thresholds</button>
         ) : null}
       </div>
       {message ? <div className={message.ok ? "ok-text" : "error-text"} role="status">{message.text}</div> : null}

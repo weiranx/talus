@@ -7,6 +7,7 @@ import Chat from "@/components/plan/Chat";
 import CoachPlan, { CoachPlanPending } from "@/components/plan/CoachPlan";
 import ConstraintsForm from "@/components/plan/ConstraintsForm";
 import DayCards from "@/components/plan/DayCards";
+import DeletePlan from "@/components/plan/DeletePlan";
 import ObjectiveForm from "@/components/plan/ObjectiveForm";
 import PlanActions from "@/components/plan/PlanActions";
 import Readiness from "@/components/plan/Readiness";
@@ -112,8 +113,11 @@ export default async function PlanPageView({ searchParams }: { searchParams: Pro
           </div>
           <h1 className="title">{obj.name}</h1>
         </div>
-        <div className="mono" style={{ fontSize: 14, paddingBottom: 6 }}>
-          {mi(obj.distance_mi)} mi · {n0(obj.gain_ft)} ft up · {n0(obj.loss_ft)} ft down
+        <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 8, paddingBottom: 6 }}>
+          <div className="mono" style={{ fontSize: 14 }}>
+            {mi(obj.distance_mi)} mi · {n0(obj.gain_ft)} ft up · {n0(obj.loss_ft)} ft down
+          </div>
+          <DeletePlan name={obj.name} />
         </div>
       </header>
 

@@ -489,3 +489,11 @@ def test_intervals_oauth_start_needs_sign_in(monkeypatch):
     sign_in()
     r = TestClient(api.app).get("/api/auth/intervals/start", follow_redirects=False)
     assert r.headers["location"].startswith("/login")
+
+
+def test_intervals_oauth_error_keeps_a_return_path_with_a_query(monkeypatch):
+    client = sign_in()
+    _intervals_oauth(monkeypatch)
+    client.get("/api/auth/intervals/start?next=/welcome%3Fstep%3Dconnect", follow_redirects=False)
+    r = client.get("/api/auth/intervals/callback?error=access_denied", follow_redirects=False)
+    assert r.headers["location"].startswith("/welcome?step=connect&intervals_error=")

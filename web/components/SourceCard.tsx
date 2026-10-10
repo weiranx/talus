@@ -34,7 +34,11 @@ export async function runSync(source: "intervals" | "garmin", days: number): Pro
   return { ok: true, text: (body.saved ? `Pulled ${body.saved} new ${body.saved === 1 ? "activity" : "activities"}.` : "Up to date, nothing new.") + dups };
 }
 
-export default function SourceCard({ source, lastSync }: { source: Settings["source"]; lastSync: LastSync | null }) {
+// `returnTo`: where intervals.icu sends the browser back after approving (Settings by default).
+// `hideSync`: setup imports history on its own step, so it leaves out the sync row.
+export default function SourceCard({ source, lastSync, returnTo, hideSync }: {
+  source: Settings["source"]; lastSync: LastSync | null; returnTo?: string; hideSync?: boolean;
+}) {
   const router = useRouter();
   const [days, setDays] = useState(30);
   const [syncing, setSyncing] = useState(false);
@@ -66,7 +70,7 @@ export default function SourceCard({ source, lastSync }: { source: Settings["sou
     }
     setKey("");
     setEditing(false);
-    setMessage({ ok: true, text: "Saved. Sync to pull your activities." });
+    setMessage({ ok: true, text: hideSync ? "Saved. Next, import your history." : "Saved. Sync to pull your activities." });
     router.refresh();
   }
 
@@ -119,7 +123,7 @@ export default function SourceCard({ source, lastSync }: { source: Settings["sou
         <dd>{lastSync ? syncLine(lastSync) : "Not from here yet"}</dd>
       </dl>
       {source.oauth_available && !oauth && !editing ? (
-        <ConnectIntervals hint={source.key_set ? "Replaces the API key. Talus asks to read activities and wellness only." : undefined} />
+        <ConnectIntervals next={returnTo} hint={source.key_set ? "Replaces the API key. Talus asks to read activities and wellness only." : undefined} />
       ) : null}
       {editing ? (
         <form className="form" onSubmit={saveKey}>
@@ -151,7 +155,7 @@ export default function SourceCard({ source, lastSync }: { source: Settings["sou
           {source.updated_at ? <button className="link-btn" style={{ fontSize: 13 }} onClick={removeKey}>Remove key</button> : null}
         </div>
       )}
-      <div className="actions">
+      {hideSync ? null : <div className="actions">
         <label className="inline-field">
           <span className="muted">Look back</span>
           <select value={days} onChange={(e) => setDays(Number(e.target.value))} disabled={syncing}>
@@ -159,7 +163,7 @@ export default function SourceCard({ source, lastSync }: { source: Settings["sou
           </select>
         </label>
         <button className="btn" onClick={sync} disabled={syncing || !source.key_set} aria-busy={syncing}>{syncing ? "Syncing" : "Sync now"}</button>
-      </div>
+      </div>}
       {message ? <div className={message.ok ? "ok-text" : "error-text"} role="status">{message.text}</div> : null}
       <div className="muted">{oauth ? "The connection is" : "Your key is"} stored encrypted on the Talus server and never sent back to the browser. Only new activities are downloaded.</div>
     </section>

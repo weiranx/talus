@@ -268,3 +268,16 @@ enum LedgerName {
         }
     }
 }
+
+/// GET /api/onboarding: which first-run steps are done. The phone only shows what Today still needs.
+struct Onboarding: Codable {
+    struct Step: Codable, Hashable {
+        let key: String
+        let done: Bool
+        let skipped: Bool
+        let required: Bool
+    }
+    let needed: Bool
+    let steps: [Step]
+    let activities: Int
+}

@@ -65,6 +65,9 @@ def test_same_run_from_two_sources_is_kept_once(tmp_path, monkeypatch):
 
 def test_garmin_source_reads_activities_files_and_nights():
     class Api:
+        class ActivityDownloadFormat:
+            ORIGINAL = "original"
+
         class client:
             @staticmethod
             def dumps():

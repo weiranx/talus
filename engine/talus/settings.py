@@ -55,14 +55,23 @@ def server_ceiling() -> float:
         return 5.0
 
 
+def call_cost(model: str | None, usage: dict | str | None) -> dict | None:
+    """What one logged coach call cost, from its token usage (a retry's tokens included). Cache
+    reads are priced as plain input, so this errs high. None when the call never reached the API."""
+    if isinstance(usage, str):
+        usage = json.loads(usage)
+    if not usage:
+        return None
+    tokens = (sum(usage.get(k) or 0 for k in ("input_tokens", "cache_read_input_tokens",
+                                              "cache_creation_input_tokens")), usage.get("output_tokens") or 0)
+    return {"usd": round(cost_per_call(_priced_as(model), tokens), 6), "model": model,
+            "input_tokens": tokens[0], "output_tokens": tokens[1]}
+
+
 def spent_since(store, since) -> float:
-    """Coach spending since a day, from the usage logged with each call. Cache reads are priced as
-    plain input, so this errs high."""
+    """Coach spending since a day, from the usage logged with each call."""
     total = 0.0
     for r in store.db.execute("SELECT model, usage FROM coach_log WHERE created_at >= ?"
                               " AND usage IS NOT NULL AND usage != 'null'", (since.isoformat(),)):
-        u = json.loads(r["usage"])
-        tokens = (sum(u.get(k) or 0 for k in ("input_tokens", "cache_read_input_tokens",
-                                              "cache_creation_input_tokens")), u.get("output_tokens") or 0)
-        total += cost_per_call(_priced_as(r["model"]), tokens)
+        total += call_cost(r["model"], r["usage"])["usd"]
     return round(total, 4)

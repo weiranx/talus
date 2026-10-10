@@ -171,7 +171,12 @@ export interface CoachReply<T> {
   feedback: number | null;
   fallback_reason: string | null;
   model: string | null;
+  cost?: AiCost | null;
 }
+
+// Only present when the admin's "Show AI cost" flag is on. A reused reply is cached: it cost
+// nothing this time, and carries its first call's cost.
+export interface AiCost { usd: number; model: string | null; input_tokens: number; output_tokens: number; cached: boolean }
 
 // Settings, per account. The engine only says whether a key is set, never its value.
 export interface ZoneSettings extends ZoneModel {
@@ -436,7 +441,7 @@ export interface WeekProgress { start: string; dated: boolean; target: (Vol & { 
 export interface PlanReply { verdict: string; limiter: string; plan: string }
 export interface ReviewReply { week: string; next: string }
 
-export interface ChatMessage { id: number; created_at: string; role: "athlete" | "coach"; text: string; source: string | null; log_id: number | null }
+export interface ChatMessage { id: number; created_at: string; role: "athlete" | "coach"; text: string; source: string | null; log_id: number | null; cost?: AiCost | null }
 
 export type RunKind = "easy" | "long" | "hills" | "tempo" | "intervals" | "hike" | "race" | "other";
 
@@ -492,6 +497,7 @@ export interface AdminOverview {
   accounts: AdminAccount[];
   month: string;
   signup: { open: boolean; chosen: boolean | null; env: boolean };
+  features: { show_ai_cost: boolean };
   system: {
     revision: string | null;
     model_version: string;

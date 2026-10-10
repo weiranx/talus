@@ -46,7 +46,7 @@ export default function ReadinessSettings({ readiness }: { readiness: Settings["
         </span>
       </label>
       <div className="actions">
-        <button className="btn" onClick={save} disabled={!valid || value === readiness.sleep_need_h || saving}>
+        <button className="btn" onClick={save} disabled={!valid || value === readiness.sleep_need_h || saving} aria-busy={saving}>
           {saving ? "Saving" : "Save sleep need"}
         </button>
       </div>

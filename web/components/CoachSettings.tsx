@@ -120,7 +120,7 @@ export default function CoachSettings({ coach }: { coach: Settings["coach"] }) {
       </label>
 
       <div className="actions">
-        <button className="btn" onClick={save} disabled={!dirty || saving}>{saving ? "Saving" : "Save coach settings"}</button>
+        <button className="btn" onClick={save} disabled={!dirty || saving} aria-busy={saving}>{saving ? "Saving" : "Save coach settings"}</button>
       </div>
       {message ? <div className={message.ok ? "ok-text" : "error-text"} role="status">{message.text}</div> : null}
     </section>

@@ -143,3 +143,38 @@ code { font-family: var(--mono); font-size: 13px; background: var(--bg); padding
 .google-btn { display: inline-flex; align-items: center; justify-content: center; gap: 10px; text-decoration: none; color: var(--ink); }
 .or-line { display: flex; align-items: center; gap: 10px; color: var(--muted); font-size: 12px; }
 .or-line::before, .or-line::after { content: ""; flex: 1; height: 1px; background: var(--line); }
+
+/* Loading: skeletons, spinners and busy buttons. Every animation stops under reduced motion; the text labels still say what is happening. */
+@keyframes talus-shimmer { from { background-position: 150% 0; } to { background-position: -50% 0; } }
+@keyframes talus-spin { to { transform: rotate(360deg); } }
+@keyframes talus-pulse { 0%, 100% { opacity: 0.3; } 50% { opacity: 1; } }
+@keyframes talus-fade-in { from { opacity: 0; } to { opacity: 1; } }
+.skel { display: block; flex-shrink: 0; max-width: 100%; border-radius: 6px; background: linear-gradient(90deg, var(--line) 30%, #f1f4f2 50%, var(--line) 70%);
+  background-size: 200% 100%; animation: talus-shimmer 1.6s ease-in-out infinite; }
+.dark .skel { background: linear-gradient(90deg, rgba(255,255,255,0.1) 30%, rgba(255,255,255,0.2) 50%, rgba(255,255,255,0.1) 70%); background-size: 200% 100%; }
+.skel-page { animation: talus-fade-in 0.2s ease-out 0.08s both; }
+.spinner { display: inline-block; width: 1em; height: 1em; flex-shrink: 0; border: 2px solid currentColor; border-right-color: transparent;
+  border-radius: 50%; vertical-align: -0.15em; animation: talus-spin 0.75s linear infinite; }
+.btn { display: inline-flex; align-items: center; justify-content: center; gap: 8px; }
+.btn[aria-busy="true"] { cursor: progress; }
+.btn[aria-busy="true"]:disabled { opacity: 0.8; }
+.btn[aria-busy="true"]::before { content: ""; width: 14px; height: 14px; flex-shrink: 0; border: 2px solid currentColor; border-right-color: transparent;
+  border-radius: 50%; animation: talus-spin 0.75s linear infinite; }
+.busy-line { display: flex; align-items: center; gap: 8px; }
+.dots { display: inline-flex; gap: 4px; align-items: center; }
+.dots span { width: 6px; height: 6px; border-radius: 50%; background: currentColor; animation: talus-pulse 1.2s ease-in-out infinite; }
+.dots span:nth-child(2) { animation-delay: 0.15s; }
+.dots span:nth-child(3) { animation-delay: 0.3s; }
+.link-pending { width: 12px; height: 12px; margin-left: auto; flex-shrink: 0; visibility: hidden; border: 2px solid currentColor;
+  border-right-color: transparent; border-radius: 50%; animation: talus-spin 0.75s linear infinite; }
+.link-pending[data-pending="true"] { visibility: visible; animation: talus-spin 0.75s linear infinite, talus-fade-in 0.15s 0.1s both; }
+.seg-tabs a { gap: 6px; }
+.seg-tabs .link-pending { width: 10px; height: 10px; margin-left: 0; }
+.progress { height: 6px; border-radius: 3px; background: var(--line); overflow: hidden; }
+.progress > span { display: block; height: 100%; background: var(--ink); border-radius: 3px; transition: width 0.4s ease; }
+
+@media (prefers-reduced-motion: reduce) {
+  .skel, .skel-page, .spinner, .btn[aria-busy="true"]::before, .dots span, .link-pending, .link-pending[data-pending="true"] { animation: none; }
+  .dots span { opacity: 0.6; }
+  .progress > span { transition: none; }
+}

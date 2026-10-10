@@ -85,7 +85,7 @@ export default function GarminCard({ garmin }: { garmin: Garmin }) {
             </label>
           </div>
           <div className="actions">
-            <button className="btn" type="submit" disabled={busy || !email || !password}>{busy ? "Signing in" : "Connect Garmin"}</button>
+            <button className="btn" type="submit" disabled={busy || !email || !password} aria-busy={busy}>{busy ? "Signing in" : "Connect Garmin"}</button>
             {garmin.connected ? <button type="button" className="btn light outline" onClick={() => setStep("idle")}>Cancel</button> : null}
           </div>
         </form>
@@ -96,7 +96,7 @@ export default function GarminCard({ garmin }: { garmin: Garmin }) {
             <input inputMode="numeric" autoComplete="one-time-code" required value={code} onChange={(e) => setCode(e.target.value)} />
           </label>
           <div className="actions">
-            <button className="btn" type="submit" disabled={busy || code.trim().length < 4}>{busy ? "Checking" : "Finish"}</button>
+            <button className="btn" type="submit" disabled={busy || code.trim().length < 4} aria-busy={busy}>{busy ? "Checking" : "Finish"}</button>
             <button type="button" className="link-btn" style={{ fontSize: 13 }} onClick={() => setStep("login")}>Start over</button>
           </div>
         </form>
@@ -109,7 +109,7 @@ export default function GarminCard({ garmin }: { garmin: Garmin }) {
                 {RANGES.map((d) => <option key={d} value={d}>{d} days</option>)}
               </select>
             </label>
-            <button className="btn" onClick={sync} disabled={busy}>{busy ? "Syncing" : "Sync now"}</button>
+            <button className="btn" onClick={sync} disabled={busy} aria-busy={busy}>{busy ? "Syncing" : "Sync now"}</button>
           </div>
           <div className="actions">
             <button className="btn light outline" onClick={() => setStep("login")}>Sign in again</button>

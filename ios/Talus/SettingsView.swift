@@ -10,7 +10,9 @@ struct SettingsView: View {
             Form {
                 Section {
                     if health.enabled {
-                        Button(health.running ? "Syncing…" : "Sync now") { Task { await health.sync(api) } }
+                        Button { Task { await health.sync(api) } } label: {
+                            BusyLabel(title: health.running ? "Syncing…" : "Sync now", busy: health.running)
+                        }
                             .disabled(health.running)
                         Toggle("Sync when Talus opens", isOn: $health.enabled)
                     } else {

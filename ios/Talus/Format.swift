@@ -154,6 +154,72 @@ struct Card<Content: View>: View {
     }
 }
 
+/// Placeholder cards shaped like a screen's content while its fetch runs.
+struct SkeletonScreen: View {
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 14) {
+                SkeletonBar(width: 140, height: 14)
+                RoundedRectangle(cornerRadius: 16).fill(Color(hex: 0x15211D, dark: 0x22302B)).frame(height: 190)
+                    .overlay(alignment: .topLeading) {
+                        VStack(alignment: .leading, spacing: 12) {
+                            SkeletonBar(width: 90, height: 10, onDark: true)
+                            SkeletonBar(width: 220, height: 26, onDark: true)
+                            SkeletonBar(height: 12, onDark: true)
+                            SkeletonBar(width: 180, height: 12, onDark: true)
+                        }
+                        .padding(18)
+                    }
+                ForEach(0..<4, id: \.self) { _ in
+                    Card {
+                        SkeletonBar(width: 100, height: 10)
+                        SkeletonBar(height: 18)
+                        SkeletonBar(width: 200, height: 12)
+                    }
+                }
+            }
+            .padding()
+        }
+        .scrollDisabled(true)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("Loading")
+    }
+}
+
+/// One shimmering placeholder bar. Holds still when Reduce Motion is on.
+struct SkeletonBar: View {
+    var width: CGFloat? = nil
+    var height: CGFloat = 12
+    var onDark = false
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var lit = false
+
+    var body: some View {
+        RoundedRectangle(cornerRadius: min(6, height / 2))
+            .fill(onDark ? Color.white.opacity(0.14) : Color.primary.opacity(0.08))
+            .frame(width: width, height: height)
+            .frame(maxWidth: width == nil ? .infinity : nil, alignment: .leading)
+            .opacity(lit ? 0.55 : 1)
+            .onAppear {
+                guard !reduceMotion else { return }
+                withAnimation(.easeInOut(duration: 0.9).repeatForever(autoreverses: true)) { lit = true }
+            }
+    }
+}
+
+/// A button title with a small spinner while its work runs. The spinner sits beside the text, so nothing else moves.
+struct BusyLabel: View {
+    let title: String
+    let busy: Bool
+
+    var body: some View {
+        HStack(spacing: 8) {
+            if busy { ProgressView().controlSize(.small) }
+            Text(title)
+        }
+    }
+}
+
 struct SectionLabel: View {
     let text: String
     init(_ text: String) { self.text = text }
@@ -184,7 +250,7 @@ struct Loader<T, Content: View>: View {
                     Button("Try again") { Task { await reload() } }
                 }
             } else {
-                ProgressView().frame(maxWidth: .infinity, maxHeight: .infinity)
+                SkeletonScreen()
             }
         }
         .task { if value == nil { await reload() } }

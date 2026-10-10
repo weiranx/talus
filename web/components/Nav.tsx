@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+import LinkPending from "@/components/LinkPending";
 
 const LINKS = [
   { href: "/", label: "Today" },
@@ -21,6 +22,7 @@ export default function Nav() {
         return (
           <Link key={l.href} href={l.href} aria-current={active ? "page" : undefined}>
             {l.label}
+            <LinkPending />
           </Link>
         );
       })}

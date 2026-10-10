@@ -67,7 +67,7 @@ export default function CheckIn({ initial }: { initial: Values | null }) {
         </fieldset>
       ))}
       <div style={{ display: "flex", gap: 12, alignItems: "center" }}>
-        <button className="btn" disabled={!complete || saving} onClick={save}>
+        <button className="btn" disabled={!complete || saving} onClick={save} aria-busy={saving}>
           {saving ? "Saving" : "Save check-in"}
         </button>
         {error ? <span style={{ color: "var(--bad-ink)", fontSize: 13 }}>{error}</span> : null}

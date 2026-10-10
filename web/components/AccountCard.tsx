@@ -19,7 +19,7 @@ export default function AccountCard({ account }: { account: Account }) {
   const [confirming, setConfirming] = useState(false);
   const [delPw, setDelPw] = useState("");
   const [delMsg, setDelMsg] = useState<Msg>(null);
-  const [busy, setBusy] = useState(false);
+  const [busy, setBusy] = useState<"google" | "password" | "delete" | null>(null);
   const [googleMsg, setGoogleMsg] = useState<Msg>(null);
   const router = useRouter();
 
@@ -29,9 +29,9 @@ export default function AccountCard({ account }: { account: Account }) {
   }, []);
 
   async function unlinkGoogle() {
-    setBusy(true);
+    setBusy("google");
     const r = await fetch("/api/account/google/unlink", { method: "POST" }).catch(() => null);
-    setBusy(false);
+    setBusy(null);
     const body = await r?.json().catch(() => ({}));
     if (!r?.ok) return setGoogleMsg({ ok: false, text: body?.detail ?? "Could not unlink Google." });
     setGoogleMsg({ ok: true, text: "Google unlinked. Sign in with your email and password." });
@@ -40,9 +40,9 @@ export default function AccountCard({ account }: { account: Account }) {
 
   async function changePassword(e: React.FormEvent) {
     e.preventDefault();
-    setBusy(true);
+    setBusy("password");
     const r = await send("/api/account/password", "PUT", pw);
-    setBusy(false);
+    setBusy(null);
     setPwMsg(r.ok ? { ok: true, text: "Password changed. Other devices are signed out." } : { ok: false, text: r.detail ?? "Could not change it." });
     if (r.ok) {
       setPw({ current: "", new: "" });
@@ -52,9 +52,9 @@ export default function AccountCard({ account }: { account: Account }) {
 
   async function remove(e: React.FormEvent) {
     e.preventDefault();
-    setBusy(true);
+    setBusy("delete");
     const r = await send("/api/account/delete", "POST", { password: delPw });
-    setBusy(false);
+    setBusy(null);
     if (r.ok) return window.location.replace("/login");
     setDelMsg({ ok: false, text: r.detail ?? "Could not delete the account." });
   }
@@ -75,7 +75,7 @@ export default function AccountCard({ account }: { account: Account }) {
             {account.google ? <>Google: <span style={{ overflowWrap: "anywhere" }}>{account.google.email}</span></> : "Google not linked"}
           </span>
           {account.google ? (
-            <button className="btn light outline" onClick={unlinkGoogle} disabled={busy || !account.has_password}
+            <button className="btn light outline" onClick={unlinkGoogle} disabled={!!busy || !account.has_password} aria-busy={busy === "google"}
               title={account.has_password ? undefined : "Set a password first"}>Unlink Google</button>
           ) : (
             <a className="btn light outline google-btn" href="/api/auth/google/start?link=1&next=/settings">Link Google</a>
@@ -99,7 +99,7 @@ export default function AccountCard({ account }: { account: Account }) {
           </label>
         </div>
         <div className="actions">
-          <button className="btn light outline" type="submit" disabled={busy || (account.has_password && !pw.current) || pw.new.length < 10}>{account.has_password ? "Change password" : "Set password"}</button>
+          <button className="btn light outline" type="submit" disabled={!!busy || (account.has_password && !pw.current) || pw.new.length < 10} aria-busy={busy === "password"}>{account.has_password ? "Change password" : "Set password"}</button>
         </div>
         {pwMsg ? <div className={pwMsg.ok ? "ok-text" : "error-text"} role="status">{pwMsg.text}</div> : null}
       </form>
@@ -121,7 +121,7 @@ export default function AccountCard({ account }: { account: Account }) {
             <input type={account.has_password ? "password" : "email"} autoComplete={account.has_password ? "current-password" : "off"} required value={delPw} onChange={(e) => setDelPw(e.target.value)} />
           </label>
           <div className="actions">
-            <button className="btn danger" type="submit" disabled={busy || !delPw}>Delete my account</button>
+            <button className="btn danger" type="submit" disabled={!!busy || !delPw} aria-busy={busy === "delete"}>Delete my account</button>
             <button type="button" className="btn light outline" onClick={() => setConfirming(false)}>Keep it</button>
           </div>
           {delMsg ? <div className="error-text" role="alert">{delMsg.text}</div> : null}

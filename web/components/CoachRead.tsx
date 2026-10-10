@@ -1,4 +1,5 @@
 import CoachFeedback from "@/components/CoachFeedback";
+import { BusyLine, Skel } from "@/components/Loading";
 import { engine } from "@/lib/api";
 import { coachNote } from "@/lib/coach";
 import type { AnalysisReply, CoachReply } from "@/lib/types";
@@ -15,7 +16,15 @@ export function CoachReadPending() {
   return (
     <section className="card">
       <h2 className="label">Coach&apos;s read</h2>
-      <div className="muted">The coach is reading this workout.</div>
+      <dl style={{ margin: 0, display: "grid", gridTemplateColumns: "minmax(140px, 200px) 1fr", gap: "10px 20px" }} className="coach-read" aria-hidden>
+        {QUESTIONS.map(([k, q], i) => (
+          <div key={k} style={{ display: "contents" }}>
+            <dt style={{ fontWeight: 600 }}>{q}</dt>
+            <dd style={{ margin: 0, maxWidth: 680, display: "flex", alignItems: "center", minHeight: 20 }}><Skel w={`${90 - i * 9}%`} h={13} /></dd>
+          </div>
+        ))}
+      </dl>
+      <BusyLine>The coach is reading this workout.</BusyLine>
     </section>
   );
 }

@@ -81,7 +81,7 @@ export default function LoginForm() {
           {mode === "signup" ? <span className="muted">At least 10 characters.</span> : null}
         </label>
         <div className="actions">
-          <button className="btn" type="submit" disabled={busy || !status}>
+          <button className="btn" type="submit" disabled={busy || !status} aria-busy={busy}>
             {busy ? "One moment" : mode === "signup" ? "Create account" : "Sign in"}
           </button>
           {status && status.has_accounts && status.signup_open ? (

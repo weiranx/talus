@@ -25,14 +25,14 @@ export default function LedgerChart({ series, projected = [], color, label, deci
     <div role="img" aria-label={`${label} load: your normal (solid) and last 7 days (dashed)${ahead.length ? ", then where your scheduled runs take them (dotted)" : ""}`} style={{ height: 180 }}>
       <ResponsiveContainer width="100%" height="100%">
         <LineChart data={rows} margin={{ top: 8, right: 8, bottom: 0, left: 0 }}>
-          <CartesianGrid vertical={false} stroke="#e3e8e5" />
-          <XAxis dataKey="day" tickLine={false} axisLine={{ stroke: "#e3e8e5" }} minTickGap={32}
-            tick={{ fontSize: 12, fill: "#52605a" }}
+          <CartesianGrid vertical={false} stroke="var(--line)" />
+          <XAxis dataKey="day" tickLine={false} axisLine={{ stroke: "var(--line)" }} minTickGap={32}
+            tick={{ fontSize: 12, fill: "var(--muted)" }}
             tickFormatter={(d: string) => dayLabel(d, long ? { month: "short" } : { month: "numeric", day: "numeric" })} />
-          <YAxis width={48} tickLine={false} axisLine={false} tick={{ fontSize: 12, fill: "#52605a" }}
+          <YAxis width={48} tickLine={false} axisLine={false} tick={{ fontSize: 12, fill: "var(--muted)" }}
             tickFormatter={(v: number) => (decimals ? String(+v.toFixed(decimals)) : n0(v))} />
           <Tooltip
-            cursor={{ stroke: "#c9d2ce" }}
+            cursor={{ stroke: "var(--line-strong)" }}
             content={({ active, payload }) => {
               if (!active || !payload?.length) return null;
               const d = payload[0].payload as Row;

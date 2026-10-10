@@ -15,7 +15,7 @@ export default function Sparkline({ data, color, label, decimals = 0, unit = "" 
         <LineChart data={data} margin={{ top: 4, right: 2, bottom: 4, left: 2 }}>
           <YAxis hide domain={["dataMin", "dataMax"]} />
           <Tooltip
-            cursor={{ stroke: "#c9d2ce" }}
+            cursor={{ stroke: "var(--line-strong)" }}
             content={({ active, payload }) =>
               active && payload?.length ? (
                 <div className="tip">

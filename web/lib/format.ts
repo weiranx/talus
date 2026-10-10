@@ -48,10 +48,11 @@ export function ledgerBadge(d: { flags: { key: string; text: string }[]; vs_norm
   return { text: "Steady", tone: "good" } as const;
 }
 
-// Light to dark: zone 1 easiest. The 3-zone ramp matches the --z1..--z3 colors.
+// Zone 1 easiest and quietest; the hardest zone has the most contrast with the page. CSS variables, so each theme
+// sets its own ramp in globals.css (--z1..--z3, --z5-1..--z5-5). The route map resolves them with cssColor().
 const ZONE_RAMPS: Record<number, string[]> = {
-  3: ["#a9bdb5", "#52605a", "#15211d"],
-  5: ["#c4d2cb", "#93a9a0", "#68796f", "#3c4842", "#15211d"],
+  3: ["var(--z1)", "var(--z2)", "var(--z3)"],
+  5: ["var(--z5-1)", "var(--z5-2)", "var(--z5-3)", "var(--z5-4)", "var(--z5-5)"],
 };
 
 export const zoneColors = (n: number) => ZONE_RAMPS[n] ?? ZONE_RAMPS[3];

@@ -15,12 +15,12 @@ export default function CallCard({ call, note, logId, feedback, planned, pending
         <h2 className="label">Today&apos;s call</h2>
         <Pill tone={CALL_TONE[call.call]}>{CALL_TEXT[call.call]}</Pill>
       </div>
-      {planned ? <div style={{ color: "#b9c6c0", fontSize: 13, marginBottom: -8 }}>From your plan</div> : null}
+      {planned ? <div style={{ color: "var(--feature-muted)", fontSize: 13, marginBottom: -8 }}>From your plan</div> : null}
       <div style={{ fontSize: 28, lineHeight: "33px", fontWeight: 700, letterSpacing: "-0.01em" }}>{call.session}</div>
-      <div style={{ color: "#e4eae7", maxWidth: 620 }}>{call.detail}</div>
-      <div style={{ color: "#b9c6c0", fontSize: 14, maxWidth: 620 }}>Why: {call.why}</div>
+      <div style={{ color: "var(--feature-soft)", maxWidth: 620 }}>{call.detail}</div>
+      <div style={{ color: "var(--feature-muted)", fontSize: 14, maxWidth: 620 }}>Why: {call.why}</div>
       <div style={{ display: "flex", flexWrap: "wrap", justifyContent: "space-between", alignItems: "center", gap: 10 }}>
-        <div style={{ color: "#b9c6c0", fontSize: 12, maxWidth: 520, display: "flex", alignItems: "center", gap: 8 }} role={pending ? "status" : undefined}>
+        <div style={{ color: "var(--feature-muted)", fontSize: 12, maxWidth: 520, display: "flex", alignItems: "center", gap: 8 }} role={pending ? "status" : undefined}>
           {pending ? <Spinner /> : null}<span>{note}</span>
         </div>
         {logId ? <CoachFeedback logId={logId} initial={feedback ?? null} dark /> : null}

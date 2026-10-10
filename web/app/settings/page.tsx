@@ -1,4 +1,5 @@
 import AccountCard from "@/components/AccountCard";
+import AppearanceCard from "@/components/AppearanceCard";
 import CoachSettings from "@/components/CoachSettings";
 import EngineDown from "@/components/EngineDown";
 import GarminCard from "@/components/GarminCard";
@@ -45,6 +46,7 @@ export default async function SettingsPage() {
             </dl>
             <div className="muted">Kilometers and meters are not available yet.</div>
           </section>
+          <AppearanceCard />
         </div>
         <div style={{ flex: "1 1 380px", minWidth: 0, display: "flex", flexDirection: "column", gap: 16 }}>
           <CoachSettings coach={s.coach} />

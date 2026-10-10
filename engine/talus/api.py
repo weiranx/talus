@@ -26,7 +26,7 @@ from fastapi import BackgroundTasks, FastAPI, HTTPException, Request, Response
 from fastapi.responses import JSONResponse, RedirectResponse, StreamingResponse
 from pydantic import BaseModel, ConfigDict, Field
 
-from . import admin, cli, coach, explain, google_auth, ledger, readiness_score, wellness, zones
+from . import admin, cli, coach, explain, google_auth, intervals_auth, ledger, readiness_score, wellness, zones
 from . import plan as planner
 from . import schedule
 from . import settings as app_settings
@@ -1008,6 +1008,8 @@ def get_settings() -> dict:
             "key_set": cred is not None,
             "kind": cred and cred["kind"],
             "athlete_id": cred and cred.get("athlete_id"),
+            "athlete_name": cred and cred.get("athlete_name"),
+            "oauth_available": intervals_auth.enabled(),
             "updated_at": cred and cred["updated_at"],
             "garmin_fallback_set": _is_owner() and bool(os.environ.get("GARMIN_EMAIL")),
             "activities": len(acts),
@@ -1157,7 +1159,13 @@ def put_source(body: SourceIn) -> dict:
 
 @app.delete("/api/settings/source")
 def delete_source() -> dict:
-    get_accounts().clear_credential(current_account().id, "intervals")
+    """Forget this account's intervals.icu key or connection. A connection is also ended on
+    intervals.icu's side, so Talus leaves its list of connected apps."""
+    accounts, account = get_accounts(), current_account()
+    cred = accounts.credential(account.id, "intervals")
+    accounts.clear_credential(account.id, "intervals")
+    if cred and cred["kind"] == "oauth":
+        intervals_auth.disconnect(cred["access_token"])
     return {"ok": True}
 
 
@@ -1196,7 +1204,7 @@ def sync_now(body: SyncIn, background: BackgroundTasks) -> dict:
     if body.source == "intervals":
         cred = _intervals_credential()
         if cred is None:
-            raise HTTPException(409, "Add your intervals.icu API key under Data sources first.")
+            raise HTTPException(409, "Connect intervals.icu under Data sources first.")
     else:
         account = current_account()
         if not account.is_owner:
@@ -1591,12 +1599,13 @@ def _safe_next(path: str | None) -> str:
     return path if path and path.startswith("/") and not path.startswith("//") else "/"
 
 
-def _back(path: str, error: str | None = None) -> RedirectResponse:
+def _back(path: str, error: str | None = None, param: str = "google_error",
+          cookie: str = OAUTH_COOKIE) -> RedirectResponse:
     from urllib.parse import urlencode
 
-    target = path if error is None else f"{path}?{urlencode({'google_error': error})}"
+    target = path if error is None else f"{path}?{urlencode({param: error})}"
     response = RedirectResponse(target, status_code=303)
-    response.delete_cookie(OAUTH_COOKIE, path="/")
+    response.delete_cookie(cookie, path="/")
     return response
 
 
@@ -1668,6 +1677,63 @@ def google_callback(request: Request, code: str | None = None, state: str | None
     response = _back(flow["next"])
     _signed_in(response, accounts, account)
     return response
+
+
+# Connect intervals.icu with OAuth. Same sealed-cookie pattern as Google: the callback only
+# completes in the browser, and for the account, that started it.
+
+INTERVALS_COOKIE = "talus_intervals_oauth"
+
+
+def _intervals_back(error: str | None = None, path: str = "/settings") -> RedirectResponse:
+    return _back(path, error, param="intervals_error", cookie=INTERVALS_COOKIE)
+
+
+@app.get("/api/auth/intervals/start")
+def intervals_start(request: Request, next: str | None = None) -> RedirectResponse:
+    """Send the browser to intervals.icu to approve Talus for the signed-in account. It comes back
+    to `next` (a path in Talus, default /settings), with ?intervals_error=... if it failed."""
+    back = _safe_next(next or "/settings")
+    if not intervals_auth.enabled():
+        return _intervals_back("Connecting with intervals.icu isn't set up on this Talus. Use an API key.", back)
+    accounts = get_accounts()
+    account = accounts.session_account(request.cookies.get(COOKIE))
+    if account is None:
+        return _back("/login", "Sign in first.")
+    state = secrets.token_urlsafe(24)
+    sealed = accounts._cipher().encrypt(json.dumps({"state": state, "account": account.id, "next": back}).encode()).decode()
+    response = RedirectResponse(intervals_auth.authorize_url(state), status_code=303)
+    response.set_cookie(INTERVALS_COOKIE, sealed, max_age=OAUTH_TTL_S, httponly=True, samesite="lax", path="/",
+                        secure=os.environ.get("TALUS_SECURE_COOKIE", "") == "1")
+    return response
+
+
+@app.get(intervals_auth.CALLBACK_PATH)
+def intervals_callback(request: Request, code: str | None = None, state: str | None = None,
+                       error: str | None = None) -> RedirectResponse:
+    """intervals.icu sends the browser back here. The token replaces any saved API key."""
+    accounts = get_accounts()
+    try:
+        flow = json.loads(accounts._cipher().decrypt(request.cookies.get(INTERVALS_COOKIE, "").encode(),
+                                                     ttl=OAUTH_TTL_S))
+    except Exception:
+        return _intervals_back("Connecting intervals.icu timed out. Try again.")
+    back = flow.get("next", "/settings")
+    if error or not code:
+        return _intervals_back("Connecting intervals.icu was cancelled.", back)
+    if not state or not secrets.compare_digest(state, flow["state"]):
+        return _intervals_back("The connection didn't match this browser. Try again.", back)
+    current = accounts.session_account(request.cookies.get(COOKIE))
+    if current is None or current.id != flow["account"]:
+        return _back("/login", "Sign in first.")
+    try:
+        values = intervals_auth.exchange_code(code)
+    except intervals_auth.IntervalsAuthError as e:
+        return _intervals_back(str(e), back)
+    except httpx.HTTPError:
+        return _intervals_back("Couldn't reach intervals.icu. Try again.", back)
+    accounts.set_credential(current.id, "intervals", "oauth", values)
+    return _intervals_back(path=back)
 
 
 @app.post("/api/account/google/unlink")

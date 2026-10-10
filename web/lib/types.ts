@@ -255,6 +255,9 @@ export interface Settings {
     key_set: boolean;
     kind: "api_key" | "oauth" | null;
     athlete_id: string | null;
+    athlete_name: string | null;
+    // Whether the server can connect intervals.icu with OAuth (it has a client id).
+    oauth_available: boolean;
     updated_at: string | null;
     garmin_fallback_set: boolean;
     activities: number;

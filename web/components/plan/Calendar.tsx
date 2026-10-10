@@ -7,7 +7,7 @@ import { dayLabel, mi, n0 } from "@/lib/format";
 import { cover, DAY_SHORT, FOCUS_TEXT } from "@/lib/plan";
 import type { RunKind, Schedule, ScheduledRun, WeekProgress } from "@/lib/types";
 
-const WEEKS = 5;
+const WEEKS = 5;  // fetched; `compact` shows the first two until asked for more
 const STATUS_TEXT = { done: "Done", missed: "Missed", today: "Today", planned: "" } as const;
 const KIND_COLOR: Record<RunKind, string> = {
   easy: "var(--cardio)", long: "var(--climb)", hills: "var(--descent)", tempo: "var(--target)", intervals: "var(--target)",
@@ -56,11 +56,12 @@ function WeekLine({ w, past }: { w: WeekProgress | undefined; past: boolean }) {
 
 // The calendar of scheduled runs: your own, and the plan's next 7 days. Add a run on any day,
 // change its date to move it, or delete it. Editing a plan session saves it as your own run.
-export default function Calendar({ initial }: { initial: Schedule }) {
+export default function Calendar({ initial, compact }: { initial: Schedule; compact?: boolean }) {
   const router = useRouter();
   const [data, setData] = useState(initial);
   const [start, setStart] = useState(initial.start);
   const [form, setForm] = useState<Form | null>(null);
+  const [all, setAll] = useState(!compact);
   const [busy, setBusy] = useState<"save" | "delete" | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
@@ -75,7 +76,7 @@ export default function Calendar({ initial }: { initial: Schedule }) {
 
   const byDay = new Map<string, ScheduledRun[]>();
   for (const it of data.items) byDay.set(it.day, [...(byDay.get(it.day) ?? []), it]);
-  const days = Array.from({ length: WEEKS * 7 }, (_, i) => addDays(start, i));
+  const days = Array.from({ length: (all ? WEEKS : 2) * 7 }, (_, i) => addDays(start, i));
   const warned = new Map(data.warnings.map((w) => [w.week, w]));
   const weeks = new Map((data.weeks ?? []).map((w) => [w.start, w]));
 
@@ -117,12 +118,20 @@ export default function Calendar({ initial }: { initial: Schedule }) {
     <section className="card">
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
         <h2 className="label" style={{ display: "flex", alignItems: "center", gap: 8 }}>
-          Scheduled runs{loading ? <Spinner label="Loading these weeks" /> : null}
+          {all ? "Scheduled runs" : "This week and next"}{loading ? <Spinner label="Loading these weeks" /> : null}
         </h2>
         <div className="actions" style={{ gap: 6 }}>
-          <button className="btn light outline" style={{ minHeight: 36, padding: "0 12px" }} onClick={() => setStart(addDays(start, -7 * WEEKS))}>Earlier</button>
-          <button className="btn light outline" style={{ minHeight: 36, padding: "0 12px" }} onClick={() => setStart(initial.start)}>This week</button>
-          <button className="btn light outline" style={{ minHeight: 36, padding: "0 12px" }} onClick={() => setStart(addDays(start, 7 * WEEKS))}>Later</button>
+          {all ? (
+            <>
+              <button className="btn light outline" style={{ minHeight: 36, padding: "0 12px" }} onClick={() => setStart(addDays(start, -7 * WEEKS))}>Earlier</button>
+              <button className="btn light outline" style={{ minHeight: 36, padding: "0 12px" }} onClick={() => setStart(initial.start)}>This week</button>
+              <button className="btn light outline" style={{ minHeight: 36, padding: "0 12px" }} onClick={() => setStart(addDays(start, 7 * WEEKS))}>Later</button>
+            </>
+          ) : null}
+          {compact ? (
+            <button className="btn light outline" style={{ minHeight: 36, padding: "0 12px" }}
+              onClick={() => { setAll(!all); if (all) setStart(initial.start); }}>{all ? "Show 2 weeks" : "Show 5 weeks"}</button>
+          ) : null}
         </div>
       </div>
       <div className="table-wrap" aria-busy={loading}>

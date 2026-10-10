@@ -1,5 +1,5 @@
 import { n0 } from "@/lib/format";
-import type { Dim, DimStatus, Focus, SessionKind } from "@/lib/types";
+import type { Dim, DimStatus, Focus, SessionKind, WeekProgress } from "@/lib/types";
 
 export const DAY_NAMES = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"];
 export const DAY_SHORT = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
@@ -33,4 +33,26 @@ export function hours(h: number): string {
 export function minutesText(m: number): string {
   const r = Math.round(m / 5) * 5;
   return r >= 60 ? `${Math.floor(r / 60)} h ${r % 60 ? `${r % 60} min` : ""}`.trim() : `${r} min`;
+}
+
+export const VOL_DIMS = [
+  { key: "miles", label: "Miles", unit: "mi" },
+  { key: "gain_ft", label: "Gain", unit: "ft" },
+  { key: "loss_ft", label: "Descent", unit: "ft" },
+] as const;
+
+export type CoverState = "covered" | "close" | "short" | "over";
+
+// Done plus scheduled against the week's target, per dimension, and one word for the week:
+// over when any dimension passes 115%, covered when every one reaches 90%, short when any
+// falls under 70%.
+export function cover(w: WeekProgress): { share: Record<"miles" | "gain_ft" | "loss_ft", number>; state: CoverState } | null {
+  if (!w.target) return null;
+  const share = Object.fromEntries(VOL_DIMS.map(({ key }) => {
+    const have = (w.done?.[key] ?? 0) + w.ahead[key];
+    return [key, w.target![key] > 0 ? have / w.target![key] : 1];
+  })) as Record<"miles" | "gain_ft" | "loss_ft", number>;
+  const vals = Object.values(share);
+  const state = vals.some((v) => v > 1.15) ? "over" : vals.every((v) => v >= 0.9) ? "covered" : vals.some((v) => v < 0.7) ? "short" : "close";
+  return { share, state };
 }

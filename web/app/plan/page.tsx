@@ -11,6 +11,7 @@ import ObjectiveForm from "@/components/plan/ObjectiveForm";
 import PlanActions from "@/components/plan/PlanActions";
 import Readiness from "@/components/plan/Readiness";
 import Review from "@/components/plan/Review";
+import ThisWeek from "@/components/plan/ThisWeek";
 import WeeksTable from "@/components/plan/WeeksTable";
 import { engine, EngineError } from "@/lib/api";
 import { dayLabel, mi, n0 } from "@/lib/format";
@@ -122,11 +123,12 @@ export default async function PlanPageView({ searchParams }: { searchParams: Pro
 
       <div className="row">
         <div style={{ flex: "2 1 520px", minWidth: 0, display: "flex", flexDirection: "column", gap: 16 }}>
+          {p.accepted && p.this_week ? <ThisWeek w={p.this_week} /> : null}
           {p.accepted ? (
             <section className="card">
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 8, flexWrap: "wrap" }}>
                 <h2 className="label">Next 7 days</h2>
-                <span className="muted">Cut from this week&apos;s targets, less what you&apos;ve done</span>
+                <span className="muted">Cut from each week&apos;s target, less what you&apos;ve done and your own runs</span>
               </div>
               <DayCards sessions={p.sessions} today={p.date} />
             </section>
@@ -138,7 +140,7 @@ export default async function PlanPageView({ searchParams }: { searchParams: Pro
                 <h2 className="label">Weekly targets</h2>
                 <Link href="/plan/weeks">Full plan</Link>
               </div>
-              <WeeksTable weeks={p.accepted.weeks} current={weekStart(p.date)} limit={6} />
+              <WeeksTable weeks={p.accepted.weeks} current={weekStart(p.date)} limit={6} actuals={p.actuals} />
               <PlanActions replan />
             </section>
           ) : null}

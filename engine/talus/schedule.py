@@ -42,6 +42,27 @@ class PlannedRun:
         return asdict(self) | {"day": self.day.isoformat()}
 
 
+def plan_days(today: date) -> int:
+    """The plan dates sessions through the end of the week a week from today, so every week on
+    the calendar that has any is whole."""
+    last = today + timedelta(days=6)
+    return (last + timedelta(days=6 - last.weekday()) - today).days + 1
+
+
+def own_by_day(runs: list[PlannedRun]) -> dict[str, dict]:
+    """The athlete's runs by ISO day, for the plan to work around. Two runs on a day add up and
+    the bigger one names the day."""
+    out: dict[str, dict] = {}
+    for r in sorted(runs, key=lambda r: effort_miles(r.miles, r.gain_ft)):
+        d = out.setdefault(r.day.isoformat(), {"kind": r.kind, "miles": 0.0, "gain_ft": 0.0, "loss_ft": 0.0,
+                                               "minutes": 0.0})
+        d["kind"] = r.kind
+        for k in ("miles", "gain_ft", "loss_ft"):
+            d[k] += getattr(r, k)
+        d["minutes"] = None if d["minutes"] is None or r.minutes is None else d["minutes"] + r.minutes
+    return out
+
+
 def _hike(a: dict) -> bool:
     return any(k in (a["sport"] or "").lower() for k in ("hike", "walk", "trek"))
 
@@ -72,10 +93,12 @@ def _text(r: dict, aet: float | None, zone_text: dict[int, str]) -> str:
 
 
 def calendar(runs: list[PlannedRun], plan: dict | None, acts: list[dict], start: date, days: int, today: date,
-             pace_min: float, aet: float | None, zone_text: dict[int, str]) -> list[dict]:
+             pace_min: float, aet: float | None, zone_text: dict[int, str],
+             own: dict[str, dict] | None = None) -> list[dict]:
     """Every scheduled run from `start` for `days` days, oldest first, with its status:
     done (matched an activity), missed (a past day with none), today or planned. A plan
-    session on a day the athlete scheduled their own run is left out."""
+    session on a day the athlete scheduled their own run is left out; `own` (all their runs the
+    plan's weeks touch) is what the plan's sessions work around."""
     end = start + timedelta(days=days - 1)
     items = []
     for r in runs:
@@ -85,7 +108,7 @@ def calendar(runs: list[PlannedRun], plan: dict | None, acts: list[dict], start:
                                      "estimated_minutes": r.minutes is None})
     mine = {it["day"] for it in items}
     if plan is not None:
-        for s in _plan_sessions(plan, acts, today):
+        for s in planner.upcoming_sessions(plan, acts, today, plan_days(today), own=own):
             d = date.fromisoformat(s["day"])
             if start <= d <= end and s["day"] not in mine and s["kind"] in PLAN_KIND:
                 text = planner.session_text(s, aet or 150, plan["objective"]["name"])
@@ -103,10 +126,6 @@ def calendar(runs: list[PlannedRun], plan: dict | None, acts: list[dict], start:
         it["status"] = ("done" if it["activity"] else "today" if d == today else "missed" if d < today
                         else "planned")
     return items
-
-
-def _plan_sessions(plan: dict, acts: list[dict], today: date) -> list[dict]:
-    return planner.upcoming_sessions(plan, acts, today)
 
 
 def project(items: list[dict], history: list[ledger.LedgerDay], rates: dict, today: date,
@@ -152,3 +171,29 @@ def project(items: list[dict], history: list[ledger.LedgerDay], rates: dict, tod
                                      f"{planner._join(names)} load {'into overreach' if over else 'too fast'}."})
         day = week_end + timedelta(days=1)
     return {"series": series, "warnings": warnings, "until": last.isoformat()}
+
+
+def weeks(items: list[dict], acts: list[dict], plan: dict | None, start: date, days: int, today: date) -> list[dict]:
+    """Each calendar week from `start`: the plan's target, what's done and what's still scheduled
+    ahead, in mi, ft up and ft down. Done includes every run on foot, scheduled or not."""
+    dims = ("miles", "gain_ft", "loss_ft")
+    monday = start - timedelta(days=start.weekday())
+    end = start + timedelta(days=days - 1)
+    out = []
+    while monday <= end:
+        sunday = monday + timedelta(days=6)
+        w = planner.plan_for_day(plan, monday) if plan else None
+        actual = planner.week_actual(acts, monday) if monday <= today else None
+        ahead = [it for it in items if monday.isoformat() <= it["day"] <= sunday.isoformat()
+                 and it["status"] in ("planned", "today") and not it["activity"]]
+        out.append({
+            "start": monday.isoformat(),
+            # The plan's sessions reach this week, so done plus scheduled can be read against it.
+            "dated": plan is None or sunday < today + timedelta(days=plan_days(today)),
+            "target": None if w is None else {k: w[k] for k in (*dims, "focus")},
+            "done": None if actual is None else {k: actual[k] for k in (*dims, "below_aet_pct")},
+            "ahead": {k: sum(it[k] for it in ahead) for k in dims},
+        })
+        monday += timedelta(weeks=1)
+    return out
+

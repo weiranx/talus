@@ -468,11 +468,18 @@ def _readiness_json(r: dict) -> dict:
     return {k: r[k] for k in ("dims", "limiter", "verdict")}
 
 
+def _own(store: Store, day: date) -> dict[str, dict]:
+    """The athlete's own runs in the weeks the plan's dated sessions touch."""
+    return schedule.own_by_day(store.planned_runs(day - timedelta(days=day.weekday()),
+                                                  day + timedelta(days=schedule.plan_days(day))))
+
+
 def _sessions(store: Store, accepted: dict | None, acts: list[dict], day: date, aet: float, days: int = 7) -> list[dict]:
     if accepted is None:
         return []
     name = accepted["objective"]["name"]
-    return [s | planner.session_text(s, aet, name) for s in planner.upcoming_sessions(accepted, acts, day, days)]
+    return [s | planner.session_text(s, aet, name)
+            for s in planner.upcoming_sessions(accepted, acts, day, days, own=_own(store, day))]
 
 
 def _zone_text(zm: dict | None) -> dict[int, str]:
@@ -485,7 +492,7 @@ def _calendar(store: Store, start: date, days: int, acts: list[dict] | None = No
     th = store.thresholds()
     return schedule.calendar(store.planned_runs(start, start + timedelta(days=days - 1)), store.plan("accepted"),
                              acts, start, days, day, planner.pace(acts, day)["min_per_effort_mi"],
-                             th.aet if th else None, _zone_text(_zone_model(store)))
+                             th.aet if th else None, _zone_text(_zone_model(store)), own=_own(store, day))
 
 
 def _planned_today(store: Store, day: date, aet: float) -> dict | None:
@@ -581,7 +588,18 @@ def get_plan() -> dict:
         "accepted": _plan_json(accepted), "draft": _plan_json(draft),
         "sessions": _with_own_runs(store, _sessions(store, accepted, acts, day, th.aet if th else 150), acts),
         "review": _last_week_review(store, accepted, acts, day) if accepted else None,
+        "this_week": _this_week(store, accepted, acts, day),
+        "actuals": {} if accepted is None else {
+            w["start"]: {k: a[k] for k in ("miles", "gain_ft", "loss_ft", "below_aet_pct")}
+            for w in accepted["weeks"] if w["start"] <= day.isoformat()
+            for a in [planner.week_actual(acts, date.fromisoformat(w["start"]))]},
     }
+
+
+def _this_week(store: Store, accepted: dict | None, acts: list[dict], day: date) -> dict:
+    """This week's target, done and still scheduled, as the calendar counts them."""
+    start = day - timedelta(days=day.weekday())
+    return schedule.weeks(_calendar(store, start, 7, acts), acts, accepted, start, 7, day)[0]
 
 
 class ObjectiveIn(BaseModel):
@@ -728,8 +746,10 @@ def get_schedule(start: date | None = None, days: int = 35) -> dict:
     day = date.today()
     start = start or day - timedelta(days=day.weekday())
     days = max(1, min(days, 120))
-    return {"date": day.isoformat(), "start": start.isoformat(), "days": days,
-            "items": _calendar(store, start, days),
+    acts = _activities(store, min(start, day) - timedelta(days=planner.CAPACITY_DAYS))
+    items = _calendar(store, start, days, acts)
+    return {"date": day.isoformat(), "start": start.isoformat(), "days": days, "items": items,
+            "weeks": schedule.weeks(items, acts, store.plan("accepted"), start, days, day),
             "warnings": _projection(store, day)["warnings"],
             "kinds": [{"key": k, "label": v} for k, v in schedule.KINDS.items()],
             "zone_model": _zone_model_json(_zone_model(store))}

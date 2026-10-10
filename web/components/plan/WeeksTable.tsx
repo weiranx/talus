@@ -1,12 +1,22 @@
 import Link from "next/link";
 import { dayLabel, mi, n0 } from "@/lib/format";
 import { FOCUS_TEXT, hours } from "@/lib/plan";
-import type { PlanWeek } from "@/lib/types";
+import type { PlanWeek, WeekActual } from "@/lib/types";
 
 // Week targets to the objective: miles and feet side by side, the long day, and why a week was held back.
-export default function WeeksTable({ weeks, current, limit, full }: {
-  weeks: PlanWeek[]; current: string; limit?: number; full?: boolean;
+// Done: what you actually ran in weeks that have started, colored against the target the way
+// the weekly review reads it (under 70% on two of miles, gain and descent is a missed week).
+function doneTone(w: PlanWeek, a: WeekActual, current: boolean): string | undefined {
+  const shares = (["miles", "gain_ft", "loss_ft"] as const).map((k) => (w[k] > 0 ? a[k] / w[k] : 1));
+  if (shares.filter((v) => v >= 0.9).length >= 2) return "var(--good-ink)";
+  if (!current && shares.filter((v) => v < 0.7).length >= 2) return "var(--bad-ink)";
+  return undefined;
+}
+
+export default function WeeksTable({ weeks, current, limit, full, actuals }: {
+  weeks: PlanWeek[]; current: string; limit?: number; full?: boolean; actuals?: Record<string, WeekActual>;
 }) {
+  const showDone = !!actuals && weeks.some((w) => actuals[w.start]);
   const from = Math.max(0, weeks.findIndex((w) => w.start === current));
   const shown = limit ? weeks.slice(from, from + limit) : weeks;
   return (
@@ -21,6 +31,7 @@ export default function WeeksTable({ weeks, current, limit, full }: {
             <th scope="col" className="num">Descent, ft</th>
             <th scope="col" className="num">Time</th>
             <th scope="col" className="num">Long day</th>
+            {showDone ? <th scope="col" className="num" style={{ paddingLeft: 16 }}>Done</th> : null}
             {full ? <th scope="col">Notes</th> : null}
           </tr>
         </thead>
@@ -34,6 +45,11 @@ export default function WeeksTable({ weeks, current, limit, full }: {
               <td className="num">{n0(w.loss_ft)}</td>
               <td className="num">{hours(w.hours)}</td>
               <td className="num">{w.long ? `${mi(w.long.miles)} mi, ${n0(w.long.gain_ft)} ft` : "–"}</td>
+              {showDone ? (
+                <td className="num" style={{ paddingLeft: 16, color: actuals?.[w.start] ? doneTone(w, actuals[w.start], w.start === current) : undefined }}>
+                  {actuals?.[w.start] ? `${mi(actuals[w.start].miles)} mi, ${n0(actuals[w.start].gain_ft)} ft${w.start === current ? " so far" : ""}` : ""}
+                </td>
+              ) : null}
               {full ? <td style={{ whiteSpace: "normal", minWidth: 220, fontSize: 13 }} className="muted">{w.notes.join(". ")}</td> : null}
             </tr>
           ))}

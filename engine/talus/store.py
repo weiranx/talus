@@ -431,6 +431,12 @@ class Store:
         r = self.db.execute("SELECT * FROM daily_health WHERE day = ?", (day.isoformat(),)).fetchone()
         return None if r is None else {"soreness": r["soreness"], "energy": r["energy"], "pain": r["pain"]}
 
+    def checkins(self, since: date, until: date) -> dict[date, dict]:
+        rows = self.db.execute("SELECT * FROM daily_health WHERE day BETWEEN ? AND ?",
+                               (since.isoformat(), until.isoformat())).fetchall()
+        return {date.fromisoformat(r["day"]): {"soreness": r["soreness"], "energy": r["energy"], "pain": r["pain"]}
+                for r in rows}
+
     # Wellness: overnight HRV, resting HR and sleep from the watch platform, one row per morning
     @_writes
     def save_wellness(self, days: list[WellnessDay], fill_only: bool = False) -> None:

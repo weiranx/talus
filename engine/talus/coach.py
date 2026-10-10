@@ -18,7 +18,7 @@ from dataclasses import dataclass, field
 from datetime import date
 from typing import Any, Protocol
 
-PROMPT_VERSION = "coach-v0.4"
+PROMPT_VERSION = "coach-v0.5"
 # The daily brief is short and mostly explains the engine's call, so it runs on Haiku; the
 # workout analysis has more to read and judge, so it stays on Opus. Both can be changed in
 # Settings, and TALUS_COACH_MODEL overrides both defaults.
@@ -57,6 +57,7 @@ Talus tracks four separate loads, because mountain training stresses systems tha
 - descent: feet lost, weighted by grade band; steep, fast descending costs the most. Descent load is what makes quads sore for days.
 For each load, "normal" is the 42-day average per day (miles for distance) and "last 7 days" is the 7-day average per day. "vs_normal_pct" is how far last 7 days sits above or below normal. Readiness says whether the engine (cardio) and the legs (worse of climb and descent) are fresh, loaded or overreached, and why. The morning check-in (soreness, energy and pain, each 1 to 5) can only make readiness worse.
 Overnight signals from the watch can only make the engine worse, never the legs: HRV is the 7-day average against a 60-day baseline, resting heart rate is last night against a 60-day baseline, and sleep is last night and the 7-day average against the athlete's stated need. A signal with status "no_data" or "building" is missing or has too little history: say so if it matters, and never guess its value.
+The readiness score (0 to 100) is the engine's: it starts at 100 and each input that reads worse than normal costs points ("points_lost"); inputs in "not_used" had no data and cost nothing. rule_call sets the top of its band (go 100, modify 66, rest 33, shown as the "Today's call" line) and the inputs place it within the band (go 67 to 100, modify 34 to 66, rest 0 to 33). Never compute or change the score; you may quote it and name what cost the most.
 
 Your reader is the athlete. They use miles and feet, never km or meters, and they always weigh distance and vert together.
 
@@ -207,6 +208,15 @@ def _overnight(w: dict | None) -> dict | None:
     }
 
 
+def _score(s: dict | None) -> dict | None:
+    if not s:
+        return None
+    return {"score": s["score"], "label": s["label"], "held": s["held"],
+            "points_lost": [{"input": i["name"], "points": -i["points"], "why": i["text"]}
+                            for i in s["items"] if i["points"] < 0],
+            "not_used": s["missing"]}
+
+
 def brief_packet(today: dict, last_14_days: list[dict]) -> dict:
     """Compact context for the daily brief, built from the /api/today payload."""
     ready = today["readiness"]
@@ -218,6 +228,7 @@ def brief_packet(today: dict, last_14_days: list[dict]) -> dict:
         "overnight": _overnight(today.get("wellness")),
         "readiness": {"engine": {k: ready["engine"][k] for k in ("state", "reason")},
                       "legs": {k: ready["legs"][k] for k in ("state", "reason", "limiter")}},
+        "readiness_score": _score(today.get("score")),
         "rule_call": {k: today["call"][k] for k in ("call", "session", "detail", "why")},
         "ledgers": {name: _ledger(d, name) for name, d in today["ledgers"].items()},
         "week_so_far": {"start": week["start"], "activities": len(week["activities"]),
@@ -380,6 +391,7 @@ def chat_packet(question: str, history: list[dict], today: dict | None, plan: di
         "readiness_today": None if not today else {k: {"state": today["readiness"][k]["state"],
                                                        "reason": today["readiness"][k]["reason"]}
                                                    for k in ("engine", "legs")},
+        "readiness_score_today": None if not today else _score(today.get("score")),
         "todays_call": None if not today else {k: today["call"][k] for k in ("call", "session", "detail")},
         "ledgers": None if not today else {name: _ledger(d) for name, d in today["ledgers"].items()},
         "objective": None if not plan else _objective(plan, day),

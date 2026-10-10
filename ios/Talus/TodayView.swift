@@ -97,11 +97,14 @@ struct SetupView: View {
                     if let status = health.status { Text(status).font(.footnote).foregroundStyle(.secondary) }
                 }
                 Card {
-                    SectionLabel("In the web app")
-                    Text("Connect intervals.icu, set heart rate thresholds from your runs, and choose whether to use the AI coach.")
+                    SectionLabel("More ways to set up")
+                    Text("Connect intervals.icu or Garmin, set heart rate thresholds from your runs, and choose whether to use the AI coach.")
                         .font(.subheadline).foregroundStyle(.secondary)
+                    NavigationLink { SourcesPage() } label: { Label("Data sources", systemImage: "arrow.triangle.2.circlepath") }
+                    NavigationLink { HeartRatePage() } label: { Label("Heart rate thresholds", systemImage: "heart") }
+                    NavigationLink { CoachPage() } label: { Label("AI coach", systemImage: "text.bubble") }
                     if let url = URL(string: api.server.trimmingCharacters(in: CharacterSet(charactersIn: "/ ")) + "/welcome") {
-                        Link("Open setup", destination: url)
+                        Link("Or use the guided setup on the web", destination: url).font(.subheadline)
                     }
                 }
             }
@@ -126,6 +129,9 @@ struct CoachCallCard: View {
                 Spacer()
                 Pill(text: Fmt.capitalized(call.call), tone: Tone.call(call.call))
             }
+            if rules.planned == true {
+                Text("From your plan").font(.caption).foregroundStyle(.white.opacity(0.6))
+            }
             Text(call.session).font(.title.bold()).foregroundStyle(.white)
             Text(call.detail).foregroundStyle(.white.opacity(0.92))
             Text("Why: \(call.why)").font(.subheadline).foregroundStyle(.white.opacity(0.75))
@@ -135,6 +141,9 @@ struct CoachCallCard: View {
             }
             if let cost = coach?.cost {
                 Text(cost.text).font(.caption2.monospaced()).foregroundStyle(.white.opacity(0.5))
+            }
+            if let id = coach?.logId {
+                CoachFeedback(logId: id, initial: coach?.feedback, dark: true)
             }
         }
         .padding(18)

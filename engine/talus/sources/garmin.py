@@ -122,9 +122,8 @@ class GarminSource:
         ) for a in rows]
 
     def fetch(self, activity: RemoteActivity) -> RawFile | None:
-        from garminconnect import Garmin
-
-        data = unwrap(self.api.download_activity(activity.source_id, dl_fmt=Garmin.ActivityDownloadFormat.ORIGINAL))
+        fmt = self.api.ActivityDownloadFormat.ORIGINAL
+        data = unwrap(self.api.download_activity(activity.source_id, dl_fmt=fmt))
         try:
             return RawFile(data, sniff_format(data))
         except ValueError:

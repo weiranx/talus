@@ -4,7 +4,10 @@ import { useRouter } from "next/navigation";
 import { useState } from "react";
 
 // Accept or decline a drafted plan, or ask the engine for a fresh one from today.
-export default function PlanActions({ draftId, replan, reason }: { draftId?: number; replan?: boolean; reason?: string }) {
+// `acceptOnly`: setup's review step, where changing a step replaces declining.
+export default function PlanActions({ draftId, replan, reason, acceptOnly }: {
+  draftId?: number; replan?: boolean; reason?: string; acceptOnly?: boolean;
+}) {
   const router = useRouter();
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -26,8 +29,8 @@ export default function PlanActions({ draftId, replan, reason }: { draftId?: num
     <div className="actions">
       {draftId ? (
         <>
-          <button className="btn" disabled={!!busy} aria-busy={busy === `/api/plan/${draftId}/accept`} onClick={() => go(`/api/plan/${draftId}/accept`)}>Accept plan</button>
-          <button className="btn light outline" disabled={!!busy} aria-busy={busy === `/api/plan/${draftId}/decline`} onClick={() => go(`/api/plan/${draftId}/decline`)}>Decline</button>
+          <button className="btn" disabled={!!busy} aria-busy={busy === `/api/plan/${draftId}/accept`} onClick={() => go(`/api/plan/${draftId}/accept`)}>{busy === `/api/plan/${draftId}/accept` ? "Accepting" : "Accept plan"}</button>
+          {acceptOnly ? null : <button className="btn light outline" disabled={!!busy} aria-busy={busy === `/api/plan/${draftId}/decline`} onClick={() => go(`/api/plan/${draftId}/decline`)}>Keep my current plan</button>}
         </>
       ) : null}
       {replan ? (

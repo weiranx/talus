@@ -12,7 +12,10 @@ const str = (v: number | null | undefined, nd = 0) => (v == null ? "" : nd ? v.t
 
 // Add or edit the objective: a race or mountain day with a date. A GPX route fills the numbers in;
 // the track itself is not kept.
-export default function ObjectiveForm({ current, startNew }: { current: Objective | null; startNew?: boolean }) {
+// `next`: where to go after saving (the setup's next step); `submit`: the button's words.
+export default function ObjectiveForm({ current, startNew, next, submit }: {
+  current: Objective | null; startNew?: boolean; next?: string; submit?: string;
+}) {
   const router = useRouter();
   const editing = current && !startNew;
   const [f, setF] = useState<Fields>({
@@ -56,35 +59,44 @@ export default function ObjectiveForm({ current, startNew }: { current: Objectiv
       const detail = Array.isArray(body?.detail) ? "Check the date and numbers." : body?.detail;
       return setMessage({ ok: false, text: detail ?? "Could not save. Is the engine running?" });
     }
-    setMessage({ ok: true, text: "Saved. The engine drafted a plan for it." });
+    if (next) return router.push(next);
+    setMessage({ ok: true, text: "Saved. A new plan is drafted below for you to review." });
     router.refresh();
   }
 
   const ready = f.name.trim() && f.day && num(f.distance_mi);
   return (
     <div className="form">
+      <label className="field" style={{ maxWidth: 520 }}>
+        <span className="field-label">Have a GPX of the route? Talus fills in the numbers</span>
+        <input type="file" accept=".gpx,application/gpx+xml" onChange={upload} style={{ paddingTop: 10 }} />
+      </label>
       <div className="form-grid">
         <label className="field"><span className="field-label">Name</span>
           <input value={f.name} onChange={set("name")} maxLength={80} placeholder="Fall 50k" /></label>
         <label className="field"><span className="field-label">Date</span>
           <input type="date" value={f.day} onChange={set("day")} /></label>
         <label className="field"><span className="field-label">Distance, mi</span>
-          <input inputMode="decimal" value={f.distance_mi} onChange={set("distance_mi")} /></label>
+          <input inputMode="decimal" value={f.distance_mi} onChange={set("distance_mi")} placeholder="31" /></label>
         <label className="field"><span className="field-label">Gain, ft</span>
-          <input inputMode="numeric" value={f.gain_ft} onChange={set("gain_ft")} /></label>
+          <input inputMode="numeric" value={f.gain_ft} onChange={set("gain_ft")} placeholder="8,000" /></label>
         <label className="field"><span className="field-label">Descent, ft</span>
           <input inputMode="numeric" value={f.loss_ft} onChange={set("loss_ft")} placeholder="Same as gain" /></label>
-        <label className="field"><span className="field-label">Longest continuous descent, ft</span>
-          <input inputMode="numeric" value={f.longest_descent_ft} onChange={set("longest_descent_ft")} placeholder="Optional" /></label>
-        <label className="field"><span className="field-label">High point, ft</span>
-          <input inputMode="numeric" value={f.high_point_ft} onChange={set("high_point_ft")} placeholder="Optional" /></label>
-        <label className="field"><span className="field-label">Or read a GPX route</span>
-          <input type="file" accept=".gpx,application/gpx+xml" onChange={upload} style={{ paddingTop: 10 }} /></label>
       </div>
+      <details>
+        <summary className="muted" style={{ cursor: "pointer", minHeight: 24 }}>More detail (optional): longest descent and high point</summary>
+        <div className="form-grid" style={{ marginTop: 8 }}>
+          <label className="field"><span className="field-label">Longest continuous descent, ft</span>
+            <input inputMode="numeric" value={f.longest_descent_ft} onChange={set("longest_descent_ft")} placeholder="Optional" /></label>
+          <label className="field"><span className="field-label">High point, ft</span>
+            <input inputMode="numeric" value={f.high_point_ft} onChange={set("high_point_ft")} placeholder="Optional" /></label>
+        </div>
+      </details>
       <div className="actions">
         <button className="btn" disabled={!ready || busy} onClick={save} aria-busy={busy}>
-          {busy ? "Building the plan" : editing ? "Save and redraft the plan" : "Save and build a plan"}
+          {busy ? "Saving" : submit ?? (editing ? "Save and redraft the plan" : "Save and build a plan")}
         </button>
+        {!ready ? <span className="muted">Name, date and distance are needed.</span> : null}
         {message ? <span className={message.ok ? "ok-text" : "error-text"}>{message.text}</span> : null}
       </div>
     </div>

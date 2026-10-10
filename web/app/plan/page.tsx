@@ -12,6 +12,7 @@ import ObjectiveForm from "@/components/plan/ObjectiveForm";
 import PlanActions from "@/components/plan/PlanActions";
 import Readiness from "@/components/plan/Readiness";
 import Review from "@/components/plan/Review";
+import Setup, { type Step } from "@/components/plan/Setup";
 import ThisWeek from "@/components/plan/ThisWeek";
 import WeeksTable from "@/components/plan/WeeksTable";
 import { engine, EngineError } from "@/lib/api";
@@ -68,7 +69,7 @@ function Draft({ draft, hasAccepted }: { draft: Plan; hasAccepted: boolean }) {
   );
 }
 
-export default async function PlanPageView({ searchParams }: { searchParams: Promise<{ edit?: string }> }) {
+export default async function PlanPageView({ searchParams }: { searchParams: Promise<{ edit?: string; step?: string }> }) {
   let p: PlanPage;
   let chat: { messages: ChatMessage[] };
   let schedule: Schedule;
@@ -78,27 +79,24 @@ export default async function PlanPageView({ searchParams }: { searchParams: Pro
   } catch (e) {
     return <EngineDown message={e instanceof EngineError ? e.message : "Could not reach the engine."} />;
   }
-  const { edit } = await searchParams;
+  const { edit, step } = await searchParams;
   const obj = p.objective;
   const plan = p.draft ?? p.accepted;
 
-  if (!obj) {
+  if (!obj || !p.accepted) {
+    // Until a plan is accepted: the guided setup, objective, then training days, then review.
+    const at: Step = !obj ? (step === "days" ? "days" : "objective")
+      : step === "objective" || step === "days" ? step : "review";
     return (
       <>
-        <header className="page-head"><h1 className="title">Plan</h1></header>
-        <section className="card">
-          <h2 className="label">Add an objective</h2>
-          <div className="muted" style={{ maxWidth: 640 }}>
-            A race or a mountain day with a date. Talus compares what it demands with what your last 8 weeks have proven,
-            then builds weekly targets for miles, feet up and feet down to get you there, inside the same load limits as Today.
+        <header className="page-head">
+          <div>
+            <div className="eyebrow">Build a plan in three steps</div>
+            <h1 className="title">Plan</h1>
           </div>
-          <ObjectiveForm current={null} />
-        </section>
+        </header>
+        <Setup p={p} step={at} />
         <Calendar initial={schedule} />
-        <section className="card">
-          <h2 className="label">Training days</h2>
-          <ConstraintsForm current={p.constraints} hasObjective={false} />
-        </section>
         <div className="row"><div style={{ flex: "1 1 360px", minWidth: 0 }}><Chat initial={chat.messages} /></div></div>
       </>
     );
@@ -117,9 +115,38 @@ export default async function PlanPageView({ searchParams }: { searchParams: Pro
           <div className="mono" style={{ fontSize: 14 }}>
             {mi(obj.distance_mi)} mi · {n0(obj.gain_ft)} ft up · {n0(obj.loss_ft)} ft down
           </div>
-          <DeletePlan name={obj.name} />
+          <div className="actions" style={{ gap: 6 }}>
+            <Link className="btn light outline" style={{ minHeight: 36, padding: "0 12px" }} href="/plan?edit=objective">Edit objective</Link>
+            <Link className="btn light outline" style={{ minHeight: 36, padding: "0 12px" }} href="/plan?edit=days">Training days</Link>
+            <DeletePlan name={obj.name} />
+          </div>
         </div>
       </header>
+
+      {edit === "objective" || edit === "new" ? (
+        <section className="card">
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 8, flexWrap: "wrap" }}>
+            <h2 className="label">{edit === "new" ? "A different objective" : "Edit the objective"}</h2>
+            <Link href="/plan">Close</Link>
+          </div>
+          <div className="muted">
+            {edit === "new"
+              ? "Saving a new objective retires this one and its plan."
+              : <>Saving drafts a new plan to review against this one. Or <Link href="/plan?edit=new">start a different objective</Link>.</>}
+          </div>
+          <ObjectiveForm key={edit} current={obj} startNew={edit === "new"} next="/plan" />
+        </section>
+      ) : null}
+      {edit === "days" ? (
+        <section className="card">
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 8, flexWrap: "wrap" }}>
+            <h2 className="label">Training days</h2>
+            <Link href="/plan">Close</Link>
+          </div>
+          <div className="muted">Saving drafts a new plan to review against this one.</div>
+          <ConstraintsForm current={p.constraints} hasObjective next="/plan" />
+        </section>
+      ) : null}
 
       {p.draft ? <Draft draft={p.draft} hasAccepted={!!p.accepted} /> : null}
 
@@ -167,20 +194,6 @@ export default async function PlanPageView({ searchParams }: { searchParams: Pro
         </div>
       </div>
 
-      <div className="row">
-        <details className="card" style={{ flex: "1 1 420px" }} open={edit === "objective"}>
-          <summary className="label" style={{ cursor: "pointer", minHeight: 24 }}>Edit the objective</summary>
-          <ObjectiveForm current={obj} />
-          <div className="muted">
-            Or <Link href="/plan?edit=new">start a different objective</Link>. Saving a new one retires this one and its plan.
-          </div>
-          {edit === "new" ? <ObjectiveForm current={obj} startNew /> : null}
-        </details>
-        <details className="card" style={{ flex: "1 1 420px" }} open={edit === "days"}>
-          <summary className="label" style={{ cursor: "pointer", minHeight: 24 }}>Training days</summary>
-          <ConstraintsForm current={p.constraints} hasObjective />
-        </details>
-      </div>
     </>
   );
 }

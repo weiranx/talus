@@ -6,7 +6,10 @@ import { DAY_NAMES, DAY_SHORT } from "@/lib/plan";
 import type { Constraints } from "@/lib/types";
 
 // Training days and time limits: the plan never puts more on a day than its limit.
-export default function ConstraintsForm({ current, hasObjective }: { current: Constraints; hasObjective: boolean }) {
+// `next`: where to go after saving (the setup's next step); `submit`: the button's words.
+export default function ConstraintsForm({ current, hasObjective, next, submit }: {
+  current: Constraints; hasObjective: boolean; next?: string; submit?: string;
+}) {
   const router = useRouter();
   const [days, setDays] = useState<number[]>(current.days);
   const [weekday, setWeekday] = useState(String(current.weekday_min));
@@ -30,7 +33,8 @@ export default function ConstraintsForm({ current, hasObjective }: { current: Co
       const body = await res?.json().catch(() => ({}));
       return setMessage({ ok: false, text: typeof body?.detail === "string" ? body.detail : "Check the days and minutes." });
     }
-    setMessage({ ok: true, text: hasObjective ? "Saved. A new plan is drafted from them." : "Saved." });
+    if (next) return router.push(next);
+    setMessage({ ok: true, text: hasObjective ? "Saved. A new plan is drafted from them for you to review." : "Saved." });
     router.refresh();
   }
 
@@ -57,7 +61,7 @@ export default function ConstraintsForm({ current, hasObjective }: { current: Co
           <input value={notes} onChange={(e) => setNotes(e.target.value)} maxLength={500} /></label>
       </div>
       <div className="actions">
-        <button className="btn" disabled={busy || !days.includes(longDay)} onClick={save} aria-busy={busy}>{busy ? "Saving" : "Save training days"}</button>
+        <button className="btn" disabled={busy || !days.includes(longDay)} onClick={save} aria-busy={busy}>{busy ? (next ? "Drafting your plan" : "Saving") : submit ?? "Save training days"}</button>
         {message ? <span className={message.ok ? "ok-text" : "error-text"}>{message.text}</span> : null}
       </div>
     </div>

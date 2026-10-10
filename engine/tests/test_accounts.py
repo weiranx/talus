@@ -471,6 +471,19 @@ def test_intervals_disconnect_tells_intervals(monkeypatch):
     assert client.get("/api/settings").json()["source"]["key_set"] is False
 
 
+def test_intervals_oauth_returns_to_next(monkeypatch):
+    client = sign_in()
+    _intervals_oauth(monkeypatch)
+    from urllib.parse import parse_qs, urlparse
+    start = client.get("/api/auth/intervals/start?next=/welcome", follow_redirects=False)
+    state = parse_qs(urlparse(start.headers["location"]).query)["state"][0]
+    r = client.get(f"/api/auth/intervals/callback?code=c&state={state}", follow_redirects=False)
+    assert r.headers["location"] == "/welcome"
+    start = client.get("/api/auth/intervals/start?next=//evil.example", follow_redirects=False)
+    r = client.get("/api/auth/intervals/callback?error=access_denied", follow_redirects=False)
+    assert r.headers["location"].startswith("/?intervals_error=")
+
+
 def test_intervals_oauth_start_needs_sign_in(monkeypatch):
     _intervals_oauth(monkeypatch)
     sign_in()

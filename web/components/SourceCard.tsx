@@ -1,7 +1,8 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useEffect, useState } from "react";
+import { useState } from "react";
+import ConnectIntervals from "@/components/ConnectIntervals";
 import Pill from "@/components/Pill";
 import { dayLabel, n0 } from "@/lib/format";
 import type { LastSync, Settings } from "@/lib/types";
@@ -46,11 +47,6 @@ export default function SourceCard({ source, lastSync }: { source: Settings["sou
   const athleteId = source.athlete_id && source.athlete_id !== "0" ? source.athlete_id : null;
   const [athlete, setAthlete] = useState(athleteId ?? "");
   const [saving, setSaving] = useState(false);
-
-  useEffect(() => {
-    const err = new URLSearchParams(window.location.search).get("intervals_error");
-    if (err) setMessage({ ok: false, text: err });
-  }, []);
 
   async function saveKey(e: React.FormEvent) {
     e.preventDefault();
@@ -123,11 +119,7 @@ export default function SourceCard({ source, lastSync }: { source: Settings["sou
         <dd>{lastSync ? syncLine(lastSync) : "Not from here yet"}</dd>
       </dl>
       {source.oauth_available && !oauth && !editing ? (
-        <div className="actions">
-          <a className="btn" href="/api/auth/intervals/start">Connect intervals.icu</a>
-          {source.key_set ? <span className="muted">Replaces the API key. Talus asks to read activities and wellness only.</span>
-            : <span className="muted">Approve Talus on intervals.icu to read your activities and wellness.</span>}
-        </div>
+        <ConnectIntervals hint={source.key_set ? "Replaces the API key. Talus asks to read activities and wellness only." : undefined} />
       ) : null}
       {editing ? (
         <form className="form" onSubmit={saveKey}>

@@ -27,7 +27,7 @@ function Stepper({ step, hasObjective }: { step: Step; hasObjective: boolean }) 
         const inner = (
           <span style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>
             <span style={{ width: 24, height: 24, borderRadius: 12, display: "inline-grid", placeItems: "center", fontSize: 13, fontWeight: 600,
-              background: current ? "var(--ink)" : i < at ? "var(--good-ink)" : "var(--bg)", color: current || i < at ? "#fff" : "var(--muted)" }}>
+              background: current ? "var(--strong)" : i < at ? "var(--good-ink)" : "var(--bg)", color: current || i < at ? "var(--on-strong)" : "var(--muted)" }}>
               {i < at ? "✓" : i + 1}
             </span>
             <span style={{ fontWeight: current ? 600 : 400 }}>{s.label}</span>

@@ -25,7 +25,7 @@ from fastapi import BackgroundTasks, FastAPI, HTTPException, Request, Response
 from fastapi.responses import JSONResponse, RedirectResponse, StreamingResponse
 from pydantic import BaseModel, ConfigDict, Field
 
-from . import cli, coach, explain, google_auth, ledger, wellness, zones
+from . import cli, coach, explain, google_auth, ledger, readiness_score, wellness, zones
 from . import plan as planner
 from . import schedule
 from . import settings as app_settings
@@ -201,8 +201,9 @@ def today() -> dict:
     since = _history(store)["since"]
     now = {d.ledger: d for d in recent if d.day == day}
     checkin = store.checkin(day)
-    overnight = wellness.evaluate(store.wellness(day - timedelta(days=wellness.BASELINE_DAYS - 1), day), day,
-                                  wellness.sleep_need(store.settings())[0])
+    need = wellness.sleep_need(store.settings())[0]
+    nights = store.wellness(day - timedelta(days=wellness.BASELINE_DAYS + TREND_DAYS - 2), day)
+    overnight = wellness.evaluate(nights, day, need)
     ready = readiness(now, checkin, overnight)
     week_start = day - timedelta(days=day.weekday())
     week = sorted(_activities(store, week_start), key=lambda a: a["start_time"])
@@ -220,6 +221,8 @@ def today() -> dict:
         "checkin": checkin,
         "wellness": overnight,
         "readiness": ready,
+        "score": readiness_score.score(now, ready, checkin, overnight, th.aet)
+                 | {"trend": _score_trend(store, day, recent, nights, need, th.aet)},
         "call": call,
         "ledgers": {name: _ledger_json(now[name], since) | {"spark": [
             {"day": d.day.isoformat(), "fitness": d.fitness, "fatigue": d.fatigue}
@@ -232,6 +235,30 @@ def today() -> dict:
         "zone_model": _zone_model_json(zm),
         "thresholds": _thresholds(store),
     }
+
+
+TREND_DAYS = 28
+
+
+def _score_trend(store: Store, day: date, recent: list[ledger.LedgerDay], nights: dict, need: float,
+                 aet: float) -> list[dict]:
+    """The readiness score for each of the last TREND_DAYS days, from what was known that morning.
+    Days before the current run of data have no score."""
+    start = day - timedelta(days=TREND_DAYS - 1)
+    by_day: dict[date, dict[str, ledger.LedgerDay]] = {}
+    for d in recent:
+        if d.day >= start:
+            by_day.setdefault(d.day, {})[d.ledger] = d
+    checkins = store.checkins(start, day)
+    out = []
+    for i in range(TREND_DAYS):
+        d = start + timedelta(days=i)
+        if d not in by_day:
+            continue
+        w = wellness.evaluate(nights, d, need)
+        s = readiness_score.score(by_day[d], readiness(by_day[d], checkins.get(d), w), checkins.get(d), w, aet)
+        out.append({"day": d.isoformat(), "score": s["score"], "label": s["label"], "call": s["call"]})
+    return out
 
 
 class CheckIn(BaseModel):

@@ -25,7 +25,7 @@ from fastapi import BackgroundTasks, FastAPI, HTTPException, Request, Response
 from fastapi.responses import JSONResponse, RedirectResponse, StreamingResponse
 from pydantic import BaseModel, ConfigDict, Field
 
-from . import cli, coach, explain, google_auth, ledger, readiness_score, wellness, zones
+from . import admin, cli, coach, explain, google_auth, ledger, readiness_score, wellness, zones
 from . import plan as planner
 from . import schedule
 from . import settings as app_settings
@@ -406,7 +406,8 @@ def _coach_cap(store: Store) -> dict:
     """This calendar month's coach spending against the account's cap. Coach calls run on the
     server's Anthropic key, so every account other than the owner's is held under the server
     ceiling (TALUS_COACH_CAP_USD); each account can set its own cap lower."""
-    ceiling = None if _is_owner() else app_settings.server_ceiling()
+    account = _account.get()
+    ceiling = None if account is None else admin.coach_ceiling(account)
     chosen = store.settings().get("coach_monthly_cap_usd", ceiling)
     limit = chosen if ceiling is None else (ceiling if chosen is None else min(chosen, ceiling))
     month = date.today().replace(day=1)
@@ -1383,10 +1384,17 @@ def _too_many_failures(email: str, failed: bool = False) -> bool:
         return len(recent) >= MAX_FAILURES
 
 
+DISABLED = "This account is turned off. Ask the owner of this Talus."
+
+
 def _signup_open(accounts: Accounts) -> bool:
-    """Anyone who can reach the app can make an account, unless TALUS_SIGNUP=closed. The first
-    account can always be made, so a fresh or upgraded install can be claimed."""
-    return accounts.count() == 0 or os.environ.get("TALUS_SIGNUP", "open").lower() != "closed"
+    """Anyone who can reach the app can make an account, unless sign-ups are closed: from the admin
+    page once it has set them, else TALUS_SIGNUP=closed. The first account can always be made, so a
+    fresh or upgraded install can be claimed."""
+    if accounts.count() == 0:
+        return True
+    chosen = accounts.config("signup_open")
+    return chosen if chosen is not None else os.environ.get("TALUS_SIGNUP", "open").lower() != "closed"
 
 
 def _signed_in(response: Response, accounts: Accounts, account: Account) -> dict:
@@ -1398,7 +1406,7 @@ def _signed_in(response: Response, accounts: Accounts, account: Account) -> dict
 
 def _account_json(account: Account) -> dict:
     return {"id": account.id, "email": account.email, "is_owner": account.is_owner,
-            "created_at": account.created_at}
+            "is_admin": account.is_admin, "created_at": account.created_at}
 
 
 @app.get("/api/auth/status")
@@ -1431,6 +1439,8 @@ def login(body: Credentials, response: Response) -> dict:
     if account is None:
         _too_many_failures(body.email, failed=True)
         raise HTTPException(401, "That email and password don't match an account.")
+    if account.disabled_at:
+        raise HTTPException(403, DISABLED)
     return _signed_in(response, accounts, account)
 
 
@@ -1601,6 +1611,8 @@ def google_callback(request: Request, code: str | None = None, state: str | None
                 return _back("/login", "New accounts are closed on this Talus. Ask its owner.")
             account = accounts.create(email, None)
         accounts.link_identity(account.id, "google", subject, email)
+    if account.disabled_at:
+        return _back("/login", DISABLED)
     response = _back(flow["next"])
     _signed_in(response, accounts, account)
     return response
@@ -1612,4 +1624,81 @@ def google_unlink() -> dict:
         get_accounts().unlink_identity(current_account().id, "google")
     except AccountError as e:
         raise HTTPException(409, str(e))
+    return {"ok": True}
+
+
+# Admin page: only ADMIN_EMAIL's account. Everyone else gets 404, as if there were no such page.
+# Actions are logged in accounts.db's admin_log. Accounts can't be deleted from here.
+
+def _admin() -> tuple[Accounts, Account]:
+    account = current_account()
+    if not account.is_admin:
+        raise HTTPException(404, "Not Found")
+    return get_accounts(), account
+
+
+def _target(accounts: Accounts, admin_account: Account, account_id: int) -> Account:
+    target = accounts.get(account_id)
+    if target is None:
+        raise HTTPException(404, "No such account.")
+    if target.id == admin_account.id:
+        raise HTTPException(409, "That's your own account. Change it from Settings.")
+    return target
+
+
+@app.get("/api/admin")
+def admin_overview() -> dict:
+    accounts, _ = _admin()
+    month = date.today().replace(day=1)
+    rows = [admin.account_row(accounts, a, month) for a in accounts.all()]
+    emails = {a["id"]: a["email"] for a in rows}
+    log = [e | {"admin": emails.get(e["admin_id"]), "target": emails.get(e["target_id"])}
+           for e in accounts.admin_log(30)]
+    return {"accounts": rows, "month": month.isoformat(),
+            "signup": {"open": _signup_open(accounts), "chosen": accounts.config("signup_open"),
+                       "env": os.environ.get("TALUS_SIGNUP", "open").lower() != "closed"},
+            "system": admin.system(accounts), "log": log}
+
+
+class SignupIn(BaseModel):
+    open: bool
+
+
+@app.put("/api/admin/signup")
+def admin_signup(body: SignupIn) -> dict:
+    accounts, me = _admin()
+    accounts.set_config("signup_open", body.open)
+    accounts.log_admin(me.id, "signup_open" if body.open else "signup_closed")
+    return {"open": _signup_open(accounts)}
+
+
+@app.post("/api/admin/accounts/{account_id}/{action}")
+def admin_account_action(account_id: int, action: str) -> dict:
+    """disable, enable, or sign-out (end every session of the account)."""
+    accounts, me = _admin()
+    if action not in ("disable", "enable", "sign-out"):
+        raise HTTPException(404, "Not Found")
+    target = _target(accounts, me, account_id)
+    detail = None
+    if action == "sign-out":
+        detail = {"sessions": accounts.end_sessions(target.id)}
+    else:
+        accounts.set_disabled(target.id, action == "disable")
+    accounts.log_admin(me.id, action, target.id, detail)
+    return {"ok": True} | (detail or {})
+
+
+class CeilingIn(BaseModel):
+    # None goes back to the server's ceiling (TALUS_COACH_CAP_USD).
+    ceiling_usd: float | None = Field(ge=0, le=1000)
+
+
+@app.put("/api/admin/accounts/{account_id}/coach-ceiling")
+def admin_coach_ceiling(account_id: int, body: CeilingIn) -> dict:
+    accounts, me = _admin()
+    target = _target(accounts, me, account_id)
+    if target.is_owner:
+        raise HTTPException(409, "The owner's coach has no ceiling.")
+    accounts.set_coach_ceiling(target.id, body.ceiling_usd)
+    accounts.log_admin(me.id, "coach_ceiling", target.id, {"from": target.coach_ceiling_usd, "to": body.ceiling_usd})
     return {"ok": True}

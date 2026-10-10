@@ -18,6 +18,7 @@ tar -x -C /opt/talus/src.new
 echo "${REV:-unknown}" > /opt/talus/src.new/REVISION
 ln -sf ../../.env /opt/talus/src.new/deploy/.env
 export TALUS_DATA_PATH=/opt/talus/data
+export TALUS_REVISION="${REV:-unknown}"  # shown on the admin page
 
 echo "== building ${REV:-unknown}"
 for img in talus-engine talus-web; do
@@ -51,6 +52,7 @@ if [ -d /opt/talus/src.prev ]; then
   rm -rf /opt/talus/src.failed
   mv /opt/talus/src /opt/talus/src.failed
   mv /opt/talus/src.prev /opt/talus/src
+  TALUS_REVISION="$(cat /opt/talus/src/REVISION 2>/dev/null || echo unknown)"
   (cd /opt/talus/src/deploy && docker compose up -d --remove-orphans)
 fi
 exit 1

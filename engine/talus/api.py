@@ -1653,21 +1653,23 @@ def google_callback(request: Request, code: str | None = None, state: str | None
 INTERVALS_COOKIE = "talus_intervals_oauth"
 
 
-def _intervals_back(error: str | None = None) -> RedirectResponse:
-    return _back("/settings", error, param="intervals_error", cookie=INTERVALS_COOKIE)
+def _intervals_back(error: str | None = None, path: str = "/settings") -> RedirectResponse:
+    return _back(path, error, param="intervals_error", cookie=INTERVALS_COOKIE)
 
 
 @app.get("/api/auth/intervals/start")
-def intervals_start(request: Request) -> RedirectResponse:
-    """Send the browser to intervals.icu to approve Talus for the signed-in account."""
+def intervals_start(request: Request, next: str | None = None) -> RedirectResponse:
+    """Send the browser to intervals.icu to approve Talus for the signed-in account. It comes back
+    to `next` (a path in Talus, default /settings), with ?intervals_error=... if it failed."""
+    back = _safe_next(next or "/settings")
     if not intervals_auth.enabled():
-        return _intervals_back("Connecting with intervals.icu isn't set up on this Talus. Use an API key.")
+        return _intervals_back("Connecting with intervals.icu isn't set up on this Talus. Use an API key.", back)
     accounts = get_accounts()
     account = accounts.session_account(request.cookies.get(COOKIE))
     if account is None:
         return _back("/login", "Sign in first.")
     state = secrets.token_urlsafe(24)
-    sealed = accounts._cipher().encrypt(json.dumps({"state": state, "account": account.id}).encode()).decode()
+    sealed = accounts._cipher().encrypt(json.dumps({"state": state, "account": account.id, "next": back}).encode()).decode()
     response = RedirectResponse(intervals_auth.authorize_url(state), status_code=303)
     response.set_cookie(INTERVALS_COOKIE, sealed, max_age=OAUTH_TTL_S, httponly=True, samesite="lax", path="/",
                         secure=os.environ.get("TALUS_SECURE_COOKIE", "") == "1")
@@ -1684,21 +1686,22 @@ def intervals_callback(request: Request, code: str | None = None, state: str | N
                                                      ttl=OAUTH_TTL_S))
     except Exception:
         return _intervals_back("Connecting intervals.icu timed out. Try again.")
+    back = flow.get("next", "/settings")
     if error or not code:
-        return _intervals_back("Connecting intervals.icu was cancelled.")
+        return _intervals_back("Connecting intervals.icu was cancelled.", back)
     if not state or not secrets.compare_digest(state, flow["state"]):
-        return _intervals_back("The connection didn't match this browser. Try again.")
+        return _intervals_back("The connection didn't match this browser. Try again.", back)
     current = accounts.session_account(request.cookies.get(COOKIE))
     if current is None or current.id != flow["account"]:
         return _back("/login", "Sign in first.")
     try:
         values = intervals_auth.exchange_code(code)
     except intervals_auth.IntervalsAuthError as e:
-        return _intervals_back(str(e))
+        return _intervals_back(str(e), back)
     except httpx.HTTPError:
-        return _intervals_back("Couldn't reach intervals.icu. Try again.")
+        return _intervals_back("Couldn't reach intervals.icu. Try again.", back)
     accounts.set_credential(current.id, "intervals", "oauth", values)
-    return _intervals_back()
+    return _intervals_back(path=back)
 
 
 @app.post("/api/account/google/unlink")

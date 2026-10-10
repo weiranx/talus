@@ -47,13 +47,14 @@ final class API: ObservableObject {
         return url
     }
 
-    private func send(_ method: String, _ path: String, body: Data? = nil) async throws -> (Data, Int) {
+    private func send(_ method: String, _ path: String, body: Data? = nil,
+                      contentType: String = "application/json", timeout: TimeInterval = 60) async throws -> (Data, Int) {
         var req = URLRequest(url: try url(path))
         req.httpMethod = method
-        req.timeoutInterval = 60
+        req.timeoutInterval = timeout
         if let body {
             req.httpBody = body
-            req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+            req.setValue(contentType, forHTTPHeaderField: "Content-Type")
         }
         let data: Data, response: URLResponse
         do {
@@ -92,6 +93,38 @@ final class API: ObservableObject {
         let (data, status) = try await send("POST", path, body: json)
         if status == 404 { throw APIError.server(404, Self.detail(data) ?? "This engine has no \(path) yet.") }
         return data
+    }
+
+    @discardableResult
+    func put(_ path: String, _ body: some Encodable) async throws -> Data {
+        let (data, status) = try await send("PUT", path, body: try encoder.encode(body))
+        if status == 404 { throw APIError.server(404, Self.detail(data) ?? "Not found.") }
+        return data
+    }
+
+    @discardableResult
+    func delete(_ path: String) async throws -> Data {
+        let (data, status) = try await send("DELETE", path)
+        if status == 404 { throw APIError.server(404, Self.detail(data) ?? "Not found.") }
+        return data
+    }
+
+    /// Posts a file as it is, such as a GPX route or a FIT file. Big Health exports take minutes.
+    func upload(_ path: String, file: Data, contentType: String) async throws -> Data {
+        let (data, status) = try await send("POST", path, body: file, contentType: contentType, timeout: 600)
+        if status == 404 { throw APIError.server(404, Self.detail(data) ?? "Not found.") }
+        return data
+    }
+
+    /// The raw bytes of a download, such as the account export zip.
+    func download(_ path: String) async throws -> Data {
+        let (data, status) = try await send("GET", path, timeout: 300)
+        if status == 404 { throw APIError.server(404, Self.detail(data) ?? "Not found.") }
+        return data
+    }
+
+    func decode<T: Decodable>(_ data: Data, as: T.Type = T.self) throws -> T {
+        try decoder.decode(T.self, from: data)
     }
 
     // MARK: Accounts

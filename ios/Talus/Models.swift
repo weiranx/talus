@@ -143,6 +143,7 @@ struct Call: Codable, Hashable {
     let session: String
     let detail: String
     let why: String
+    let planned: Bool?
 }
 
 struct Week: Codable, Hashable {
@@ -171,6 +172,8 @@ struct CoachReply: Codable, Hashable {
     let reply: Call
     let source: String
     let fallbackReason: String?
+    let logId: Int?
+    let feedback: Int?
     let cost: AICost?
 }
 
@@ -242,6 +245,8 @@ struct Streams: Codable, Hashable {
     let distanceMi: [Double]?
     let altitudeFt: [Double]?
     let heartRate: [Double]?
+    let lat: [Double?]?
+    let lon: [Double?]?
 }
 
 struct ActivityDetail: Codable, Hashable {

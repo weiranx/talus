@@ -1,3 +1,4 @@
+import MapKit
 import Charts
 import SwiftUI
 
@@ -79,7 +80,9 @@ struct ActivityDetailView: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 14) {
                     Header(a: a)
+                    if let lat = a.streams.lat, let lon = a.streams.lon, lat.count > 1 { RouteCard(lat: lat, lon: lon) }
                     ProfileCard(a: a)
+                    ActivityCoachCard(id: a.id)
                     LoadsCard(a: a)
                     if !a.segments.isEmpty { SegmentsCard(segments: a.segments) }
                     if !a.notes.isEmpty {
@@ -231,6 +234,32 @@ private struct SegmentsCard: View {
                     Text(Fmt.duration(s.timeS)).font(.caption.monospacedDigit()).foregroundStyle(.secondary)
                 }
             }
+        }
+    }
+}
+
+/// The route on a map, from the GPS points the engine kept.
+private struct RouteCard: View {
+    let coords: [CLLocationCoordinate2D]
+
+    init(lat: [Double?], lon: [Double?]) {
+        coords = zip(lat, lon).compactMap { a, b in
+            guard let a, let b, a.isFinite, b.isFinite, a != 0 || b != 0 else { return nil }
+            return CLLocationCoordinate2D(latitude: a, longitude: b)
+        }
+    }
+
+    var body: some View {
+        if coords.count > 1 {
+            Map(initialPosition: .automatic, interactionModes: [.pan, .zoom]) {
+                MapPolyline(coordinates: coords).stroke(Ledger.color("climb"), lineWidth: 3)
+                if let start = coords.first { Annotation("Start", coordinate: start) { Circle().fill(Tone.good.ink).frame(width: 10, height: 10) } }
+                if let end = coords.last { Annotation("Finish", coordinate: end) { Circle().fill(Color.primary).frame(width: 10, height: 10) } }
+            }
+            .mapStyle(.standard(elevation: .realistic))
+            .frame(height: 220)
+            .clipShape(RoundedRectangle(cornerRadius: 14))
+            .accessibilityLabel("Route map")
         }
     }
 }

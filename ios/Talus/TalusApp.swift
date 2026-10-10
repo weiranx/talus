@@ -5,6 +5,7 @@ struct TalusApp: App {
     @StateObject private var api = API()
     @StateObject private var session = SessionModel()
     @StateObject private var health = HealthSync()
+    @AppStorage("appearance") private var appearance = "system"
 
     var body: some Scene {
         WindowGroup {
@@ -13,6 +14,7 @@ struct TalusApp: App {
                 .environmentObject(session)
                 .environmentObject(health)
                 .tint(Color(hex: 0x15211D, dark: 0xE4EAE7))
+                .preferredColorScheme(appearance == "light" ? .light : appearance == "dark" ? .dark : nil)
         }
     }
 }
@@ -72,6 +74,7 @@ struct MainTabs: View {
     var body: some View {
         TabView {
             TodayView().tabItem { Label("Today", systemImage: "sun.horizon") }
+            PlanView().tabItem { Label("Plan", systemImage: "flag.checkered") }
             LoadView().tabItem { Label("Load", systemImage: "chart.xyaxis.line") }
             ActivitiesView().tabItem { Label("Activity", systemImage: "figure.hiking") }
             SettingsView().tabItem { Label("Settings", systemImage: "gearshape") }

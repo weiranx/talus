@@ -1,0 +1,1 @@
+{"messages":[{"id":1,"created_at":"2026-10-09T23:11:11","role":"athlete","text":"Can I swap Saturday to Sunday?","source":null,"log_id":null},{"id":2,"created_at":"2026-10-09T23:11:11","role":"coach","text":"The AI coach isn't set up: add an Anthropic API key to the engine's .env to chat.","source":"rules","log_id":null}],"source":"rules","fallback_reason":"no_key"}

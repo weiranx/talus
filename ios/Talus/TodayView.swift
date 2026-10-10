@@ -357,7 +357,7 @@ struct IntensityCard: View {
                 }
                 .clipShape(RoundedRectangle(cornerRadius: 4))
                 .overlay(alignment: .leading) {
-                    Rectangle().fill(Color(hex: 0xA3231B)).frame(width: 2).offset(x: geo.size.width * 0.8)
+                    Rectangle().fill(Color.target).frame(width: 2).offset(x: geo.size.width * 0.8)
                 }
             }
             .frame(height: 16)

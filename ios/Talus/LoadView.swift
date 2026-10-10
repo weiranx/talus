@@ -147,7 +147,7 @@ private struct WeeklyIntensityCard: View {
                             .foregroundStyle(by: .value("Zone", "Zone \(z)"))
                     }
                 }
-                RuleMark(y: .value("Target", 0.8)).foregroundStyle(Color(hex: 0xA3231B)).lineStyle(StrokeStyle(lineWidth: 1))
+                RuleMark(y: .value("Target", 0.8)).foregroundStyle(Color.target).lineStyle(StrokeStyle(lineWidth: 1))
             }
             .chartForegroundStyleScale(domain: ["Zone 1", "Zone 2", "Zone 3"], range: colors)
             .chartYAxis { AxisMarks(values: [0, 0.5, 1]) { v in AxisGridLine(); AxisValueLabel { Text(Fmt.pct(v.as(Double.self) ?? 0)) } } }

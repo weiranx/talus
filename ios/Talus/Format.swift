@@ -111,15 +111,19 @@ enum Ledger {
     }
 }
 
+// Zone 1 is the quietest color, the hardest zone has the most contrast: dark ink on light, near white on dark.
 enum Zones {
     static func colors(_ n: Int) -> [Color] {
         n == 5
-            ? [0xC4D2CB, 0x93A9A0, 0x68796F, 0x3C4842, 0x15211D].map { Color(hex: $0) }
-            : [0xA9BDB5, 0x52605A, 0x15211D].map { Color(hex: $0) }
+            ? zip([0xC4D2CB, 0x93A9A0, 0x68796F, 0x3C4842, 0x15211D], [0x3A4A43, 0x5A6E65, 0x84998F, 0xB3C4BC, 0xE4ECE8]).map { Color(hex: $0, dark: $1) }
+            : zip([0xA9BDB5, 0x52605A, 0x15211D], [0x5A6E65, 0x8FA59B, 0xE4ECE8]).map { Color(hex: $0, dark: $1) }
     }
 }
 
 extension Color {
+    // The 80% below-AeT target line.
+    static let target = Color(hex: 0xA3231B, dark: 0xF07A70)
+
     init(hex: UInt32, dark: UInt32? = nil) {
         func rgb(_ h: UInt32) -> UIColor {
             UIColor(red: CGFloat((h >> 16) & 0xFF) / 255, green: CGFloat((h >> 8) & 0xFF) / 255,

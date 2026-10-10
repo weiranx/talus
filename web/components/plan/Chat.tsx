@@ -52,7 +52,7 @@ export default function Chat({ initial }: { initial: ChatMessage[] }) {
         {messages.map((m, i) => (
           <div key={`${m.id}-${i}`} style={{
             alignSelf: m.role === "athlete" ? "flex-end" : "flex-start", maxWidth: "88%",
-            background: m.role === "athlete" ? "var(--ink)" : "var(--bg)", color: m.role === "athlete" ? "#fff" : "var(--ink)",
+            background: m.role === "athlete" ? "var(--strong)" : "var(--bg)", color: m.role === "athlete" ? "var(--on-strong)" : "var(--ink)",
             borderRadius: 12, padding: "8px 12px", fontSize: 14, display: "flex", flexDirection: "column", gap: 6,
           }}>
             <div style={{ whiteSpace: "pre-wrap" }}>{m.text}</div>
@@ -75,7 +75,7 @@ export default function Chat({ initial }: { initial: ChatMessage[] }) {
       <form onSubmit={ask} style={{ display: "flex", gap: 8 }}>
         <label className="visually-hidden" htmlFor="chat-q">Question</label>
         <input id="chat-q" value={question} onChange={(e) => setQuestion(e.target.value)} maxLength={1000}
-          placeholder="Ask a question" style={{ flex: 1, minWidth: 0, minHeight: 44, border: "1px solid var(--line)", borderRadius: 10, padding: "0 12px", font: "inherit" }} />
+          placeholder="Ask a question" style={{ flex: 1, minWidth: 0, minHeight: 44, border: "1px solid var(--line)", borderRadius: 10, padding: "0 12px", font: "inherit", color: "var(--ink)", background: "var(--field)" }} />
         <button className="btn" disabled={busy || !question.trim()} aria-busy={busy}>Ask</button>
       </form>
       {error ? <span className="error-text">{error}</span> : null}

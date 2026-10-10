@@ -26,7 +26,7 @@ export function Dots() {
 // A muted line with a spinner, for "the coach is reading" style waits.
 export function BusyLine({ children, dark }: { children: ReactNode; dark?: boolean }) {
   return (
-    <div className="busy-line muted" role="status" style={dark ? { color: "#b9c6c0" } : undefined}>
+    <div className="busy-line muted" role="status" style={dark ? { color: "var(--feature-muted)" } : undefined}>
       <Spinner />
       <span>{children}</span>
     </div>

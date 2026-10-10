@@ -54,24 +54,24 @@ export default function ElevationProfile({ distance, altitude, heartRate, colors
         onPointerMove={onMove} onPointerLeave={() => setHover(null)}>
         {[aMin, aMin + span / 2, aMin + span].map((a) => (
           <g key={a}>
-            <line x1={PAD.l} x2={W - PAD.r} y1={y(a)} y2={y(a)} stroke="#e3e8e5" />
-            <text x={PAD.l - 6} y={y(a) + 4} textAnchor="end" fontSize={12} fill="#52605a">{a === aMin + span ? `${n0(a)} ft` : n0(a)}</text>
+            <line x1={PAD.l} x2={W - PAD.r} y1={y(a)} y2={y(a)} stroke="var(--line)" />
+            <text x={PAD.l - 6} y={y(a) + 4} textAnchor="end" fontSize={12} fill="var(--muted)">{a === aMin + span ? `${n0(a)} ft` : n0(a)}</text>
           </g>
         ))}
         {highlight ? (
           <rect x={x(distance[highlight[0]])} y={PAD.t} width={Math.max(2, x(distance[highlight[1]]) - x(distance[highlight[0]]))}
-            height={base - PAD.t} fill="#f0b25a" opacity={0.25} />
+            height={base - PAD.t} fill="var(--highlight)" opacity={0.25} />
         ) : null}
-        {runs.map((r, i) => <path key={i} d={poly(r.from, r.to)} fill={r.color} stroke="#fff" strokeWidth={0.5} />)}
+        {runs.map((r, i) => <path key={i} d={poly(r.from, r.to)} fill={r.color} stroke="var(--surface)" strokeWidth={0.5} />)}
         {ticks.map((t, i) => (
-          <text key={i} x={x(t)} y={H - 6} fontSize={12} fill="#52605a" textAnchor={i === 0 ? "start" : i === 4 ? "end" : "middle"}>
+          <text key={i} x={x(t)} y={H - 6} fontSize={12} fill="var(--muted)" textAnchor={i === 0 ? "start" : i === 4 ? "end" : "middle"}>
             {i === 4 ? `${t.toFixed(1)} mi` : t.toFixed(1)}
           </text>
         ))}
         {hover != null ? (
           <g>
-            <line x1={x(distance[hover])} x2={x(distance[hover])} y1={PAD.t} y2={base} stroke="#15211d" strokeWidth={1} />
-            <circle cx={x(distance[hover])} cy={y(altitude[hover])} r={4} fill="#fff" stroke="#15211d" strokeWidth={2} />
+            <line x1={x(distance[hover])} x2={x(distance[hover])} y1={PAD.t} y2={base} stroke="var(--ink)" strokeWidth={1} />
+            <circle cx={x(distance[hover])} cy={y(altitude[hover])} r={4} fill="var(--surface)" stroke="var(--ink)" strokeWidth={2} />
           </g>
         ) : null}
       </svg>

@@ -10,7 +10,7 @@ import type { RunKind, Schedule, ScheduledRun, WeekProgress } from "@/lib/types"
 const WEEKS = 5;
 const STATUS_TEXT = { done: "Done", missed: "Missed", today: "Today", planned: "" } as const;
 const KIND_COLOR: Record<RunKind, string> = {
-  easy: "var(--cardio)", long: "var(--climb)", hills: "var(--descent)", tempo: "#a3231b", intervals: "#a3231b",
+  easy: "var(--cardio)", long: "var(--climb)", hills: "var(--descent)", tempo: "var(--target)", intervals: "var(--target)",
   hike: "var(--climb)", race: "var(--ink)", other: "var(--muted)",
 };
 
@@ -138,7 +138,7 @@ export default function Calendar({ initial }: { initial: Schedule }) {
               <Fragment key={d}>
               <div style={{
                 minHeight: 92, border: `1px solid ${d === data.date ? "var(--ink)" : "var(--line)"}`, borderRadius: 10,
-                padding: 6, display: "flex", flexDirection: "column", gap: 4, background: past ? "var(--bg)" : "#fff",
+                padding: 6, display: "flex", flexDirection: "column", gap: 4, background: past ? "var(--bg)" : "var(--raised)",
                 outline: w ? "2px solid var(--warn-ink)" : undefined,
               }}>
                 <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12 }}>
@@ -148,7 +148,7 @@ export default function Calendar({ initial }: { initial: Schedule }) {
                 </div>
                 {items.map((it, i) => (
                   <button key={`${it.source}-${it.id ?? i}`} type="button" onClick={() => setForm(formFor(it, d))}
-                    style={{ textAlign: "left", border: 0, borderLeft: `3px solid ${KIND_COLOR[it.kind]}`, background: it.source === "plan" ? "var(--bg)" : "#f6f7f6",
+                    style={{ textAlign: "left", border: 0, borderLeft: `3px solid ${KIND_COLOR[it.kind]}`, background: it.source === "plan" ? "var(--bg)" : "var(--past)",
                       borderRadius: 6, padding: "4px 6px", cursor: "pointer", font: "inherit", fontSize: 12, color: "var(--ink)" }}>
                     <div style={{ fontWeight: 600 }}>{it.title}{it.source === "plan" ? " · plan" : ""}</div>
                     <div className="mono" style={{ fontSize: 11 }}>{mi(it.miles)} mi · {n0(it.gain_ft)} ft</div>

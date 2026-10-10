@@ -58,6 +58,9 @@ struct CoachCallCard: View {
                 if waiting { ProgressView().controlSize(.small).tint(.white.opacity(0.7)) }
                 Text(note).font(.caption).foregroundStyle(.white.opacity(0.6))
             }
+            if let cost = coach?.cost {
+                Text(cost.text).font(.caption2.monospaced()).foregroundStyle(.white.opacity(0.5))
+            }
         }
         .padding(18)
         .frame(maxWidth: .infinity, alignment: .leading)

@@ -11,6 +11,6 @@ export default async function CoachCall({ rules }: { rules: Call & { planned?: b
   } catch {
     return <CallCard call={rules} note={coachNote("rules", "api_error", "call")} planned={rules.planned} />;
   }
-  return <CallCard call={r.reply} note={coachNote(r.source, r.fallback_reason, "call")} logId={r.log_id} feedback={r.feedback}
+  return <CallCard call={r.reply} note={coachNote(r.source, r.fallback_reason, "call")} logId={r.log_id} feedback={r.feedback} cost={r.cost}
     planned={rules.planned && r.reply.session === rules.session} />;
 }

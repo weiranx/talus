@@ -171,6 +171,24 @@ struct CoachReply: Codable, Hashable {
     let reply: Call
     let source: String
     let fallbackReason: String?
+    let cost: AICost?
+}
+
+/// What the AI call behind a coach reply cost. Only sent when the admin turns on "Show AI cost".
+struct AICost: Codable, Hashable {
+    let usd: Double
+    let model: String?
+    let inputTokens: Int
+    let outputTokens: Int
+    let cached: Bool
+
+    /// Same wording as web/components/AiCost.tsx.
+    var text: String {
+        let dollars = String(format: usd < 0.01 ? "$%.4f" : "$%.3f", usd)
+        let tokens = "\(inputTokens.formatted()) in, \(outputTokens.formatted()) out"
+        return cached ? "AI cost $0 (reused; first call \(dollars), \(model ?? "unknown model"), \(tokens))"
+            : "AI cost \(dollars) · \(model ?? "unknown model") · \(tokens) tokens"
+    }
 }
 
 struct LoadLedger: Codable, Hashable {

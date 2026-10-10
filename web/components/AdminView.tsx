@@ -13,7 +13,14 @@ const ACTIONS: Record<string, string> = {
   coach_ceiling: "Changed coach ceiling",
   signup_open: "Opened sign-ups",
   signup_closed: "Closed sign-ups",
+  feature_on: "Turned on",
+  feature_off: "Turned off",
 };
+
+const FEATURES: { key: keyof AdminOverview["features"]; label: string; help: string }[] = [
+  { key: "show_ai_cost", label: "Show AI cost",
+    help: "Every coach reply (today's call, activity reads, plan, weekly review, chat) shows what its AI call cost, the model and its tokens. Everyone sees the cost of their own calls." },
+];
 
 function when(iso: string | null, withTime = false): string {
   if (!iso) return "Never";
@@ -108,8 +115,18 @@ export default function AdminView({ data }: { data: AdminOverview }) {
   const [open, setOpen] = useState<number | null>(null);
   const [msg, setMsg] = useState<Msg>(null);
   const [busy, setBusy] = useState(false);
+  const [featureMsg, setFeatureMsg] = useState<Msg>(null);
   const s = data.system;
   const month = new Date(`${data.month}T12:00:00`).toLocaleDateString("en-US", { month: "long" });
+
+  async function toggleFeature(key: string, on: boolean) {
+    setBusy(true);
+    const r = await send(`/api/admin/features/${key}`, "PUT", { on });
+    setBusy(false);
+    const label = FEATURES.find((f) => f.key === key)?.label ?? key;
+    setFeatureMsg(r.ok ? { ok: true, text: `${label} is ${on ? "on" : "off"}.` } : { ok: false, text: r.detail ?? "That didn't work." });
+    if (r.ok) router.refresh();
+  }
 
   async function toggleSignup() {
     setBusy(true);
@@ -211,6 +228,21 @@ export default function AdminView({ data }: { data: AdminOverview }) {
           </section>
 
           <section className="card">
+            <h2 className="label">Feature flags</h2>
+            {FEATURES.map((f) => (
+              <label key={f.key} className="toggle">
+                <input type="checkbox" checked={data.features[f.key]} disabled={busy}
+                  onChange={(e) => toggleFeature(f.key, e.target.checked)} />
+                <span style={{ display: "flex", flexDirection: "column", gap: 2 }}>
+                  <span className="field-label">{f.label}</span>
+                  <span className="muted">{f.help}</span>
+                </span>
+              </label>
+            ))}
+            {featureMsg ? <div className={featureMsg.ok ? "ok-text" : "error-text"} role="status">{featureMsg.text}</div> : null}
+          </section>
+
+          <section className="card">
             <h2 className="label">Recent admin actions</h2>
             {data.log.length ? (
               <ul className="method-list" style={{ listStyle: "none", paddingLeft: 0 }}>
@@ -218,6 +250,7 @@ export default function AdminView({ data }: { data: AdminOverview }) {
                   <li key={e.id}>
                     <span style={{ color: "var(--ink)" }}>{ACTIONS[e.action] ?? e.action}</span>
                     {e.target ? ` for ${e.target}` : ""}
+                    {e.action.startsWith("feature_") && e.detail ? ` ${FEATURES.find((f) => f.key === e.detail?.feature)?.label ?? String(e.detail.feature)}` : ""}
                     {e.action === "coach_ceiling" && e.detail ? ` to ${e.detail.to === null ? "the default" : usd(Number(e.detail.to))}` : ""}
                     {" · "}{when(e.at, true)}
                   </li>

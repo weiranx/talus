@@ -435,6 +435,36 @@ def _coach_cap(store: Store) -> dict:
             "month": month.isoformat()}
 
 
+def _show_ai_cost() -> bool:
+    """The admin page's "Show AI cost" feature flag, for every account. Off by default."""
+    return bool(get_accounts().config("show_ai_cost"))
+
+
+def _shown_cost(model: str | None, usage, cached: bool) -> dict | None:
+    """The cost line under a coach reply, when the flag is on. A reused reply cost nothing this
+    time; it carries what its first call cost."""
+    if not _show_ai_cost():
+        return None
+    cost = app_settings.call_cost(model, usage)
+    return None if cost is None else cost | {"cached": cached}
+
+
+def _chat_costs(messages: list[dict]) -> list[dict]:
+    """Each coach answer's cost from its logged call, when the flag is on. An answer reusing an
+    earlier logged call shows as cached."""
+    if not _show_ai_cost():
+        return messages
+    store, seen = get_store(), set()
+    for m in messages:
+        m["cost"] = None
+        if m["role"] == "coach" and m["log_id"]:
+            r = store.db.execute("SELECT model, usage FROM coach_log WHERE id = ?", (m["log_id"],)).fetchone()
+            cost = r and app_settings.call_cost(r["model"], r["usage"])
+            m["cost"] = cost and cost | {"cached": m["log_id"] in seen}
+            seen.add(m["log_id"])
+    return messages
+
+
 def _coach(store: Store, mode: str, subject: str, packet: dict, fallback: dict, refresh: bool) -> dict:
     """Reuse the logged reply for the same packet, model and prompt version, so reloading a page
     doesn't call the API again. Only API calls are logged; with no key or the coach off, the rules
@@ -442,7 +472,7 @@ def _coach(store: Store, mode: str, subject: str, packet: dict, fallback: dict, 
     cfg = _coach_settings(store)
     if not cfg["coach_enabled"]:
         return {"source": "rules", "reply": fallback, "log_id": None, "feedback": None,
-                "fallback_reason": "off", "model": None}
+                "fallback_reason": "off", "model": None, "cost": None}
     # Plan, weekly review and chat are longer reads, so they run on the analysis model.
     model_id, style = cfg.get(f"{mode}_model", cfg["analysis_model"]), cfg["coach_style"]
     if style not in coach.STYLES:
@@ -451,17 +481,19 @@ def _coach(store: Store, mode: str, subject: str, packet: dict, fallback: dict, 
     row = None if refresh else store.coach_entry(mode, subject, coach.PROMPT_VERSION, h)
     if row is not None and not (row["fallback_reason"] or "").startswith("api_error"):
         return {"source": row["source"], "reply": json.loads(row["reply"]), "log_id": row["id"],
-                "feedback": row["feedback"], "fallback_reason": row["fallback_reason"], "model": row["model"]}
+                "feedback": row["feedback"], "fallback_reason": row["fallback_reason"], "model": row["model"],
+                "cost": _shown_cost(row["model"], row["usage"], cached=True)}
     cap = _coach_cap(store)
     if cap["limit"] is not None and cap["spent"] >= cap["limit"]:
         return {"source": "rules", "reply": fallback, "log_id": None, "feedback": None,
-                "fallback_reason": "cap", "model": None}
+                "fallback_reason": "cap", "model": None, "cost": None}
     result = coach.run(mode, packet, fallback, coach_client(), model_id, style)
     log_id = None
     if result.fallback_reason != "no_key":
         log_id = store.log_coach(mode, subject, coach.PROMPT_VERSION, h, packet, result)
     return {"source": result.source, "reply": result.reply, "log_id": log_id, "feedback": None,
-            "fallback_reason": result.fallback_reason, "model": result.model}
+            "fallback_reason": result.fallback_reason, "model": result.model,
+            "cost": _shown_cost(result.model, result.usage, cached=False)}
 
 
 @app.get("/api/coach/brief")
@@ -855,7 +887,7 @@ class ChatIn(BaseModel):
 
 @app.get("/api/coach/chat")
 def get_chat() -> dict:
-    return {"messages": get_store().chat()}
+    return {"messages": _chat_costs(get_store().chat())}
 
 
 @app.delete("/api/coach/chat")
@@ -895,7 +927,7 @@ def post_chat(body: ChatIn) -> dict:
     out = _coach(store, "chat", "chat", packet, {"answer": coach.CHAT_FALLBACK, "used": []}, False)
     answer = CHAT_UNAVAILABLE.get(out["fallback_reason"] or "", out["reply"]["answer"])
     store.add_chat("coach", answer, out["source"], out["log_id"])
-    return {"messages": store.chat(), "source": out["source"], "fallback_reason": out["fallback_reason"]}
+    return {"messages": _chat_costs(store.chat()), "source": out["source"], "fallback_reason": out["fallback_reason"]}
 
 
 # Settings. Keys stay in .env: the engine reports whether each one is set, never its value.
@@ -1743,7 +1775,26 @@ def admin_overview() -> dict:
     return {"accounts": rows, "month": month.isoformat(),
             "signup": {"open": _signup_open(accounts), "chosen": accounts.config("signup_open"),
                        "env": os.environ.get("TALUS_SIGNUP", "open").lower() != "closed"},
+            "features": {k: bool(accounts.config(k)) for k in FEATURES},
             "system": admin.system(accounts), "log": log}
+
+
+# Feature flags the admin turns on for everyone. All off by default.
+FEATURES = ("show_ai_cost",)
+
+
+class FeatureIn(BaseModel):
+    on: bool
+
+
+@app.put("/api/admin/features/{name}")
+def admin_feature(name: str, body: FeatureIn) -> dict:
+    accounts, me = _admin()
+    if name not in FEATURES:
+        raise HTTPException(404, "No such feature.")
+    accounts.set_config(name, body.on)
+    accounts.log_admin(me.id, "feature_on" if body.on else "feature_off", None, {"feature": name})
+    return {name: body.on}
 
 
 class SignupIn(BaseModel):

@@ -57,6 +57,7 @@ LONG_SHARE = {"miles": 0.45, "gain_ft": 0.5, "loss_ft": 0.5}  # the long day's s
 LONG_TARGET = 0.72  # long-day size against the objective, just above the 70% big-day rule
 VOLUME_TARGET = 1.35  # weekly gain and loss against the objective, above the 1.25 rule
 DURABILITY_TARGET = 0.85
+ADJUST_RANGE = (0.5, 1.2)  # an asked-for week change scales its targets within these
 CUT_STEP = 0.90  # a week over a ledger limit is cut 10% at a time
 MIN_CUT = 0.30
 MAX_LATER_WEEKS = 26
@@ -92,11 +93,15 @@ class Constraints:
     weekend_min: int = 360
     long_day: int = 5
     notes: str = ""
+    # Asked-for changes to single weeks: {"week": ISO Monday, "dims": ["miles"|"vert"], "factor": f}.
+    # Applied to that week's targets only, and still checked against the load limits.
+    adjust: list = field(default_factory=list)
 
     @classmethod
     def from_json(cls, d: dict | None) -> Constraints:
         c = cls(**{k: v for k, v in (d or {}).items() if k in cls.__dataclass_fields__})
         c.days = sorted({int(x) for x in c.days if 0 <= int(x) <= 6})
+        c.adjust = [a for a in (c.adjust or []) if isinstance(a, dict) and a.get("week")]
         return c
 
     def cap(self, day: date) -> int:
@@ -392,9 +397,18 @@ def build(obj: Objective, acts: list[dict], history: list[LedgerDay], c: Constra
             want = {k: level[k] * {"build": 1.0, "recovery": RECOVERY, "taper": TAPER, "race": RACE_WEEK}[kind]
                     for k in DIMS}
         first = first_planned if i == 0 else start
-        planned = {k: max(0.0, want[k] - done_sum[k]) for k in DIMS} if i == 0 else want
+        planned = {k: max(0.0, want[k] - done_sum[k]) for k in DIMS} if i == 0 else dict(want)
+        asked = [a for a in c.adjust if a["week"] == start.isoformat()]
+        for a in asked:
+            f = min(max(float(a.get("factor", 1.0)), ADJUST_RANGE[0]), ADJUST_RANGE[1])
+            for k in DIMS:
+                if ("miles" if k == "miles" else "vert") in a.get("dims", []):
+                    planned[k] *= f
         race = _in_week(obj.day, start)
         sessions, notes = sessions_for_week(planned, start, first, _before(c, obj.day) if race else c, pace_min)
+        for a in asked:
+            what = _join(["miles" if d == "miles" else "vert" for d in a.get("dims", [])])
+            notes.insert(0, f"{'Less' if float(a.get('factor', 1.0)) < 1 else 'More'} {what} this week, as you asked")
         if race:
             for s in sessions:
                 if s["kind"] == "long":
@@ -436,7 +450,8 @@ def build(obj: Objective, acts: list[dict], history: list[LedgerDay], c: Constra
             if i == 0:
                 level = {k: want[k] * scale for k in DIMS}
             else:
-                level = {k: total[k] for k in DIMS} if limited else want
+                # A week you asked to change doesn't move the build: the next week carries on.
+                level = {k: total[k] for k in DIMS} if limited and not asked else want
         focus = "peak" if kind == "build" and i > 0 and all(level[k] >= peak[k] * 0.98 for k in DIMS) else kind
         hours = total["minutes"] / 60
         weeks.append({

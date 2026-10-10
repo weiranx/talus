@@ -10,7 +10,8 @@ import DeletePlan from "@/components/plan/DeletePlan";
 import ObjectiveForm from "@/components/plan/ObjectiveForm";
 import PlanActions from "@/components/plan/PlanActions";
 import Review from "@/components/plan/Review";
-import Setup, { type Step } from "@/components/plan/Setup";
+import PlanTalk from "@/components/plan/PlanTalk";
+import Setup, { DraftDetail, type Step } from "@/components/plan/Setup";
 import NextRun from "@/components/plan/NextRun";
 import ReadinessCompact from "@/components/plan/ReadinessCompact";
 import RoadChart from "@/components/plan/RoadChart";
@@ -19,7 +20,7 @@ import WeeksTable from "@/components/plan/WeeksTable";
 import { engine, EngineError } from "@/lib/api";
 import { dayLabel, mi, n0 } from "@/lib/format";
 import { FOCUS_TEXT } from "@/lib/plan";
-import type { ChatMessage, Plan, PlanPage, Schedule } from "@/lib/types";
+import type { ChatMessage, Plan, PlanPage, Schedule, Talk } from "@/lib/types";
 
 export const dynamic = "force-dynamic";
 
@@ -71,6 +72,7 @@ function Draft({ draft, hasAccepted }: { draft: Plan; hasAccepted: boolean }) {
 }
 
 export default async function PlanPageView({ searchParams }: { searchParams: Promise<{ edit?: string; step?: string }> }) {
+  const { edit, step } = await searchParams;
   let p: PlanPage;
   let chat: { messages: ChatMessage[] };
   let schedule: Schedule;
@@ -80,12 +82,35 @@ export default async function PlanPageView({ searchParams }: { searchParams: Pro
   } catch (e) {
     return <EngineDown message={e instanceof EngineError ? e.message : "Could not reach the engine."} />;
   }
-  const { edit, step } = await searchParams;
   const obj = p.objective;
   const plan = p.draft ?? p.accepted;
 
+  if ((!obj || !p.accepted) && !step) {
+    // Until a plan is accepted: planning with the coach, a few questions that fill the plan's inputs.
+    let talk: Talk;
+    try {
+      talk = await engine<Talk>("/api/plan/talk?mode=setup");
+    } catch (e) {
+      return <EngineDown message={e instanceof EngineError ? e.message : "Could not reach the engine."} />;
+    }
+    return (
+      <>
+        <header className="page-head">
+          <div>
+            <div className="eyebrow">Plan with the coach</div>
+            <h1 className="title">Plan</h1>
+          </div>
+          <div style={{ paddingBottom: 6 }}><Link href="/plan?step=objective">Skip to the form</Link></div>
+        </header>
+        <section className="card"><PlanTalk initial={talk} /></section>
+        {talk.step === "draft" ? <DraftDetail p={p} /> : null}
+        <Calendar initial={schedule} />
+      </>
+    );
+  }
+
   if (!obj || !p.accepted) {
-    // Until a plan is accepted: the guided setup, objective, then training days, then review.
+    // The form: objective, then training days, then review.
     const at: Step = !obj ? (step === "days" ? "days" : "objective")
       : step === "objective" || step === "days" ? step : "review";
     return (
@@ -95,6 +120,7 @@ export default async function PlanPageView({ searchParams }: { searchParams: Pro
             <div className="eyebrow">Build a plan in three steps</div>
             <h1 className="title">Plan</h1>
           </div>
+          <div style={{ paddingBottom: 6 }}><Link href="/plan">Plan with the coach instead</Link></div>
         </header>
         <Setup p={p} step={at} />
         <Calendar initial={schedule} />
@@ -103,6 +129,7 @@ export default async function PlanPageView({ searchParams }: { searchParams: Pro
     );
   }
 
+  const talk = edit === "coach" ? await engine<Talk>("/api/plan/talk?mode=change").catch(() => null) : null;
   return (
     <>
       <header className="page-head">
@@ -117,6 +144,7 @@ export default async function PlanPageView({ searchParams }: { searchParams: Pro
             {mi(obj.distance_mi)} mi · {n0(obj.gain_ft)} ft up · {n0(obj.loss_ft)} ft down
           </div>
           <div className="actions" style={{ gap: 6 }}>
+            <Link className="btn light outline" style={{ minHeight: 36, padding: "0 12px" }} href="/plan?edit=coach">Change with the coach</Link>
             <Link className="btn light outline" style={{ minHeight: 36, padding: "0 12px" }} href="/plan?edit=objective">Edit objective</Link>
             <Link className="btn light outline" style={{ minHeight: 36, padding: "0 12px" }} href="/plan?edit=days">Training days</Link>
             <DeletePlan name={obj.name} />
@@ -136,6 +164,15 @@ export default async function PlanPageView({ searchParams }: { searchParams: Pro
               : <>Saving drafts a new plan to review against this one. Or <Link href="/plan?edit=new">start a different objective</Link>.</>}
           </div>
           <ObjectiveForm key={edit} current={obj} startNew={edit === "new"} next="/plan" />
+        </section>
+      ) : null}
+      {edit === "coach" && talk ? (
+        <section className="card">
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 8, flexWrap: "wrap" }}>
+            <h2 className="label">Change the plan with the coach</h2>
+            <Link href="/plan">Close</Link>
+          </div>
+          <PlanTalk initial={talk} />
         </section>
       ) : null}
       {edit === "days" ? (

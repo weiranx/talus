@@ -26,7 +26,7 @@ from fastapi import BackgroundTasks, FastAPI, HTTPException, Request, Response
 from fastapi.responses import JSONResponse, RedirectResponse, StreamingResponse
 from pydantic import BaseModel, ConfigDict, Field
 
-from . import admin, cli, coach, explain, google_auth, intervals_auth, ledger, readiness_score, wellness, zones
+from . import admin, cli, coach, explain, google_auth, interview, intervals_auth, ledger, readiness_score, wellness, zones
 from . import plan as planner
 from . import schedule
 from . import settings as app_settings
@@ -473,8 +473,10 @@ def _coach(store: Store, mode: str, subject: str, packet: dict, fallback: dict, 
     if not cfg["coach_enabled"]:
         return {"source": "rules", "reply": fallback, "log_id": None, "feedback": None,
                 "fallback_reason": "off", "model": None, "cost": None}
-    # Plan, weekly review and chat are longer reads, so they run on the analysis model.
-    model_id, style = cfg.get(f"{mode}_model", cfg["analysis_model"]), cfg["coach_style"]
+    # Plan, weekly review and chat are longer reads, so they run on the analysis model; reading
+    # typed answers into fields is short work for the brief's cheaper model.
+    model_id = cfg["brief_model"] if mode in coach.FIELD_MODES else cfg.get(f"{mode}_model", cfg["analysis_model"])
+    style = cfg["coach_style"]
     if style not in coach.STYLES:
         style = coach.DEFAULT_STYLE
     h = coach.cache_key(packet, model_id, style)
@@ -755,7 +757,7 @@ def put_constraints(body: ConstraintsIn) -> dict:
     if body.long_day not in body.days:
         raise HTTPException(422, "Your long day has to be one of your training days.")
     store = get_store()
-    c = planner.Constraints.from_json(body.model_dump())
+    c = planner.Constraints.from_json(body.model_dump() | {"adjust": _constraints(store).adjust})
     store.save_settings({"plan_constraints": asdict(c)})
     obj = store.objective()
     if obj is not None:
@@ -775,6 +777,240 @@ def new_draft(body: DraftIn) -> dict:
         raise HTTPException(409, "Add an objective first.")
     _build_draft(store, obj, body.reason)
     return get_plan()
+
+
+# Planning with the coach: a conversation that fills the same inputs as the plan form. The
+# questions and summaries are written by the engine; only typed answers go to the model, and only
+# to be read into fields the engine then checks.
+
+TALK_KEY = "plan_talk"
+TALK_KEEP = 80  # messages kept
+
+
+class TalkIn(BaseModel):
+    text: str | None = Field(default=None, max_length=1000)
+    answers: dict[str, str | list[str]] | None = None
+    route: dict | None = None  # a GPX route's numbers from /api/plan/route
+    action: str | None = Field(default=None, pattern="^(accept|keep|retry)$")
+
+
+class TalkStart(BaseModel):
+    mode: str = Field(default="setup", pattern="^(setup|change)$")
+
+
+def _talk_new(store: Store, mode: str) -> dict:
+    c = asdict(_constraints(store))
+    obj = store.objective()
+    if mode == "change" and obj is not None and (store.plan("accepted") or store.plan("draft")):
+        return interview.change(obj.name, c)
+    return interview.start(c, obj.json() if obj else None)
+
+
+def _talk_state(store: Store, mode: str | None = None) -> dict:
+    """The conversation in progress, or a fresh one when it ended or no longer fits the plan."""
+    st = store.settings().get(TALK_KEY)
+    has_plan = store.plan("accepted") is not None or store.plan("draft") is not None
+    stale = (st is None or st.get("step") == "done" or (mode is not None and st.get("mode") != mode)
+             or (st.get("step") == "draft" and not has_plan)
+             or (st.get("mode") == "setup" and store.plan("accepted") is not None and st.get("step") != "draft"))
+    if stale:
+        st = _talk_new(store, mode or "setup")
+        store.save_settings({TALK_KEY: st})
+    return st
+
+
+def _talk_json(store: Store, st: dict) -> dict:
+    cfg = _coach_settings(store)
+    return {"messages": st["messages"], "step": st["step"], "mode": st.get("mode", "setup"),
+            "reads_with_ai": bool(cfg["coach_enabled"] and os.environ.get("ANTHROPIC_API_KEY"))}
+
+
+def _talk_read(store: Store, mode: str, text: str, packet: dict, fallback: dict) -> tuple[dict, dict | None]:
+    """Typed words read into fields by the cheaper model, or by the rules without it."""
+    out = _coach(store, mode, mode, packet, fallback, False)
+    return out["reply"], ({"cost": out["cost"]} if out["source"] == "coach" else None)
+
+
+def _talk_objective(store: Store, st: dict, body: TalkIn, day: date) -> list[dict]:
+    o = dict(st["objective"])
+    current = store.objective()
+    meta = None
+    if body.answers and body.answers.get("keep") and current is not None:
+        o = current.json() | {"keep": True}
+    if body.route:
+        o |= {k: body.route[k] for k in ("distance_mi", "gain_ft", "loss_ft", "longest_climb_ft", "longest_descent_ft",
+                                         "high_point_ft") if isinstance(body.route.get(k), (int, float))}
+        o["source"] = "gpx"
+        o.pop("keep", None)
+        if body.route.get("name") and not o.get("name"):
+            o["name"] = str(body.route["name"])[:80]
+    if body.text:
+        got = interview.rules_objective(body.text, day)
+        if interview.missing(o | got):
+            read, meta = _talk_read(store, "intake", body.text, {"today": day.isoformat(), "text": body.text}, {})
+            ai = interview.from_intake(read, day)
+            name = ai.get("name") or got.get("name")  # the model reads names better; the rules, numbers
+            got = ai | got | ({"name": name} if name else {})
+        if o.get("name") and sum(k in got for k in ("day", "distance_mi", "gain_ft")) < 2:
+            got.pop("name", None)  # filling in a missing piece, like "it's on March 3", keeps the name
+        o |= got
+        o.pop("keep", None)
+    problems = []
+    if o.get("day") and date.fromisoformat(o["day"]) <= day:
+        o.pop("day")
+        problems.append("That date has passed; the objective needs a date after today.")
+    st["objective"] = o
+    need = interview.missing(o)
+    if need:
+        have = []
+        if o.get("name"):
+            have.append(o["name"])
+        if o.get("distance_mi"):
+            have.append(f"{o['distance_mi']:.1f} mi")
+        if o.get("gain_ft"):
+            have.append(f"{round(o['gain_ft']):,} ft up")
+        if o.get("day"):
+            d = date.fromisoformat(o["day"])
+            have.append(f"{d.strftime('%b')} {d.day}")
+        text = " ".join(problems + ([f"Got {', '.join(have)}."] if have else []) +
+                        [f"I still need {interview._join_words([interview.MISSING_TEXT[k] for k in need])}."])
+        return [interview.coach(text, "objective", st["messages"][-1].get("groups") if not body.text else []) | (meta or {})]
+    o.setdefault("loss_ft", o["gain_ft"])
+    st["step"] = "goal"
+    return [interview.coach(f"Training for {interview.objective_line(o)}.") | (meta or {}),
+            interview.ask("goal")]
+
+
+def _talk_finish(store: Store, st: dict, day: date) -> list[dict]:
+    """Save the answers as the objective and training days, then draft the plan."""
+    a, o = st["answers"], st["objective"]
+    c = _constraints(store)
+    c.days = sorted(interview.DAY_SHORT.index(d) for d in a["days"])
+    c.long_day = interview.DAY_SHORT.index(a["long_day"])
+    c.weekday_min, c.weekend_min = a["weekday_min"], a["weekend_min"]
+    c.notes = interview.notes(a)
+    c.adjust = interview.lighter_start(day) if a.get("feel") == "Tired lately" else []
+    store.save_settings({"plan_constraints": asdict(c), "plan_context": interview.context(a)})
+    current = store.objective()
+    fields = {k: o.get(k) for k in ("name", "distance_mi", "gain_ft", "loss_ft", "longest_climb_ft",
+                                    "longest_descent_ft", "high_point_ft")} | {
+        "day": date.fromisoformat(o["day"]), "source": o.get("source", "manual")}
+    if o.get("keep") and current is not None:
+        obj, reason = current, "constraints"
+    else:
+        obj = planner.Objective(**fields)
+        obj.id = store.save_objective(obj)
+        reason = "new"
+    try:
+        plan = _build_draft(store, obj, reason)
+    except HTTPException as e:
+        st["step"] = "stuck"
+        return [interview.coach(str(e.detail), "stuck", actions=[{"id": "retry", "label": "Try again"}])]
+    st["step"] = "draft"
+    actions = [{"id": "accept", "label": "Accept plan"}]
+    if store.plan("accepted") is not None:
+        actions.append({"id": "keep", "label": "Keep my current plan"})
+    return [interview.coach(interview.draft_summary(plan, obj.name, c.long_day, a), "draft", actions=actions)]
+
+
+def _talk_change(store: Store, st: dict, text: str, day: date) -> list[dict]:
+    obj = store.objective()
+    before = store.plan("draft") or store.plan("accepted")
+    if obj is None or before is None:
+        st["step"] = "done"
+        return [interview.coach("There's no plan to change. Start a new one from the Plan page.")]
+    c = _constraints(store)
+    packet = {"today": day.isoformat(), "text": text, "training_days": c.days, "long_day": c.long_day,
+              "weeks_in_plan": len(before["weeks"])}
+    read, meta = _talk_read(store, "edit", text, packet, {"edits": interview.rules_edits(text)})
+    edits = read["edits"] if meta is None else interview.from_edits(read["edits"])
+    if not edits:
+        return [interview.coach(interview.EDIT_HELP, "draft") | (meta or {})]
+    new_c, done, skipped = interview.apply_edits(edits, asdict(c), before["weeks"])
+    if not done:
+        return [interview.coach(interview.change_text(done, skipped, []) + "\n" + interview.EDIT_HELP, "draft") | (meta or {})]
+    store.save_settings({"plan_constraints": asdict(planner.Constraints.from_json(new_c))})
+    try:
+        plan = _build_draft(store, obj, "constraints")
+    except HTTPException as e:
+        return [interview.coach(str(e.detail), "draft") | (meta or {})]
+    st["step"] = "draft"
+    actions = [{"id": "accept", "label": "Accept plan"}]
+    if store.plan("accepted") is not None:
+        actions.append({"id": "keep", "label": "Keep my current plan"})
+    return [interview.coach(interview.change_text(done, skipped, planner.diff(before, plan)), "draft", actions=actions)
+            | (meta or {})]
+
+
+@app.get("/api/plan/talk")
+def get_talk(mode: str | None = None) -> dict:
+    if mode not in (None, "setup", "change"):
+        raise HTTPException(422, "Mode is setup or change.")
+    store = get_store()
+    return _talk_json(store, _talk_state(store, mode))
+
+
+@app.post("/api/plan/talk/restart")
+def restart_talk(body: TalkStart) -> dict:
+    store = get_store()
+    st = _talk_new(store, body.mode)
+    store.save_settings({TALK_KEY: st})
+    return _talk_json(store, st)
+
+
+@app.post("/api/plan/talk")
+def post_talk(body: TalkIn) -> dict:
+    """One turn: chip answers, typed words, a GPX route or an action on the draft."""
+    store = get_store()
+    day = date.today()
+    st = _talk_state(store)
+    step = st["step"]
+    text = (body.text or "").strip()
+    body.text = text or None
+    answers = {k: v for k, v in (body.answers or {}).items() if v not in (None, "", [])}
+    if body.action == "accept" or body.action == "keep":
+        line = "Accept plan" if body.action == "accept" else "Keep my current plan"
+    elif body.route:
+        line = f"Uploaded a route: {body.route.get('distance_mi', 0):.1f} mi, {round(body.route.get('gain_ft', 0)):,} ft up"
+    else:
+        line = " · ".join(x for x in (interview.said(step, answers), text) if x)
+    if not line and body.action != "retry":
+        raise HTTPException(422, "Say something, or tap an answer.")
+    if line:
+        st["messages"].append({"role": "athlete", "text": line})
+    if body.action in ("accept", "keep"):
+        draft = store.plan("draft")
+        if draft is None:
+            reply = [interview.coach("There's no draft waiting. Your plan is as it was.")]
+        else:
+            store.decide_draft(draft["id"], body.action == "accept")
+            reply = [interview.coach("Done. Your plan is on the calendar, and you can change it here any time."
+                                     if body.action == "accept" else "Kept your current plan.")]
+        st["step"] = "done"
+    elif body.action == "retry" or step == "stuck":
+        reply = _talk_finish(store, st, day)
+    elif step == "objective":
+        reply = _talk_objective(store, st, body, day)
+    elif step in interview.STEPS:
+        got, problem = interview.chip_answers(step, answers, text, st["defaults"])
+        if problem:
+            reply = [interview.coach(problem, step, [g | {"value": answers.get(g["key"]) or st["defaults"].get(g["key"])}
+                                                     for g in interview.QUESTIONS[step]["groups"]])]
+        else:
+            st["answers"] |= got
+            nxt = interview.next_step(step)
+            if nxt is None:
+                reply = _talk_finish(store, st, day)
+            else:
+                st["step"] = nxt
+                reply = [interview.ask(nxt, st["defaults"])]
+    else:  # a draft is up: typed changes
+        if not text:
+            raise HTTPException(422, "Tell me what to change.")
+        reply = _talk_change(store, st, text, day)
+    st["messages"] = (st["messages"] + reply)[-TALK_KEEP:]
+    store.save_settings({TALK_KEY: st})
+    return _talk_json(store, st)
 
 
 @app.post("/api/plan/{plan_id}/{decision}")
@@ -798,6 +1034,8 @@ def coach_plan(refresh: bool = False) -> dict:
         raise HTTPException(404, "No plan yet.")
     packet = coach.plan_packet(p, p["now"], date.fromisoformat(p["built_on"]),
                                planner.REPLAN_TEXT.get(p["reason"], p["reason"]), p.get("changes") or [])
+    if answers := store.settings().get("plan_context"):
+        packet["athlete_answers"] = answers  # tap answers from planning with the coach; no typed text
     return _coach(store, "plan", f"plan-{p['id']}", packet, coach.rules_plan(packet), refresh) | {"plan_id": p["id"]}
 
 

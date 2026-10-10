@@ -268,6 +268,7 @@ export interface Account {
   id: number;
   email: string;
   is_owner: boolean;
+  is_admin: boolean;
   created_at: string;
   has_password: boolean;
   google: { email: string | null; linked_at: string } | null;
@@ -451,4 +452,37 @@ export interface Schedule {
   warnings: ScheduleWarning[];
   kinds: { key: RunKind; label: string }[];
   zone_model: ZoneModel | null;
+}
+
+export interface AdminAccount {
+  id: number;
+  email: string;
+  is_owner: boolean;
+  is_admin: boolean;
+  created_at: string;
+  last_seen: string | null;
+  disabled_at: string | null;
+  sign_in: string[];
+  sessions: number;
+  activities: number;
+  connected: string[];
+  sources: string[];
+  last_sync: { at: string; source: string; ok: boolean } | null;
+  coach: { spent: number; ceiling: number | null; custom_ceiling: boolean; own_cap: number | null; limit: number | null };
+  disk_bytes: number;
+}
+
+export interface AdminOverview {
+  accounts: AdminAccount[];
+  month: string;
+  signup: { open: boolean; chosen: boolean | null; env: boolean };
+  system: {
+    revision: string | null;
+    model_version: string;
+    coach: { prompt_version: string; brief_model: string; analysis_model: string; key_set: boolean };
+    server_ceiling_usd: number;
+    data_bytes: number;
+    disk: { total: number; free: number };
+  };
+  log: { id: number; at: string; action: string; admin: string | null; target: string | null; detail: Record<string, unknown> | null }[];
 }

@@ -33,6 +33,11 @@ SESSION_DAYS = 30
 MIN_PASSWORD = 10
 EMAIL = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 SCRYPT = {"n": 2**15, "r": 8, "p": 1, "maxmem": 64 * 1024 * 1024, "dklen": 32}
+# The one account that can open the admin page. Matched on the signed-in account's email, which is
+# unique, so nobody else can sign up with it once it exists.
+ADMIN_EMAIL = "weiranxiong@gmail.com"
+# last_seen is written at most this often per account, so a page load doesn't write on every request.
+SEEN_EVERY = timedelta(minutes=5)
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS account (
@@ -65,7 +70,27 @@ CREATE TABLE IF NOT EXISTS identity (
     PRIMARY KEY (provider, subject),
     UNIQUE (account_id, provider)
 );
+CREATE TABLE IF NOT EXISTS config (
+    key TEXT PRIMARY KEY,
+    value TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS admin_log (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    at TEXT NOT NULL,
+    admin_id INTEGER NOT NULL,
+    action TEXT NOT NULL,
+    target_id INTEGER,
+    detail TEXT
+);
 """
+
+# Columns added to account after it first shipped; added on open when missing.
+ACCOUNT_COLUMNS = {
+    "disabled_at": "TEXT",          # set: the account can't sign in
+    "last_seen": "TEXT",            # last signed-in request, to SEEN_EVERY
+    "coach_ceiling_usd": "REAL",    # the admin's monthly coach ceiling for it; NULL is the server's
+}
 
 
 class AccountError(ValueError):
@@ -78,6 +103,13 @@ class Account:
     email: str
     is_owner: bool
     created_at: str
+    disabled_at: str | None = None
+    last_seen: str | None = None
+    coach_ceiling_usd: float | None = None
+
+    @property
+    def is_admin(self) -> bool:
+        return self.email.strip().lower() == ADMIN_EMAIL.lower()
 
 
 def _now() -> datetime:
@@ -140,6 +172,11 @@ class Accounts:
         self.db.execute("PRAGMA journal_mode = WAL").fetchone()
         self.db.execute("PRAGMA foreign_keys = ON")
         self.db.executescript(SCHEMA)
+        have = {r["name"] for r in self.db.execute("PRAGMA table_info(account)")}
+        for name, kind in ACCOUNT_COLUMNS.items():
+            if name not in have:
+                self.db.execute(f"ALTER TABLE account ADD COLUMN {name} {kind}")
+        self.db.commit()
         self._fernet = None
 
     def user_dir(self, account_id: int) -> Path:
@@ -163,7 +200,8 @@ class Accounts:
             con.close()
 
     def _row(self, r: sqlite3.Row | None) -> Account | None:
-        return None if r is None else Account(r["id"], r["email"], bool(r["is_owner"]), r["created_at"])
+        return None if r is None else Account(r["id"], r["email"], bool(r["is_owner"]), r["created_at"],
+                                              r["disabled_at"], r["last_seen"], r["coach_ceiling_usd"])
 
     def get(self, account_id: int) -> Account | None:
         return self._row(self.db.execute("SELECT * FROM account WHERE id = ?", (account_id,)).fetchone())
@@ -271,12 +309,70 @@ class Accounts:
         return token
 
     def session_account(self, token: str | None) -> Account | None:
+        """The signed-in account for a session token, or None. A disabled account has no sessions
+        (disabling ends them), but it is checked here too."""
         if not token:
             return None
+        now = _now()
         r = self.db.execute(
             "SELECT a.* FROM session s JOIN account a ON a.id = s.account_id"
-            " WHERE s.token_hash = ? AND s.expires_at > ?", (_token_hash(token), _now().isoformat())).fetchone()
-        return self._row(r)
+            " WHERE s.token_hash = ? AND s.expires_at > ? AND a.disabled_at IS NULL",
+            (_token_hash(token), now.isoformat())).fetchone()
+        account = self._row(r)
+        if account and (not account.last_seen or datetime.fromisoformat(account.last_seen) < now - SEEN_EVERY):
+            try:
+                self.db.execute("UPDATE account SET last_seen = ? WHERE id = ?", (now.isoformat(), account.id))
+                self.db.commit()
+            except sqlite3.OperationalError:  # busy: last_seen can wait for the next request
+                self.db.rollback()
+        return account
+
+    def end_sessions(self, account_id: int) -> int:
+        """Sign an account out everywhere. Returns how many sessions ended."""
+        n = self.db.execute("DELETE FROM session WHERE account_id = ?", (account_id,)).rowcount
+        self.db.commit()
+        return n
+
+    def session_count(self, account_id: int) -> int:
+        return self.db.execute("SELECT COUNT(*) FROM session WHERE account_id = ? AND expires_at > ?",
+                               (account_id, _now().isoformat())).fetchone()[0]
+
+    # Admin
+    def set_disabled(self, account_id: int, disabled: bool) -> None:
+        """A disabled account can't sign in by any method; its data stays as it is."""
+        self.db.execute("UPDATE account SET disabled_at = ? WHERE id = ?",
+                        (_now().isoformat() if disabled else None, account_id))
+        if disabled:
+            self.db.execute("DELETE FROM session WHERE account_id = ?", (account_id,))
+        self.db.commit()
+
+    def set_coach_ceiling(self, account_id: int, usd: float | None) -> None:
+        self.db.execute("UPDATE account SET coach_ceiling_usd = ? WHERE id = ?", (usd, account_id))
+        self.db.commit()
+
+    def config(self, key: str):
+        r = self.db.execute("SELECT value FROM config WHERE key = ?", (key,)).fetchone()
+        return None if r is None else json.loads(r["value"])
+
+    def set_config(self, key: str, value) -> None:
+        self.db.execute("INSERT OR REPLACE INTO config VALUES (?, ?, ?)", (key, json.dumps(value), _now().isoformat()))
+        self.db.commit()
+
+    def log_admin(self, admin_id: int, action: str, target_id: int | None = None, detail: dict | None = None) -> None:
+        self.db.execute("INSERT INTO admin_log (at, admin_id, action, target_id, detail) VALUES (?, ?, ?, ?, ?)",
+                        (_now().isoformat(), admin_id, action, target_id, json.dumps(detail) if detail else None))
+        self.db.commit()
+
+    def admin_log(self, limit: int = 50) -> list[dict]:
+        return [{"id": r["id"], "at": r["at"], "admin_id": r["admin_id"], "action": r["action"],
+                 "target_id": r["target_id"], "detail": json.loads(r["detail"]) if r["detail"] else None}
+                for r in self.db.execute("SELECT * FROM admin_log ORDER BY id DESC LIMIT ?", (limit,))]
+
+    def sign_in_methods(self, account_id: int) -> list[str]:
+        methods = ["password"] if self.has_password(account_id) else []
+        methods += [r["provider"] for r in self.db.execute(
+            "SELECT provider FROM identity WHERE account_id = ? ORDER BY provider", (account_id,))]
+        return methods
 
     def end_session(self, token: str | None) -> None:
         if token:

@@ -486,7 +486,8 @@ export interface WeekProgress { start: string; dated: boolean; target: (Vol & { 
 export interface PlanReply { verdict: string; limiter: string; plan: string }
 export interface ReviewReply { week: string; next: string }
 
-export interface ChatMessage { id: number; created_at: string; role: "athlete" | "coach"; text: string; source: string | null; log_id: number | null; cost?: AiCost | null }
+export interface CoachAction { id: number; kind: string; summary: string; status: "proposed" | "running" | "done" | "dismissed" | "failed"; result: string | null }
+export interface ChatMessage { id: number; created_at: string; role: "athlete" | "coach"; text: string; source: string | null; log_id: number | null; cost?: AiCost | null; actions?: CoachAction[] }
 
 export type RunKind = "easy" | "long" | "hills" | "tempo" | "intervals" | "hike" | "race" | "other";
 

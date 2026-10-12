@@ -1,5 +1,6 @@
 "use client";
 
+import ActionCard from "@/components/ActionCard";
 import AiCost from "@/components/AiCost";
 import { useEffect, useRef, useState } from "react";
 import CoachFeedback from "@/components/CoachFeedback";
@@ -60,7 +61,7 @@ export default function Chat({ initial, full = false, suggestions = [] }: Props)
       <div style={{ display: "flex", flexDirection: "column", gap: 10, maxHeight: full ? "min(62vh, 640px)" : 420, minHeight: full ? 220 : undefined, overflowY: "auto" }}>
         {messages.length === 0 ? (
           <div className="muted">{full
-            ? "Ask anything about your training: your recent weeks, a run, how ready you are, what to do this week."
+            ? "Ask anything about your training, or ask the coach to do something: add or move a run, update your goals, sync. You confirm each change first."
             : <>Ask about your plan, your loads or your objective. For example: can I swap Saturday&apos;s long day to Sunday?</>}</div>
         ) : null}
         {messages.length === 0 && suggestions.length ? (
@@ -77,6 +78,7 @@ export default function Chat({ initial, full = false, suggestions = [] }: Props)
             borderRadius: 12, padding: "8px 12px", fontSize: 14, display: "flex", flexDirection: "column", gap: 6,
           }}>
             <div style={{ whiteSpace: "pre-wrap" }}>{m.text}</div>
+            {m.actions?.map((a) => <ActionCard key={a.id} initial={a} />)}
             {m.role === "coach" && m.source === "coach" && m.log_id ? (
               <div style={{ display: "flex", justifyContent: "space-between", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
                 <span className="muted" style={{ fontSize: 11 }}>AI coach, numbers checked<AiCost cost={m.cost} /></span>

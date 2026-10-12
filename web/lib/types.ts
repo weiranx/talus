@@ -109,11 +109,27 @@ export interface LoadData {
   date: string;
   ledgers: Record<Ledger, { today: LedgerDay | null; series: LedgerDay[] }>;
   intensity_by_week: (ZoneShare & { start: string; zones: HrZoneShare | null })[];
+  weekly: (WeekTotals & { days: number })[];
+  last_week_to_date: WeekTotals;
   zone_model: ZoneModel | null;
   biggest_days: ActivitySummary[];
   thresholds: Thresholds | null;
   history: { since: string | null; gap: { from: string; to: string } | null };
   projection: Projection;
+}
+
+/** Everything done in one Monday week, or part of one. */
+export interface WeekTotals {
+  start: string;
+  activities: number;
+  distance_mi: number;
+  gain_ft: number;
+  loss_ft: number;
+  effort_mi: number;
+  moving_time_s: number;
+  cardio_load: number;
+  climb_load: number;
+  descent_load: number;
 }
 
 export interface ProjectedDay { day: string; fitness: number; fatigue: number; flags: string[] }

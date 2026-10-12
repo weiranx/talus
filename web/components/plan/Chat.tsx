@@ -6,8 +6,15 @@ import CoachFeedback from "@/components/CoachFeedback";
 import { Dots } from "@/components/Loading";
 import type { ChatMessage } from "@/lib/types";
 
+type Props = {
+  initial: ChatMessage[];
+  // The Coach page shows the chat full height, with a few starter questions.
+  full?: boolean;
+  suggestions?: string[];
+};
+
 // Ask the coach. Every number in an answer is checked against your data before it shows.
-export default function Chat({ initial }: { initial: ChatMessage[] }) {
+export default function Chat({ initial, full = false, suggestions = [] }: Props) {
   const [messages, setMessages] = useState(initial);
   const [question, setQuestion] = useState("");
   const [busy, setBusy] = useState(false);
@@ -18,8 +25,12 @@ export default function Chat({ initial }: { initial: ChatMessage[] }) {
 
   async function ask(e: React.FormEvent) {
     e.preventDefault();
-    const q = question.trim();
-    if (!q) return;
+    send(question);
+  }
+
+  async function send(text: string) {
+    const q = text.trim();
+    if (!q || busy) return;
     setBusy(true);
     setError(null);
     setMessages([...messages, { id: -1, created_at: "", role: "athlete", text: q, source: null, log_id: null }]);
@@ -43,12 +54,21 @@ export default function Chat({ initial }: { initial: ChatMessage[] }) {
   return (
     <section className="card">
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-        <h2 className="label">Ask the coach</h2>
+        <h2 className="label">{full ? "Chat" : "Ask the coach"}</h2>
         {messages.length ? <button className="link-btn" onClick={clear}>Clear</button> : null}
       </div>
-      <div style={{ display: "flex", flexDirection: "column", gap: 10, maxHeight: 420, overflowY: "auto" }}>
+      <div style={{ display: "flex", flexDirection: "column", gap: 10, maxHeight: full ? "min(62vh, 640px)" : 420, minHeight: full ? 220 : undefined, overflowY: "auto" }}>
         {messages.length === 0 ? (
-          <div className="muted">Ask about your plan, your loads or your objective. For example: can I swap Saturday&apos;s long day to Sunday?</div>
+          <div className="muted">{full
+            ? "Ask anything about your training: your recent weeks, a run, how ready you are, what to do this week."
+            : <>Ask about your plan, your loads or your objective. For example: can I swap Saturday&apos;s long day to Sunday?</>}</div>
+        ) : null}
+        {messages.length === 0 && suggestions.length ? (
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+            {suggestions.map((s) => (
+              <button key={s} type="button" className="chip" disabled={busy} onClick={() => send(s)}>{s}</button>
+            ))}
+          </div>
         ) : null}
         {messages.map((m, i) => (
           <div key={`${m.id}-${i}`} style={{

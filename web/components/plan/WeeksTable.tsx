@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { dayLabel, mi, n0 } from "@/lib/format";
-import { FOCUS_TEXT, hours } from "@/lib/plan";
-import type { PlanWeek, WeekActual } from "@/lib/types";
+import { FOCUS_TEXT, hours, WORKOUT_TEXT } from "@/lib/plan";
+import type { LongDay, PlanWeek, WeekActual } from "@/lib/types";
 
 // Week targets to the objective: miles and feet side by side, the long day, and why a week was held back.
 // Done: what you actually ran in weeks that have started, colored against the target the way
@@ -11,6 +11,12 @@ function doneTone(w: PlanWeek, a: WeekActual, current: boolean): string | undefi
   if (shares.filter((v) => v >= 0.9).length >= 2) return "var(--good-ink)";
   if (!current && shares.filter((v) => v < 0.7).length >= 2) return "var(--bad-ink)";
   return undefined;
+}
+
+// One long day, or a back-to-back pair as "20.1 + 13.4 mi, 5,240 + 3,490 ft".
+function longText(l: LongDay): string {
+  if (!l.second) return `${mi(l.miles)} mi, ${n0(l.gain_ft)} ft`;
+  return `${mi(l.miles)} + ${mi(l.second.miles)} mi, ${n0(l.gain_ft)} + ${n0(l.second.gain_ft)} ft`;
 }
 
 export default function WeeksTable({ weeks, current, limit, full, actuals }: {
@@ -30,7 +36,7 @@ export default function WeeksTable({ weeks, current, limit, full, actuals }: {
             <th scope="col" className="num">Gain, ft</th>
             <th scope="col" className="num">Descent, ft</th>
             <th scope="col" className="num">Time</th>
-            <th scope="col" className="num">Long day</th>
+            <th scope="col" className="num">{weeks.some((w) => w.long?.second) ? "Long days" : "Long day"}</th>
             {showDone ? <th scope="col" className="num" style={{ paddingLeft: 16 }}>Done</th> : null}
             {full ? <th scope="col">Notes</th> : null}
           </tr>
@@ -39,12 +45,12 @@ export default function WeeksTable({ weeks, current, limit, full, actuals }: {
           {shown.map((w) => (
             <tr key={w.start} className={w.start === current ? "hl" : undefined}>
               <td>{dayLabel(w.start, { month: "short", day: "numeric" })}</td>
-              <td>{FOCUS_TEXT[w.focus]}{w.limited_by.length ? " *" : ""}</td>
+              <td>{FOCUS_TEXT[w.focus]}{w.limited_by.length ? " *" : ""}{w.workout ? <span className="muted"> · {WORKOUT_TEXT[w.workout].toLowerCase()}</span> : null}</td>
               <td className="num">{mi(w.miles)}</td>
               <td className="num">{n0(w.gain_ft)}</td>
               <td className="num">{n0(w.loss_ft)}</td>
               <td className="num">{hours(w.hours)}</td>
-              <td className="num">{w.long ? `${mi(w.long.miles)} mi, ${n0(w.long.gain_ft)} ft` : "–"}</td>
+              <td className="num">{w.long ? longText(w.long) : "–"}</td>
               {showDone ? (
                 <td className="num" style={{ paddingLeft: 16, color: actuals?.[w.start] ? doneTone(w, actuals[w.start], w.start === current) : undefined }}>
                   {actuals?.[w.start] ? `${mi(actuals[w.start].miles)} mi, ${n0(actuals[w.start].gain_ft)} ft${w.start === current ? " so far" : ""}` : ""}

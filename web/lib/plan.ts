@@ -1,5 +1,5 @@
 import { n0 } from "@/lib/format";
-import type { Dim, DimStatus, Focus, SessionKind, WeekProgress } from "@/lib/types";
+import type { Dim, DimStatus, Focus, SessionKind, WeekProgress, Workout } from "@/lib/types";
 
 export const DAY_NAMES = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"];
 export const DAY_SHORT = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
@@ -13,7 +13,8 @@ export const STATUS_TONE: Record<DimStatus, "good" | "warn" | "bad" | "neutral">
 };
 
 export const KIND_COLOR: Record<SessionKind, string> = {
-  long: "var(--climb)", hills: "var(--descent)", easy: "var(--cardio)", rest: "var(--line)",
+  long: "var(--climb)", long2: "var(--climb)", hills: "var(--descent)", easy: "var(--cardio)", rest: "var(--line)",
+  track: "var(--target)", tempo: "var(--target)", hill_repeats: "var(--descent)",
   objective: "var(--ink)", done: "var(--z1)",
 };
 
@@ -24,6 +25,10 @@ export function dimValue(d: Dim, v: number | null): string {
   if (d.unit === "h" || d.unit === "effort mi") return v.toFixed(1);
   return n0(v);
 }
+
+export const WORKOUT_TEXT: Record<Workout, string> = {
+  none: "None", track: "Track intervals", tempo: "Tempo", hill_repeats: "Hill repeats",
+};
 
 export function hours(h: number): string {
   const m = Math.round(h * 60);

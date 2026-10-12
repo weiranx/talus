@@ -16,6 +16,7 @@ from .parse import parse
 from .sources import apple_health
 from .sources.base import RawFile, RemoteActivity, sniff_format, wall_clock_start
 from .store import Store
+from .watch import WatchWellness, fit_file_type
 
 ACTIVITY_EXT = (".fit", ".gpx", ".tcx", ".fit.gz", ".gpx.gz", ".tcx.gz")
 
@@ -30,6 +31,7 @@ def import_paths(store: Store, paths: list[tuple[str, Path]], log=print, since: 
               "error": None}
     added: list[int] = []
     th = store.thresholds()
+    watch = WatchWellness()
 
     def add(act: RemoteActivity, raw: RawFile, label: str) -> None:
         result["listed"] += 1
@@ -47,6 +49,12 @@ def import_paths(store: Store, paths: list[tuple[str, Path]], log=print, since: 
     def one_file(name: str, data: bytes) -> None:
         if data[:2] == b"\x1f\x8b":
             data = gzip.decompress(data)
+        if data[8:12] == b".FIT" and fit_file_type(data) not in (None, "activity"):
+            # A watch's own folder: overnight files become wellness, the rest (settings, totals,
+            # courses) are not Talus's to read.
+            if not watch.add(data):
+                result["other_files"] = result.get("other_files", 0) + 1
+            return
         try:
             raw = RawFile(data, sniff_format(data))
             streams = parse(raw)
@@ -81,6 +89,12 @@ def import_paths(store: Store, paths: list[tuple[str, Path]], log=print, since: 
                         one_file(m, zf.read(m))
             else:
                 one_file(name, path.read_bytes())
+        nights = watch.days()
+        if nights:
+            store.save_wellness(merge_wellness(store, nights))
+            result["source"] = "watch" if not result["listed"] else result["source"]
+            result["wellness_days"] += len(nights)
+            log(f"{len(nights)} days of overnight HRV, resting HR and sleep from the watch's files")
         log(f"{result['listed']} activities read, {result['new']} new, {result['duplicates']} already here from another source")
         if added and th is not None:
             rebuild_ledgers(store)
@@ -90,6 +104,18 @@ def import_paths(store: Store, paths: list[tuple[str, Path]], log=print, since: 
     finally:
         store.save_settings({"last_import": result})
     return result | {"added_ids": added}
+
+
+def merge_wellness(store: Store, days: list) -> list:
+    """Fill what the watch's files lack (a day with sleep but no HRV file) from what is stored, so
+    a partial copy of the watch never blanks a fuller night."""
+    stored = store.wellness(min(d.day for d in days), max(d.day for d in days))
+    for d in days:
+        old = stored.get(d.day) or {}
+        for k in ("hrv", "resting_hr", "sleep_s", "sleep_score"):
+            if getattr(d, k) is None and old.get(k) is not None:
+                setattr(d, k, old[k])
+    return days
 
 
 HEALTHKIT = "healthkit"

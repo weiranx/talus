@@ -50,7 +50,7 @@ def main(argv: list[str] | None = None) -> None:
     s.add_argument("--since", type=date.fromisoformat)
     s.add_argument("--no-coach", action="store_true", help="skip writing the coach brief and reads after the sync")
 
-    i = sub.add_parser("import", help="import FIT, GPX or TCX files, zips of them, or an Apple Health export.zip")
+    i = sub.add_parser("import", help="import FIT, GPX or TCX files, zips or folders of them (such as a watch's GARMIN folder), or an Apple Health export.zip")
     i.add_argument("files", nargs="+", type=Path)
     i.add_argument("--no-coach", action="store_true", help="skip writing the coach brief and reads after the import")
 
@@ -355,8 +355,12 @@ def sync(store: Store, source_name: str, since: date, log=print, credential: dic
 
 
 def cmd_import(store: Store, args) -> None:
-    from .imports import import_paths
-    result = import_paths(store, [(p.name, p) for p in args.files])
+    from .imports import ACTIVITY_EXT, import_paths
+    files = []
+    for p in args.files:  # a folder, such as a copy of a watch's GARMIN folder, is read whole
+        files += sorted((str(f.relative_to(p)), f) for f in p.rglob("*") if f.name.lower().endswith(ACTIVITY_EXT)) \
+            if p.is_dir() else [(p.name, p)]
+    result = import_paths(store, files)
     if store.thresholds() is None:
         print("Set thresholds with `talus thresholds` to score these activities.")
     elif not args.no_coach:

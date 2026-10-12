@@ -261,6 +261,7 @@
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = Support/Info.plist;
 				INFOPLIST_KEY_CFBundleDisplayName = Talus;
+				INFOPLIST_KEY_NSBluetoothAlwaysUsageDescription = "Talus connects to your Garmin watch to download new activities, sleep and HRV files. Nothing on the watch is changed.";
 				INFOPLIST_KEY_NSHealthShareUsageDescription = "Talus reads your workouts, heart rate, HRV, resting heart rate and sleep to score training load and readiness.";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
@@ -293,6 +294,7 @@
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = Support/Info.plist;
 				INFOPLIST_KEY_CFBundleDisplayName = Talus;
+				INFOPLIST_KEY_NSBluetoothAlwaysUsageDescription = "Talus connects to your Garmin watch to download new activities, sleep and HRV files. Nothing on the watch is changed.";
 				INFOPLIST_KEY_NSHealthShareUsageDescription = "Talus reads your workouts, heart rate, HRV, resting heart rate and sleep to score training load and readiness.";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;

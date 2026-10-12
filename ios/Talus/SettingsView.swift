@@ -84,10 +84,104 @@ struct SettingsView: View {
 struct SourcesPage: View {
     var body: some View {
         SettingsPage(title: "Data sources") { s, reload in
+            if let method = s.syncMethod {
+                SyncMethodCard(method: method, reload: reload)
+                if method == "watch" { WatchCard(lastSync: s.sources.watch?.lastSync, reload: reload) }
+            }
             IntervalsCard(source: s.source, lastSync: s.sources.intervals.lastSync, reload: reload)
             if s.sources.garmin.available { GarminCard(garmin: s.sources.garmin, reload: reload) }
             UploadCard(upload: s.sources.upload, reload: reload)
         }
+    }
+}
+
+/// How new activities arrive: intervals.icu's API, or straight off a Garmin watch over Bluetooth.
+private struct SyncMethodCard: View {
+    let reload: () async -> Void
+    @EnvironmentObject private var api: API
+    @State private var method: String
+    @State private var message: String?
+
+    init(method: String, reload: @escaping () async -> Void) {
+        self.reload = reload
+        _method = State(initialValue: method)
+    }
+
+    var body: some View {
+        Card {
+            SectionLabel("Sync method")
+            Picker("Sync method", selection: $method) {
+                Text("intervals.icu").tag("intervals")
+                Text("Garmin watch").tag("watch")
+            }
+            .pickerStyle(.segmented)
+            .onChange(of: method) { old, new in Task { await save(new, before: old) } }
+            Text(method == "watch" ? "Sync straight from your watch over Bluetooth, here or in Chrome on a computer." :
+                    "Talus pulls new activities and overnight data from intervals.icu.")
+                .font(.caption).foregroundStyle(.secondary)
+            if let message { FormMessage(ok: false, text: message) }
+            Text("File upload works with either.").font(.caption).foregroundStyle(.secondary)
+        }
+    }
+
+    private func save(_ new: String, before: String) async {
+        struct Body: Encodable { let method: String }
+        message = nil
+        do {
+            try await api.put("/api/settings/sync-method", Body(method: new))
+            await reload()
+        } catch {
+            method = before
+            message = error.localizedDescription
+        }
+    }
+}
+
+/// Sync from a Garmin watch: connect, list its files, download the new ones and import each.
+private struct WatchCard: View {
+    let lastSync: String?
+    let reload: () async -> Void
+    @EnvironmentObject private var api: API
+    @EnvironmentObject private var watch: WatchSync
+    @State private var showLog = false
+
+    var body: some View {
+        Card {
+            SectionLabel("Garmin watch")
+            Text("Pulls activities, sleep, HRV and resting heart rate straight off your watch over Bluetooth, without Garmin Connect's servers. Keep the watch close and awake. Nothing on the watch is changed or deleted.")
+                .font(.caption).foregroundStyle(.secondary)
+            LabeledContent("Last sync", value: lastSync.map(SettingsText.when) ?? "Not yet")
+                .font(.subheadline)
+            Button { Task { await watch.sync(api) } } label: {
+                BusyLabel(title: watch.running ? "Syncing" : "Sync from watch", busy: watch.running)
+            }
+            .buttonStyle(.borderedProminent)
+            .disabled(watch.running)
+            if watch.running {
+                VStack(alignment: .leading, spacing: 4) {
+                    if let p = watch.progress {
+                        Text("\(watch.phase ?? "Downloading") \(p.index) of \(p.count): \(p.kind), \(SettingsText.bytes(p.received)) received")
+                        ProgressView(value: Double(p.index - 1), total: Double(p.count))
+                    } else if let phase = watch.phase {
+                        Text(phase)
+                    }
+                    if let last = watch.log.last { Text(last).foregroundStyle(.secondary).lineLimit(2) }
+                }
+                .font(.caption)
+            }
+            if let r = watch.result { FormMessage(ok: r.ok, text: r.text) }
+            if !watch.log.isEmpty && !watch.running {
+                DisclosureGroup("Details", isExpanded: $showLog) {
+                    VStack(alignment: .leading, spacing: 2) {
+                        ForEach(Array(watch.log.enumerated()), id: \.offset) { _, l in Text(l) }
+                    }
+                    .font(.caption2.monospaced()).foregroundStyle(.secondary)
+                    .textSelection(.enabled)
+                }
+                .font(.caption)
+            }
+        }
+        .onChange(of: watch.running) { _, running in if !running { Task { await reload() } } }
     }
 }
 

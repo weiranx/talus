@@ -124,7 +124,9 @@ extension Color {
     // The 80% below-AeT target line.
     static let target = Color(hex: 0xA3231B, dark: 0xF07A70)
 
-    init(hex: UInt32, dark: UInt32? = nil) {
+    /// nonisolated: UIKit resolves dynamic colors on whatever thread renders, so a main-actor
+    /// provider closure traps (seen during a long watch sync).
+    nonisolated init(hex: UInt32, dark: UInt32? = nil) {
         func rgb(_ h: UInt32) -> UIColor {
             UIColor(red: CGFloat((h >> 16) & 0xFF) / 255, green: CGFloat((h >> 8) & 0xFF) / 255,
                     blue: CGFloat(h & 0xFF) / 255, alpha: 1)

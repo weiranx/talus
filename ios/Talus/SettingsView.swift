@@ -148,7 +148,7 @@ private struct WatchCard: View {
     var body: some View {
         Card {
             SectionLabel("Garmin watch")
-            Text("Pulls activities, sleep, HRV and resting heart rate straight off your watch over Bluetooth, without Garmin Connect's servers. Keep the watch close and awake. Nothing on the watch is changed or deleted.")
+            Text("Pulls new activities straight off your watch over Bluetooth, without Garmin Connect's servers. Sleep, HRV and resting heart rate still come from intervals.icu or Apple Health. Keep the watch close and awake. Nothing on the watch is changed or deleted.")
                 .font(.caption).foregroundStyle(.secondary)
             LabeledContent("Last sync", value: lastSync.map(SettingsText.when) ?? "Not yet")
                 .font(.subheadline)

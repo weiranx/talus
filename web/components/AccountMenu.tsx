@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useEffect, useState } from "react";
 
@@ -22,7 +23,10 @@ export default function AccountMenu() {
   return (
     <div className="side-note account-menu">
       <div className="account-email" style={{ overflowWrap: "anywhere" }}>{email}</div>
-      <button className="link-btn" onClick={signOut}>Sign out</button>
+      <div className="account-links">
+        <Link href="/status" className="link-btn">Status</Link>
+        <button className="link-btn" onClick={signOut}>Sign out</button>
+      </div>
     </div>
   );
 }

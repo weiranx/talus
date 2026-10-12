@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { notFound } from "next/navigation";
 import AdminView from "@/components/AdminView";
 import EngineDown from "@/components/EngineDown";
@@ -20,6 +21,7 @@ export default async function AdminPage() {
     <>
       <header className="page-head">
         <h1 className="title">Admin</h1>
+        <Link href="/status" style={{ paddingBottom: 6 }}>Status</Link>
       </header>
       <AdminView data={data} />
     </>

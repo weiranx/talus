@@ -29,7 +29,10 @@ export default async function SettingsPage() {
     <>
       <header className="page-head">
         <h1 className="title">Settings</h1>
-        <Link href="/welcome" style={{ paddingBottom: 6 }}>Setup guide</Link>
+        <div className="actions" style={{ paddingBottom: 6 }}>
+          <Link href="/status">Status</Link>
+          <Link href="/welcome">Setup guide</Link>
+        </div>
       </header>
       <ThresholdsCard current={s.thresholds} inferred={s.inferred} />
       {s.thresholds ? <ZonesCard zones={s.thresholds.zones} /> : null}

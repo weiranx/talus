@@ -28,7 +28,7 @@ from fastapi import BackgroundTasks, FastAPI, HTTPException, Request, Response
 from fastapi.responses import JSONResponse, RedirectResponse, StreamingResponse
 from pydantic import BaseModel, ConfigDict, Field
 
-from . import MODEL_VERSION, admin, cli, coach, explain, google_auth, interview, intervals_auth, ledger, readiness_score, wellness, zones
+from . import MODEL_VERSION, admin, cli, coach, explain, google_auth, interview, intervals_auth, ledger, readiness_score, status, wellness, zones
 from . import plan as planner
 from . import schedule
 from . import settings as app_settings
@@ -72,7 +72,7 @@ def get_store() -> Store:
 
 
 class AuthMiddleware:
-    """Every /api route except /api/auth/* needs a signed-in session. The account is set for the
+    """Every /api route except /api/auth/* and /api/health needs a signed-in session. The account is set for the
     request, and get_store() opens that account's folder, so no route can reach another
     account's data."""
 
@@ -81,7 +81,8 @@ class AuthMiddleware:
 
     async def __call__(self, scope, receive, send):
         path = scope.get("path", "")
-        if scope["type"] != "http" or not path.startswith("/api/") or path.startswith("/api/auth/"):
+        if (scope["type"] != "http" or not path.startswith("/api/") or path.startswith("/api/auth/")
+                or path == "/api/health"):
             return await self.inner(scope, receive, send)
         cookie = SimpleCookie()
         for name, value in scope.get("headers", []):
@@ -582,6 +583,26 @@ def warm_details(store: Store, force: bool = False) -> None:
                 _warming.discard(key)
 
     threading.Thread(target=run, name=f"warm {key}", daemon=True).start()
+
+
+def read_ahead(store: Store) -> dict:
+    """How far the background read of every activity (warm_details) has got: one stat each."""
+    th = store.thresholds()
+    rows = store.scored_activities()
+    with _warming_guard:
+        running = str(store.dir) in _warming
+    if th is None:
+        return {"state": "idle", "ready": 0, "total": len(rows), "running": running, "waiting_for": "thresholds"}
+    zm = zones.model(th, store.settings().get("hr_zones"))
+    ready = 0
+    for row in rows:
+        try:
+            ready += _detail_path(store, row, _detail_key(store, row, th, zm)).exists()
+        except OSError:  # file missing: its page says why when opened
+            pass
+    # Short of done and not running: the next page load (or this status check) carries on.
+    state = "ok" if ready == len(rows) or running else "idle"
+    return {"state": state, "ready": ready, "total": len(rows), "running": running, "waiting_for": None}
 
 
 @app.get("/api/activities/{activity_id}")
@@ -2604,3 +2625,25 @@ def admin_coach_ceiling(account_id: int, body: CeilingIn) -> dict:
     accounts.set_coach_ceiling(target.id, body.ceiling_usd)
     accounts.log_admin(me.id, "coach_ceiling", target.id, {"from": target.coach_ceiling_usd, "to": body.ceiling_usd})
     return {"ok": True}
+
+
+# Status page. /api/health is open to anyone, for an "is it up" check; it says nothing about
+# accounts. /api/status is the signed-in account's own, plus the server for the admin.
+@app.get("/api/health")
+def health() -> dict:
+    return status.engine()
+
+
+@app.get("/api/status")
+def status_page() -> dict:
+    accounts, account = get_accounts(), current_account()
+    store = get_store()
+    saved = store.settings()
+    with _imports_guard:
+        importing = dict(_imports[str(store.dir)]) if str(store.dir) in _imports else None
+    out = {"engine": status.engine(), "sources": status.sources(accounts, account, store, saved),
+           "data": status.data(store), "read_ahead": read_ahead(store), "importing": importing,
+           "coach": status.coach(store, _coach_cap(store), bool(_coach_settings(store)["coach_enabled"])),
+           "server": status.server(accounts, _signup_open(accounts)) if account.is_admin else None}
+    warm_details(store)
+    return out

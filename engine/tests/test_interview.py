@@ -101,6 +101,9 @@ def test_plan_by_conversation(tmp_path, monkeypatch):
     assert client.get("/api/plan").json()["constraints"]["long_day"] == 6
     r = client.post("/api/plan/talk", json={"text": "make it more fun"}).json()
     assert r["messages"][-1]["text"].endswith(interview.EDIT_HELP)
+    # A question gets an answer, not the list of changes: without the coach, the engine's finish time.
+    r = client.post("/api/plan/talk", json={"text": "what time can i finish this"}).json()
+    assert "h of moving time" in r["messages"][-1]["text"] and interview.EDIT_HELP not in r["messages"][-1]["text"]
     r = client.post("/api/plan/talk", json={"action": "accept"}).json()
     assert r["step"] == "done" and client.get("/api/plan").json()["accepted"]
     # Changing an accepted plan starts its own conversation; keeping it declines the draft.
@@ -190,3 +193,30 @@ def test_no_race_gets_a_fitness_block(tmp_path, monkeypatch):
     assert r["step"] == "objective" and "12-week block" in last["text"] and last["groups"][0]["key"] == "confirm"
     r = client.post("/api/plan/talk", json={"answers": {"confirm": "Use this"}}).json()
     assert r["step"] == "goal" and "Training for Mountain fitness block" in r["messages"][-2]["text"]
+
+
+def test_questions_and_cut_off_asks():
+    assert interview.is_question("what time can i finish canyons 100m")
+    assert interview.is_question("Is week 3 too big?") and not interview.is_question("move my long day to Sunday")
+    long = ("A finish-time estimate for the Canyons 100 miler is not something I can change in the plan. "
+            "Ask on the Plan page or in chat.")
+    text = interview.cant_text(long)
+    assert "(A finish-time estimate for the Canyons 100 miler is not something I can change…)" in text
+
+
+def test_plan_questions_go_to_the_coach(tmp_path, monkeypatch):
+    client = _setup(tmp_path, monkeypatch)
+    client.put("/api/plan/objective", json=OBJ | {"day": (date.today() + timedelta(weeks=10)).isoformat()})
+    client.post("/api/plan/talk/restart", json={"mode": "setup"})
+    client.post("/api/plan/talk", json={"answers": {"keep": "Keep it"}})
+    for answers in ({"goal": "Finish strong"}, {"days": ["Tue", "Thu", "Sat", "Sun"], "long_day": "Sat"},
+                    {"weekday": "1 h", "weekend": "4 h"}, {"terrain": "Rolling hills"},
+                    {"body": "Nothing to note", "feel": "Fresh"}):
+        r = client.post("/api/plan/talk", json={"answers": answers}).json()
+    assert r["step"] == "draft"
+    fake = FakeClient({"answer": "About 9 to 11 hours on your recent pace.", "used": [], "actions": []})
+    monkeypatch.setattr(api, "coach_client", lambda: fake)
+    r = client.post("/api/plan/talk", json={"text": "what time can i finish?"}).json()
+    assert r["messages"][-1]["text"] == "About 9 to 11 hours on your recent pace."
+    assert len(fake.calls) == 1 and "Mode: chat." in fake.calls[0]["messages"][0]["content"]
+    assert client.get("/api/coach/chat").json()["messages"] == []  # not added to the Coach chat

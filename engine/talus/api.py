@@ -1266,11 +1266,15 @@ def _talk_change(store: Store, st: dict, text: str, day: date) -> list[dict]:
     if obj is None or before is None:
         st["step"] = "done"
         return [interview.coach("There's no plan to change. Start a new one from the Plan page.")]
+    if interview.is_question(text) and not interview.rules_edits(text):
+        return [_talk_question(store, text, day, obj, before)]
     c = _constraints(store)
     packet = {"today": day.isoformat(), "text": text, "training_days": c.days, "long_day": c.long_day,
               "weeks_in_plan": len(before["weeks"])}
     read, meta = _talk_read(store, "edit", text, packet, {"edits": interview.rules_edits(text)})
     edits = read["edits"] if meta is None else interview.from_edits(read["edits"])
+    if not edits and interview.is_question(text):
+        return [_talk_question(store, text, day, obj, before)]
     if not edits:
         asked = read.get("cannot") if meta is not None and isinstance(read.get("cannot"), str) else None
         return [interview.coach(interview.cant_text(asked), "draft") | (meta or {})]
@@ -1288,6 +1292,27 @@ def _talk_change(store: Store, st: dict, text: str, day: date) -> list[dict]:
         actions.append({"id": "keep", "label": "Keep my current plan"})
     return [interview.coach(interview.change_text(done, skipped, planner.diff(before, plan)), "draft", actions=actions)
             | (meta or {})]
+
+
+def _talk_question(store: Store, text: str, day: date, obj: planner.Objective, plan: dict) -> dict:
+    """A question in the plan chat gets the coach chat's answer, read against the plan being
+    talked about. It isn't added to the Coach chat history and proposes no actions. Without the
+    coach, a finish-time question gets the engine's estimate."""
+    name = plan["objective"]["name"]
+    fallback = interview.finish_text(plan, name) if interview.FINISH.search(text) else (
+        "I can't answer that here without the AI coach. " + interview.EDIT_HELP)
+    try:
+        t = today()
+    except HTTPException:
+        t = None
+    acts = _activities(store)
+    now = _readiness_json(planner.readiness_now(obj, acts, _descent_fitness(_plan_history(store, day)), day))
+    packet = coach.chat_packet(text, [], t, plan, now, [], [a for a in acts if a["day"] >= (day - timedelta(days=13)).isoformat()],
+                               day, acts)
+    _noted(store, packet)
+    out = _coach(store, "chat", "chat", packet, {"answer": fallback, "used": [], "actions": []}, False)
+    answer = out["reply"]["answer"] if out["source"] == "coach" else fallback
+    return interview.coach(answer, "draft") | ({"cost": out["cost"]} if out["source"] == "coach" else {})
 
 
 @app.get("/api/plan/talk")

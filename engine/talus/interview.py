@@ -478,11 +478,41 @@ EDIT_HELP = ("I can move your long day, add or drop a training day, change how l
              "objective.")
 
 
+def _short(text: str, most: int = 80) -> str:
+    """The first sentence of text, cut at a word under `most` characters."""
+    first = re.split(r"(?<=[.!?])\s", text.strip(), maxsplit=1)[0].rstrip(".!? ")
+    if len(first) <= most:
+        return first
+    return first[:most].rsplit(" ", 1)[0].rstrip(",;:") + "…"
+
+
 def cant_text(asked: str | None) -> str:
     """The reply when nothing asked for is a change the plan can make."""
     if asked:
-        return f"I can't change that in the plan yet ({asked[:120].rstrip('.')}). " + EDIT_HELP
+        return f"I can't change that in the plan yet ({_short(asked)}). " + EDIT_HELP
     return "I didn't catch a change I can make. " + EDIT_HELP
+
+
+QUESTION = re.compile(r"^\s*(?:what|what's|how|when|why|where|which|who|can i|could i|will i|would i|should i|"
+                      r"am i|is|are|do|does|did|is it|tell me|explain)\b", re.I)
+FINISH = re.compile(r"\b(?:finish|finishing|time|how long|hours?|pace|cutoff|cut-off)\b", re.I)
+
+
+def is_question(text: str) -> bool:
+    """A question about the plan or the objective, rather than a change to it."""
+    return text.strip().endswith("?") or bool(QUESTION.match(text))
+
+
+def finish_text(plan: dict, name: str) -> str:
+    """The engine's finish-time estimate for the objective, with what it rests on."""
+    dem, p = plan["demand"], plan["pace"]
+    t = dem["time"]
+    basis = (f"your pace over the last 8 weeks, {p['min_per_effort_mi']:.1f} min per effort mile"
+             if p.get("learned") else "a default pace until there are 3 or more foot days to learn yours")
+    return (f"On {basis}, {name} ({_mi(dem['distance_mi'])} mi with {_ft(dem['gain_ft'])} ft up, "
+            f"{dem['effort_mi']:.0f} effort mi) works out to about {t['low_h']:.0f} to {t['high_h']:.0f} h of moving "
+            "time, slowing as the hours go. Aid stations and sleep come on top. It's a training-pace estimate: race "
+            "effort is usually a little faster.")
 
 
 def week_label(start: str) -> str:
@@ -533,7 +563,10 @@ def _weekday(iso: str) -> str:
 def draft_summary(plan: dict, name: str, long_day: int, a: dict) -> str:
     longs = [w["long"] for w in plan["weeks"] if w.get("long")]
     big = max(longs, key=lambda l: l["effort_mi"], default=None)
-    b, pk = plan["baseline"], plan["peak"]
+    b = plan["baseline"]
+    # The biggest week the plan actually reaches, which time and load limits can hold under its target.
+    full = [w for w in plan["weeks"] if w["focus"] in ("build", "peak")][1:] or plan["weeks"]
+    pk = {k: max(w[k] for w in full) for k in ("miles", "gain_ft", "loss_ft")}
     if all(pk[k] <= b[k] * 1.02 for k in ("miles", "gain_ft")):
         lines = [f"Here's your draft: {len(plan['weeks'])} weeks to {name}. Your last four weeks, about {_mi(b['miles'])} mi "
                  f"and {_ft(b['gain_ft'])} ft up a week, already carry what this objective needs, so the plan doesn't "

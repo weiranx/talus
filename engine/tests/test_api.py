@@ -213,3 +213,21 @@ def test_an_existing_database_switches_to_wal(tmp_path):
     assert store.db.execute("PRAGMA journal_mode").fetchone()[0] == "wal"
     assert store.settings() == {"a": 1}
     assert store.ledgers() == []
+
+
+def test_activity_detail_is_kept_on_disk_until_its_inputs_change(tmp_path, monkeypatch):
+    """The scored page is read once per file, thresholds and zones; a restart reads it from disk."""
+    _import_runs(tmp_path, monkeypatch, n=4)
+    monkeypatch.setattr(api, "warm_details", lambda *a, **k: None)  # no background reads here
+    client = sign_in()
+    aid = client.get("/api/activities").json()[-1]["id"]
+    first = client.get(f"/api/activities/{aid}").json()
+    calls = []
+    real = api._score_detail
+    monkeypatch.setattr(api, "_score_detail", lambda *a: calls.append(1) or real(*a))
+    api._details.clear()  # as after a restart
+    assert client.get(f"/api/activities/{aid}").json() == first
+    assert calls == []
+    cli.main(["thresholds", "--resting", "45", "--aet", "130", "--ant", "172", "--max", "190"])
+    changed = client.get(f"/api/activities/{aid}").json()
+    assert calls == [1] and changed["zone_minutes"] != first["zone_minutes"]

@@ -30,13 +30,14 @@ export function CoachReadPending() {
   );
 }
 
-export default async function CoachRead({ id }: { id: string }) {
-  let r: CoachReply<AnalysisReply>;
-  try {
-    r = await engine<CoachReply<AnalysisReply>>(`/api/coach/activity/${encodeURIComponent(id)}`);
-  } catch {
-    return null;
-  }
+// Started by the page alongside the activity itself, so the coach's read isn't waiting its turn.
+export function coachRead(id: string): Promise<CoachReply<AnalysisReply> | null> {
+  return engine<CoachReply<AnalysisReply>>(`/api/coach/activity/${encodeURIComponent(id)}`).catch(() => null);
+}
+
+export default async function CoachRead({ reply }: { reply: Promise<CoachReply<AnalysisReply> | null> }) {
+  const r = await reply;
+  if (!r) return null;
   return (
     <section className="card">
       <h2 className="label">Coach&apos;s read</h2>

@@ -1,6 +1,7 @@
 import Link from "next/link";
 import EngineDown from "@/components/EngineDown";
 import Chat from "@/components/plan/Chat";
+import TrainingNote from "@/components/TrainingNote";
 import { engine, engineFailed } from "@/lib/api";
 import type { ChatMessage } from "@/lib/types";
 
@@ -17,8 +18,10 @@ const SUGGESTIONS = [
 // conversation with the chat on the Plan page.
 export default async function CoachPage() {
   let chat: { messages: ChatMessage[] };
+  let note: { note: string };
   try {
-    chat = await engine<{ messages: ChatMessage[] }>("/api/coach/chat");
+    [chat, note] = await Promise.all([engine<{ messages: ChatMessage[] }>("/api/coach/chat"),
+      engine<{ note: string }>("/api/coach/note")]);
   } catch (e) {
     return <EngineDown message={engineFailed(e)} />;
   }
@@ -31,6 +34,7 @@ export default async function CoachPage() {
         </div>
         <div className="muted" style={{ paddingBottom: 6 }}>To change your plan, use <Link href="/plan">Plan</Link>.</div>
       </header>
+      <TrainingNote initial={note.note} />
       <Chat initial={chat.messages} full suggestions={SUGGESTIONS} />
     </>
   );

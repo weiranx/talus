@@ -293,3 +293,31 @@ def test_chat_packet_carries_history_and_keeps_miles_to_a_tenth(tmp_path, monkey
 def test_chat_prompt_answers_workout_asks_instead_of_listing_limits():
     assert "own run on the Plan page calendar" in coach.SYSTEM and "intervals" in coach.SYSTEM
     assert "Never reply with only a list" in coach.SYSTEM
+
+
+def test_training_note_is_drafted_saved_and_read_by_every_coach_answer(tmp_path, monkeypatch):
+    client = _demo(tmp_path, monkeypatch)
+    monkeypatch.setattr(api, "coach_client", lambda: None)
+    assert client.get("/api/coach/note").json() == {"note": ""}
+    # Without a key the draft is built from the answers alone.
+    r = client.post("/api/coach/note/draft", json={"training_for": "a 50k in the spring", "wants": "more vert",
+                                                   "avoid": ""}).json()
+    assert r["source"] == "rules" and r["note"] == "I'm training for a 50k in the spring. I want more vert."
+    assert client.post("/api/coach/note/draft", json={}).status_code == 422
+    # With the coach on, the draft reads the answers and the athlete's recent weeks.
+    fake = FakeClient({"note": "I want more vert for a 50k."})
+    monkeypatch.setattr(api, "coach_client", lambda: fake)
+    r = client.post("/api/coach/note/draft", json={"training_for": "a 50k", "wants": "more vert"}).json()
+    assert r == r | {"source": "coach", "note": "I want more vert for a 50k."}
+    sent = fake.calls[0]["messages"][0]["content"]
+    assert "Mode: training note." in sent and '"weeks"' in sent and "more vert" in sent
+    # Saved, it goes into the brief and chat packets.
+    note = "I want more vert and one long day a week."
+    assert client.put("/api/coach/note", json={"note": f"  {note} "}).json() == {"ok": True}
+    assert client.get("/api/coach/note").json() == {"note": note}
+    fake = FakeClient({"call": "rest", "why": "Rest."}, {"answer": "Yes.", "used": []})
+    monkeypatch.setattr(api, "coach_client", lambda: fake)
+    client.get("/api/coach/brief")
+    client.post("/api/coach/chat", json={"question": "More vert?"})
+    assert all(f'"athlete_note": "{note}"' in c["messages"][0]["content"] for c in fake.calls)
+    assert client.put("/api/coach/note", json={"note": "x" * (coach.NOTE_MAX + 1)}).status_code == 422

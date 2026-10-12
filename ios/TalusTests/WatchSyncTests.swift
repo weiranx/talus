@@ -107,11 +107,13 @@ struct WatchSelectionTests {
         #expect(picked.map(\.id2) == [1, 3])
     }
 
-    @Test func laterSyncsReachTwoDaysBeforeTheLastOne() {
+    @Test func laterSyncsReachTwoWeeksOrTwoDaysBeforeTheLastOne() {
         let now = Date(timeIntervalSince1970: 1_800_000_000)
-        let files = [file("FIT_TYPE_4", 1, daysAgo: 6, now: now), file("FIT_TYPE_4", 2, daysAgo: 4, now: now),
-                     file("FIT_TYPE_4", 3, daysAgo: 1, now: now)]
-        let picked = WatchSync.select(files, imported: [], lastSync: now.addingTimeInterval(-5 * 86400), now: now)
-        #expect(picked.map(\.id2) == [3, 2])
+        let files = [file("FIT_TYPE_4", 1, daysAgo: 30, now: now), file("FIT_TYPE_4", 2, daysAgo: 25, now: now),
+                     file("FIT_TYPE_4", 3, daysAgo: 10, now: now), file("FIT_TYPE_4", 4, daysAgo: 1, now: now)]
+        // Last synced 26 days ago: reach back to two days before that.
+        #expect(WatchSync.select(files, imported: [], lastSync: now.addingTimeInterval(-26 * 86400), now: now).map(\.id2) == [4, 3, 2])
+        // Last synced an hour ago, after an interrupted first sync: still the whole two weeks.
+        #expect(WatchSync.select(files, imported: [files[3].key], lastSync: now.addingTimeInterval(-3600), now: now).map(\.id2) == [3])
     }
 }

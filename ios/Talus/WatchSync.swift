@@ -204,11 +204,12 @@ final class WatchSync: ObservableObject {
     #endif
 
     /// Same rule as the web app: health files whenever not yet imported; activities not yet
-    /// imported and newer than two days before the last sync (the last two weeks on the first).
-    /// Activities first, newest first.
+    /// imported from the last two weeks, or from two days before the last sync if that is earlier,
+    /// so a sync cut short still picks up the rest. Activities first, newest first.
     static func select(_ files: [WatchFile], imported: Set<String>, lastSync: Date?, now: Date = .now) -> [WatchFile] {
         let fresh = files.filter { $0.size > 0 && !imported.contains($0.key) }
-        let cutoff = lastSync.map { $0.addingTimeInterval(-2 * 86400) } ?? now.addingTimeInterval(-Double(firstSyncDays) * 86400)
+        let twoWeeks = now.addingTimeInterval(-Double(firstSyncDays) * 86400)
+        let cutoff = min(lastSync.map { $0.addingTimeInterval(-2 * 86400) } ?? twoWeeks, twoWeeks)
         let activities = fresh.filter { $0.kind == activityKind && ($0.date ?? .distantPast) > cutoff }
         let health = fresh.filter { healthKinds.contains($0.kind) }
         return activities.sorted { $0.timestamp > $1.timestamp } + health.sorted { $0.timestamp > $1.timestamp }

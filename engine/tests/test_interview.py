@@ -132,3 +132,40 @@ def test_typed_answers_go_to_the_cheaper_model(tmp_path, monkeypatch):
     assert r["messages"][-1]["groups"][0]["key"] == "keep"
     r = client.post("/api/plan/talk", json={"answers": {"keep": "Keep it"}}).json()
     assert r["step"] == "goal"
+
+
+def test_a_named_race_is_looked_up_and_confirmed(tmp_path, monkeypatch):
+    client = _setup(tmp_path, monkeypatch)
+    day = (date.today() + timedelta(weeks=30)).isoformat()
+    found = ('Canyons Endurance Runs 100M is in late April.\n{"found": true, "name": "Canyons 100M", "date": "' + day
+             + '", "distance_mi": 100.4, "gain_ft": 22000, "loss_ft": 22300, "source": "https://example.com/canyons"}')
+    fake = FakeClient({"name": "Canyons 100M", "date": None, "distance_mi": 100, "distance_km": None, "gain_ft": None,
+                       "gain_m": None, "loss_ft": None, "loss_m": None}, found)
+    monkeypatch.setattr(api, "coach_client", lambda: fake)
+    r = client.post("/api/plan/talk", json={"text": "training for canyons 100m for next year"}).json()
+    assert len(fake.calls) == 2
+    look = fake.calls[1]
+    assert look["tools"][0]["type"] == "web_search_20260209" and look["model"] == "claude-opus-5-5"
+    assert r["step"] == "objective" and "I looked it up (https://example.com/canyons)" in r["messages"][-1]["text"]
+    assert "100.0 mi, 22,000 ft up and 22,300 ft down" in r["messages"][-1]["text"]
+    assert r["messages"][-1]["groups"][0]["key"] == "confirm"
+    r = client.post("/api/plan/talk", json={"answers": {"confirm": "Use these"}}).json()
+    assert r["step"] == "goal" and "Training for Canyons 100M" in r["messages"][-2]["text"]
+
+
+def test_a_paused_search_is_resumed_and_a_miss_asks_for_the_numbers():
+    from talus import coach
+
+    class Paused(FakeClient):
+        def create(self, **kw):
+            resp = super().create(**kw)
+            if len(self.calls) == 1:
+                resp.stop_reason = "pause_turn"
+            else:
+                resp.stop_reason = "end_turn"
+            return resp
+
+    fake = Paused("searching", '{"found": false, "name": null}')
+    out, model, usage = coach.lookup_race(fake, "my local fun run", "2026-10-12", "claude-opus-5-5")
+    assert out is None and len(fake.calls) == 2 and usage["output_tokens"] == 240
+    assert fake.calls[1]["messages"][1]["role"] == "assistant"  # sent back to carry on, no extra user turn

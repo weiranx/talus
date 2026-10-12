@@ -307,7 +307,8 @@ MISSING_TEXT = {"name": "a name", "day": "the date", "distance_mi": "the distanc
 def objective_line(o: dict) -> str:
     d = date.fromisoformat(o["day"])
     loss = o.get("loss_ft") or o["gain_ft"]
-    return (f"{o['name']} on {DAY_NAMES[d.weekday()]}, {d.strftime('%b')} {d.day}, {o['distance_mi']:.1f} mi, "
+    year = f" {d.year}" if d.year != date.today().year else ""
+    return (f"{o['name']} on {DAY_NAMES[d.weekday()]}, {d.strftime('%b')} {d.day}{year}, {o['distance_mi']:.1f} mi, "
             f"{o['gain_ft']:,.0f} ft up and {loss:,.0f} ft down")
 
 

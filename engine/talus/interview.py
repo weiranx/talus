@@ -12,7 +12,7 @@ from __future__ import annotations
 import re
 from datetime import date, timedelta
 
-from .plan import DAY_NAMES
+from .plan import DAY_NAMES, WORKOUTS
 
 DAY_SHORT = ("Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun")
 KM_PER_MI = 1.609344
@@ -87,6 +87,8 @@ def said(step: str, answers: dict) -> str:
                      f"{g['label']}: {v}" if g.get("label") else v)
     if answers.get("keep"):
         parts.append("Keep it")
+    if answers.get("confirm"):
+        parts.append("Use these")
     return " · ".join(parts)
 
 
@@ -205,6 +207,8 @@ def from_edits(edits: list[dict]) -> list[dict]:
             out.append({"kind": k, "day": e["day"]})
         elif k in ("weekday_minutes", "weekend_minutes") and isinstance(e.get("minutes"), int):
             out.append({"kind": k, "minutes": e["minutes"]})
+        elif k == "workout" and e.get("workout") in (*WORKOUTS, "none"):
+            out.append({"kind": "workout", "workout": e["workout"]})
         elif k == "week" and isinstance(e.get("week"), int) and e.get("direction") in ("less", "more"):
             out.append({"kind": "week", "week": e["week"], "dims": [d for d in e.get("dims") or [] if d in ("miles", "vert")]
                         or ["miles", "vert"], "factor": LESS if e["direction"] == "less" else MORE})
@@ -337,6 +341,8 @@ def rules_edits(text: str) -> list[dict]:
         edits.append({"kind": "weekday_minutes", "minutes": v})
     if "weekend" in t and (v := _minutes(t.split("weekend", 1)[0][-40:] + t.split("weekend", 1)[1][:40])):
         edits.append({"kind": "weekend_minutes", "minutes": v})
+    if w := rules_workout(t):
+        edits.append({"kind": "workout", "workout": w})
     if m := re.search(r"\b(less|fewer|lower|reduce|cut|easier|lighter|more|increase|add|bigger|harder)\b(.*?)\bweek\s+(\d{1,2})\b", t):
         less = m[1] in ("less", "fewer", "lower", "reduce", "cut", "easier", "lighter")
         what = m[2]
@@ -344,6 +350,22 @@ def rules_edits(text: str) -> list[dict]:
                                    ("vert", ("vert", "climb", "gain", "feet", "ft", "descent", "volume"))) if any(w in what for w in words)]
         edits.append({"kind": "week", "week": int(m[3]), "dims": dims or ["miles", "vert"], "factor": LESS if less else MORE})
     return edits
+
+
+SPEED_WORDS = r"(?:track|intervals?|speed ?work|speed|repeats|reps|tempo|threshold|workouts?|quality)"
+
+
+def rules_workout(t: str) -> str | None:
+    """A weekly speed session asked for, or dropped: track, tempo or hill repeats, or none."""
+    if not re.search(SPEED_WORDS, t):
+        return None
+    if re.search(r"\b(?:no|drop|remove|stop|without|skip|cut|don't want|do not want)\b[^.]*?" + SPEED_WORDS, t):
+        return "none"
+    if re.search(r"hill (?:repeats|reps|intervals|sprints)|uphill (?:repeats|intervals)", t):
+        return "hill_repeats"
+    if re.search(r"tempo|threshold", t):
+        return "tempo"
+    return "track"
 
 
 def apply_edits(edits: list[dict], c: dict, weeks: list[dict]) -> tuple[dict, list[str], list[str]]:
@@ -379,6 +401,13 @@ def apply_edits(edits: list[dict], c: dict, weeks: list[dict]) -> tuple[dict, li
                 continue
             c["weekday_min" if k == "weekday_minutes" else "weekend_min"] = int(v)
             done.append(f"{'weekdays' if k == 'weekday_minutes' else 'weekend days'} up to {int(v)} min")
+        elif k == "workout":
+            w = e.get("workout")
+            if w not in (*WORKOUTS, "none"):
+                continue
+            c["workout"] = w
+            done.append("no speed work" if w == "none" else
+                        f"{WORKOUTS[w].lower()} once a week in build and taper weeks, on a weekday away from the long day")
         elif k == "week":
             n = int(e.get("week") or 0)
             if not 1 <= n <= len(weeks):
@@ -393,8 +422,16 @@ def apply_edits(edits: list[dict], c: dict, weeks: list[dict]) -> tuple[dict, li
 
 
 EDIT_HELP = ("I can move your long day, add or drop a training day, change how long you can go on weekdays or "
-             "weekends, or give a single week more or less miles or vert, like \"less vert in week 3\". To change "
-             "the objective itself, use Edit objective.")
+             "weekends, add a weekly speed session (track intervals, tempo or hill repeats), or give a single week "
+             "more or less miles or vert, like \"less vert in week 3\". To change the objective itself, use Edit "
+             "objective.")
+
+
+def cant_text(asked: str | None) -> str:
+    """The reply when nothing asked for is a change the plan can make."""
+    if asked:
+        return f"I can't change that in the plan yet ({asked[:120].rstrip('.')}). " + EDIT_HELP
+    return "I didn't catch a change I can make. " + EDIT_HELP
 
 
 def week_label(start: str) -> str:
@@ -438,14 +475,29 @@ def lighter_start(today: date) -> list[dict]:
     return [{"week": (w0 + timedelta(weeks=i)).isoformat(), "dims": ["miles", "vert"], "factor": LESS} for i in (0, 1)]
 
 
+def _weekday(iso: str) -> str:
+    return DAY_NAMES[date.fromisoformat(iso).weekday()]
+
+
 def draft_summary(plan: dict, name: str, long_day: int, a: dict) -> str:
     longs = [w["long"] for w in plan["weeks"] if w.get("long")]
     big = max(longs, key=lambda l: l["effort_mi"], default=None)
     b, pk = plan["baseline"], plan["peak"]
-    lines = [f"Here's your draft: {len(plan['weeks'])} weeks to {name}. You start from your last four weeks, about "
-             f"{_mi(b['miles'])} mi and {_ft(b['gain_ft'])} ft up a week, and build to a peak of {_mi(pk['miles'])} mi "
-             f"with {_ft(pk['gain_ft'])} ft up and {_ft(pk['loss_ft'])} ft down."]
-    if big:
+    if all(pk[k] <= b[k] * 1.02 for k in ("miles", "gain_ft")):
+        lines = [f"Here's your draft: {len(plan['weeks'])} weeks to {name}. Your last four weeks, about {_mi(b['miles'])} mi "
+                 f"and {_ft(b['gain_ft'])} ft up a week, already carry what this objective needs, so the plan doesn't "
+                 f"build: it holds about {_mi(pk['miles'])} mi with {_ft(pk['gain_ft'])} ft up and {_ft(pk['loss_ft'])} ft "
+                 "down, with recovery weeks and a taper."]
+    else:
+        lines = [f"Here's your draft: {len(plan['weeks'])} weeks to {name}. You start from your last four weeks, about "
+                 f"{_mi(b['miles'])} mi and {_ft(b['gain_ft'])} ft up a week, and build to a peak of {_mi(pk['miles'])} mi "
+                 f"with {_ft(pk['gain_ft'])} ft up and {_ft(pk['loss_ft'])} ft down."]
+    if big and big.get("second"):
+        two = big["second"]
+        lines.append(f"Your objective is long enough for back-to-back long days: the biggest pair is {_mi(big['miles'])} mi "
+                     f"with {_ft(big['gain_ft'])} ft up on a {_weekday(big['day'])} and {_mi(two['miles'])} mi "
+                     f"with {_ft(two['gain_ft'])} ft up on the {_weekday(two['day'])} next to it.")
+    elif big:
         lines.append(f"Your biggest long day is {_mi(big['miles'])} mi with {_ft(big['gain_ft'])} ft up, on a {DAY_NAMES[long_day]}.")
     if not plan["reachable"]:
         opts = plan.get("options") or {}

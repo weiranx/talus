@@ -21,7 +21,7 @@ KINDS = {
     "easy": "Easy run", "long": "Long run", "hills": "Hills", "tempo": "Tempo", "intervals": "Intervals",
     "hike": "Hike", "race": "Race", "other": "Run",
 }
-PLAN_KIND = {"long": "long", "hills": "hills", "easy": "easy", "objective": "race"}
+PLAN_KIND = {"long": "long", "long2": "long", "track": "intervals", "tempo": "tempo", "hill_repeats": "hills", "hills": "hills", "easy": "easy", "objective": "race"}
 MAX_AHEAD_DAYS = 366
 PROJECT_DAYS = 42  # the Load page draws scheduled runs this far ahead at most
 
@@ -87,14 +87,14 @@ def match(items: list[dict], acts: list[dict]) -> None:
 def _text(r: dict, aet: float | None, zone_text: dict[int, str]) -> str:
     vol = f"{r['miles']:.1f} mi, {round(r['gain_ft'], -1):,.0f} ft up, {round(r['loss_ft'], -1):,.0f} ft down"
     mins = f"about {round(r['minutes'] / 5) * 5:.0f} min" if r["minutes"] else ""
-    effort = zone_text.get(r["zone"]) if r.get("zone") else (f"under {aet:.0f} bpm" if aet and r["kind"] in
+    effort = zone_text.get(r["zone"]) if r.get("zone") else "" if r.get("workout") else (f"under {aet:.0f} bpm" if aet and r["kind"] in
                                                             ("easy", "long", "hills", "hike") else "")
     return ", ".join(x for x in (vol, mins, effort) if x) + "."
 
 
 def calendar(runs: list[PlannedRun], plan: dict | None, acts: list[dict], start: date, days: int, today: date,
              pace_min: float, aet: float | None, zone_text: dict[int, str],
-             own: dict[str, dict] | None = None) -> list[dict]:
+             own: dict[str, dict] | None = None, ant: float | None = None) -> list[dict]:
     """Every scheduled run from `start` for `days` days, oldest first, with its status:
     done (matched an activity), missed (a past day with none), today or planned. A plan
     session on a day the athlete scheduled their own run is left out; `own` (all their runs the
@@ -111,21 +111,33 @@ def calendar(runs: list[PlannedRun], plan: dict | None, acts: list[dict], start:
         for s in planner.upcoming_sessions(plan, acts, today, plan_days(today), own=own):
             d = date.fromisoformat(s["day"])
             if start <= d <= end and s["day"] not in mine and s["kind"] in PLAN_KIND:
-                text = planner.session_text(s, aet or 150, plan["objective"]["name"])
+                text = planner.session_text(s, aet or 150, plan["objective"]["name"], ant)
                 items.append({"id": None, "day": s["day"], "kind": PLAN_KIND[s["kind"]], "miles": s["miles"],
                               "gain_ft": s["gain_ft"], "loss_ft": s["loss_ft"], "minutes": s["minutes"],
                               "zone": None, "notes": "", "source": "plan", "title": text["title"],
-                              "estimated_minutes": True, "how": text["how"]})
+                              "estimated_minutes": True, "how": text["how"],
+                              "workout": s["kind"] in planner.WORKOUTS})
     items.sort(key=lambda it: (it["day"], it["source"] != "manual", it["id"] or 0))
     match(items, acts)
     for it in items:
         it.setdefault("activity", None)
         it.setdefault("how", None)
+        it.setdefault("workout", False)
         it["detail"] = _text(it, aet, zone_text)
         d = date.fromisoformat(it["day"])
         it["status"] = ("done" if it["activity"] else "today" if d == today else "missed" if d < today
                         else "planned")
     return items
+
+
+def unscheduled(items: list[dict], acts: list[dict], start: date, days: int) -> list[dict]:
+    """Activities on foot from `start` for `days` days that no scheduled run matched, so the
+    calendar shows every day you trained, not only the days you planned."""
+    end = (start + timedelta(days=days - 1)).isoformat()
+    used = {it["activity"]["id"] for it in items if it.get("activity")}
+    return [{k: a[k] for k in ("id", "day", "name", "sport", "distance_mi", "gain_ft", "loss_ft", "moving_time_s")}
+            for a in sorted(acts, key=lambda a: a["start_time"])
+            if start.isoformat() <= a["day"] <= end and a["id"] not in used and planner.is_foot(a["sport"])]
 
 
 def project(items: list[dict], history: list[ledger.LedgerDay], rates: dict, today: date,

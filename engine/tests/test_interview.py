@@ -47,6 +47,18 @@ def test_edits_from_plain_words_change_the_constraints():
         {"kind": "week", "week": 2, "dims": ["miles", "vert"], "factor": interview.MORE}]
 
 
+def test_speed_work_can_be_asked_for_in_plain_words():
+    assert interview.rules_edits("add track workouts?") == [{"kind": "workout", "workout": "track"}]
+    assert interview.rules_edits("I'd like a tempo run each week") == [{"kind": "workout", "workout": "tempo"}]
+    assert interview.rules_edits("hill repeats please") == [{"kind": "workout", "workout": "hill_repeats"}]
+    assert interview.rules_edits("no more speed work") == [{"kind": "workout", "workout": "none"}]
+    c, done, _ = interview.apply_edits([{"kind": "workout", "workout": "track"}], asdict(planner.Constraints()), [])
+    assert c["workout"] == "track" and "track intervals once a week" in done[0]
+    assert interview.from_edits([{"kind": "workout", "workout": "tempo"}, {"kind": "workout", "workout": "sprint"}]) == [
+        {"kind": "workout", "workout": "tempo"}]
+    assert interview.cant_text("a race-pace run on Nov 3").startswith("I can't change that in the plan yet (a race-pace")
+
+
 def test_an_adjusted_week_changes_only_that_week():
     acts = _acts()
     c = planner.Constraints()
@@ -88,7 +100,7 @@ def test_plan_by_conversation(tmp_path, monkeypatch):
     assert "Done: long day on Sunday." in r["messages"][-1]["text"]
     assert client.get("/api/plan").json()["constraints"]["long_day"] == 6
     r = client.post("/api/plan/talk", json={"text": "make it more fun"}).json()
-    assert r["messages"][-1]["text"] == interview.EDIT_HELP
+    assert r["messages"][-1]["text"].endswith(interview.EDIT_HELP)
     r = client.post("/api/plan/talk", json={"action": "accept"}).json()
     assert r["step"] == "done" and client.get("/api/plan").json()["accepted"]
     # Changing an accepted plan starts its own conversation; keeping it declines the draft.

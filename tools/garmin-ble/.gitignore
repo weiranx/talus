@@ -1,0 +1,6 @@
+*.app/
+garmin-ble-scan
+garmin-ble-sync
+*.log
+*.fit
+*.deflate

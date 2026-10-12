@@ -80,6 +80,19 @@ Talus has sign-in. Each account has its own folder, `data/users/<id>/`, with its
 - **CLI:** `talus account list`, `talus account create EMAIL`, `talus account password EMAIL` (resets a forgotten password and signs out its sessions).
 - **Serving beyond localhost:** put it behind HTTPS and set `TALUS_SECURE_COOKIE=1`.
 
+### First-run setup
+
+A new account opens on `/welcome`, six steps that resume where you left off (progress is the `onboarding` setting in the account's own database):
+
+1. **Connect** (required): intervals.icu (OAuth or key), Garmin for the owner, or file and Apple Health upload.
+2. **Import** (required for synced sources): 6 weeks, 6 months (recommended, it feeds the threshold estimate) or everything, up to 2 years. It runs in the background (`POST /api/onboarding/import`) with progress, so the next steps can be answered meanwhile.
+3. **Heart rate:** the estimate from your runs with its confidence, or your own numbers. Resting starts from the median of the last 30 nights when there are any.
+4. **Sleep need.**
+5. **Coach consent:** what is sent to the model and what never is, then the coach on or off and a style. Skipping leaves it off.
+6. **Tour** of Today's call, the check-in and the readiness score, ending on Today.
+
+Optional steps can be skipped, and **Skip setup** goes straight to Today, which lists what is still missing with links back. Accounts that had thresholds and activities before this flow existed never see it. **Setup guide** in Settings reopens it. The iPhone app shows the same missing steps on Today, with Apple Health as its source and a link to the web setup for the rest.
+
 SQLite per account is fine for one machine and a handful of people. Postgres is worth it once the engine runs as more than one process or host, or accounts need querying together.
 
 ### Settings
@@ -88,7 +101,7 @@ The Settings screen (`/settings`) edits what the engine stores in SQLite:
 
 - **Heart rate and zones:** resting, AeT, AnT and max, with the zones they make. Leave AeT blank for 88% of AnT, marked provisional. Saving rescores every activity. Estimates from `talus infer` show beside your numbers with their confidence and source runs; **Use these** fills the form for you to check and save.
 - **Heart rate zones:** 3 zones (below AeT, AeT to AnT, above AnT) or 5 (recovery under 90% of AeT, aerobic base up to AeT, tempo to halfway to AnT, threshold to AnT, above AnT), with each zone's starting bpm editable and a reset. Zones set time in zone on Today, Load and Activity and what the coach reads. Cardio load, readiness and the 80% target always use AeT and AnT, so switching zones never changes a load. Activities keep a 1-bpm heart-rate histogram (`hr_hist`), so a new zone model needs no rescore; activities scored before it are rescored once on the first zone save.
-- **Data source:** add or replace this account's intervals.icu key and athlete id, activity count, the last sync (from here or the CLI) and **Sync now**.
+- **Data source:** **Connect intervals.icu** (OAuth, when the server has a client id) or add or replace this account's intervals.icu key and athlete id, activity count, the last sync (from here or the CLI) and **Sync now**.
 - **AI coach:** on or off, the coaching style, and the model for the brief and for workout analysis, with an estimated cost per call and per month (from your own token usage once the coach has run).
 - **Units:** miles and feet.
 
@@ -134,4 +147,4 @@ Other commands: `talus import <files>` for FIT/GPX/TCX, `talus rescore` after ch
 
 ## Data source notes
 
-intervals.icu is used with a personal API key per account. intervals.icu asks apps used by more than one person to use OAuth (register at intervals.icu/settings/apps; 100 requests per user per day, 500 users by default). `IntervalsSource.from_credential` already accepts an OAuth access token, so adding it needs the app registration plus authorize and token routes. Strava-sourced activities are skipped. intervals.icu said on 2026-10-09 that Garmin data via its API will likely be blocked soon; if that happens, switch to `--source garmin` or file import.
+intervals.icu connects with OAuth when `INTERVALS_CLIENT_ID` and `INTERVALS_CLIENT_SECRET` are set (an app applied for at intervals.icu/oauth/apply and approved by intervals.icu, redirect URI `TALUS_PUBLIC_URL` + `/api/auth/intervals/callback`). Talus asks for `ACTIVITY:READ,WELLNESS:READ` only. intervals.icu issues no refresh tokens; a token lasts until the person disconnects. Disconnecting in Settings also calls intervals.icu's disconnect-app. A personal API key still works as the fallback, and the owner still falls back to `INTERVALS_API_KEY` in `.env` while nothing is saved. Limits: 100 requests per user per day, 500 users by default. Strava-sourced activities are skipped. intervals.icu said on 2026-10-09 that Garmin data via its API will likely be blocked soon; if that happens, switch to `--source garmin` or file import.

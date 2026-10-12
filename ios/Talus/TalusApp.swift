@@ -5,6 +5,8 @@ struct TalusApp: App {
     @StateObject private var api = API()
     @StateObject private var session = SessionModel()
     @StateObject private var health = HealthSync()
+    @StateObject private var watch = WatchSync()
+    @AppStorage("appearance") private var appearance = "system"
 
     var body: some Scene {
         WindowGroup {
@@ -12,7 +14,30 @@ struct TalusApp: App {
                 .environmentObject(api)
                 .environmentObject(session)
                 .environmentObject(health)
+                .environmentObject(watch)
                 .tint(Color(hex: 0x15211D, dark: 0xE4EAE7))
+                .preferredColorScheme(appearance == "light" ? .light : appearance == "dark" ? .dark : nil)
+                #if DEBUG
+                // `-TalusWatchDryRun N` (launch argument): pull N files off the watch on launch and
+                // print each step, without the engine. For testing from Xcode or devicectl --console.
+                .task {
+                    let n = UserDefaults.standard.integer(forKey: "TalusWatchDryRun")
+                    if n > 0 { await watch.dryRun(limit: n) }
+                    if UserDefaults.standard.bool(forKey: "TalusWatchProbe") { await watch.probe() }
+                    // `-TalusServer URL -TalusTestEmail E -TalusTestPassword P -TalusWatchSync 1`: sign in
+                    // to a test engine and run the real watch sync, uploads included.
+                    let d = UserDefaults.standard
+                    if d.bool(forKey: "TalusWatchSync") {
+                        if let server = d.string(forKey: "TalusServer") { api.server = server }
+                        if let email = d.string(forKey: "TalusTestEmail"), let pw = d.string(forKey: "TalusTestPassword") {
+                            do { try await api.signIn(email: email, password: pw, create: false) } catch { print("[watch] sign-in failed: \(error.localizedDescription)") }
+                            await session.check(api)
+                        }
+                        await watch.sync(api)
+                        print("[watch] RESULT \(watch.result.map { "\($0.ok ? "ok" : "failed"): \($0.text)" } ?? "none")")
+                    }
+                }
+                #endif
         }
     }
 }
@@ -72,6 +97,7 @@ struct MainTabs: View {
     var body: some View {
         TabView {
             TodayView().tabItem { Label("Today", systemImage: "sun.horizon") }
+            PlanView().tabItem { Label("Plan", systemImage: "flag.checkered") }
             LoadView().tabItem { Label("Load", systemImage: "chart.xyaxis.line") }
             ActivitiesView().tabItem { Label("Activity", systemImage: "figure.hiking") }
             SettingsView().tabItem { Label("Settings", systemImage: "gearshape") }

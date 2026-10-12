@@ -6,19 +6,21 @@ import Calendar from "@/components/plan/Calendar";
 import Chat from "@/components/plan/Chat";
 import CoachPlan, { CoachPlanPending } from "@/components/plan/CoachPlan";
 import ConstraintsForm from "@/components/plan/ConstraintsForm";
-import DayCards from "@/components/plan/DayCards";
 import DeletePlan from "@/components/plan/DeletePlan";
 import ObjectiveForm from "@/components/plan/ObjectiveForm";
 import PlanActions from "@/components/plan/PlanActions";
-import Readiness from "@/components/plan/Readiness";
 import Review from "@/components/plan/Review";
-import Setup, { type Step } from "@/components/plan/Setup";
+import PlanTalk from "@/components/plan/PlanTalk";
+import Setup, { DraftDetail, type Step } from "@/components/plan/Setup";
+import NextRun from "@/components/plan/NextRun";
+import ReadinessCompact from "@/components/plan/ReadinessCompact";
+import RoadChart from "@/components/plan/RoadChart";
 import ThisWeek from "@/components/plan/ThisWeek";
 import WeeksTable from "@/components/plan/WeeksTable";
 import { engine, EngineError } from "@/lib/api";
 import { dayLabel, mi, n0 } from "@/lib/format";
 import { FOCUS_TEXT } from "@/lib/plan";
-import type { ChatMessage, Plan, PlanPage, Schedule } from "@/lib/types";
+import type { ChatMessage, Plan, PlanPage, Schedule, Talk } from "@/lib/types";
 
 export const dynamic = "force-dynamic";
 
@@ -70,6 +72,7 @@ function Draft({ draft, hasAccepted }: { draft: Plan; hasAccepted: boolean }) {
 }
 
 export default async function PlanPageView({ searchParams }: { searchParams: Promise<{ edit?: string; step?: string }> }) {
+  const { edit, step } = await searchParams;
   let p: PlanPage;
   let chat: { messages: ChatMessage[] };
   let schedule: Schedule;
@@ -79,12 +82,35 @@ export default async function PlanPageView({ searchParams }: { searchParams: Pro
   } catch (e) {
     return <EngineDown message={e instanceof EngineError ? e.message : "Could not reach the engine."} />;
   }
-  const { edit, step } = await searchParams;
   const obj = p.objective;
   const plan = p.draft ?? p.accepted;
 
+  if ((!obj || !p.accepted) && !step) {
+    // Until a plan is accepted: planning with the coach, a few questions that fill the plan's inputs.
+    let talk: Talk;
+    try {
+      talk = await engine<Talk>("/api/plan/talk?mode=setup");
+    } catch (e) {
+      return <EngineDown message={e instanceof EngineError ? e.message : "Could not reach the engine."} />;
+    }
+    return (
+      <>
+        <header className="page-head">
+          <div>
+            <div className="eyebrow">Plan with the coach</div>
+            <h1 className="title">Plan</h1>
+          </div>
+          <div style={{ paddingBottom: 6 }}><Link href="/plan?step=objective">Skip to the form</Link></div>
+        </header>
+        <section className="card"><PlanTalk initial={talk} /></section>
+        {talk.step === "draft" ? <DraftDetail p={p} /> : null}
+        <Calendar initial={schedule} />
+      </>
+    );
+  }
+
   if (!obj || !p.accepted) {
-    // Until a plan is accepted: the guided setup, objective, then training days, then review.
+    // The form: objective, then training days, then review.
     const at: Step = !obj ? (step === "days" ? "days" : "objective")
       : step === "objective" || step === "days" ? step : "review";
     return (
@@ -94,6 +120,7 @@ export default async function PlanPageView({ searchParams }: { searchParams: Pro
             <div className="eyebrow">Build a plan in three steps</div>
             <h1 className="title">Plan</h1>
           </div>
+          <div style={{ paddingBottom: 6 }}><Link href="/plan">Plan with the coach instead</Link></div>
         </header>
         <Setup p={p} step={at} />
         <Calendar initial={schedule} />
@@ -102,6 +129,7 @@ export default async function PlanPageView({ searchParams }: { searchParams: Pro
     );
   }
 
+  const talk = edit === "coach" ? await engine<Talk>("/api/plan/talk?mode=change").catch(() => null) : null;
   return (
     <>
       <header className="page-head">
@@ -116,6 +144,7 @@ export default async function PlanPageView({ searchParams }: { searchParams: Pro
             {mi(obj.distance_mi)} mi · {n0(obj.gain_ft)} ft up · {n0(obj.loss_ft)} ft down
           </div>
           <div className="actions" style={{ gap: 6 }}>
+            <Link className="btn light outline" style={{ minHeight: 36, padding: "0 12px" }} href="/plan?edit=coach">Change with the coach</Link>
             <Link className="btn light outline" style={{ minHeight: 36, padding: "0 12px" }} href="/plan?edit=objective">Edit objective</Link>
             <Link className="btn light outline" style={{ minHeight: 36, padding: "0 12px" }} href="/plan?edit=days">Training days</Link>
             <DeletePlan name={obj.name} />
@@ -137,6 +166,15 @@ export default async function PlanPageView({ searchParams }: { searchParams: Pro
           <ObjectiveForm key={edit} current={obj} startNew={edit === "new"} next="/plan" />
         </section>
       ) : null}
+      {edit === "coach" && talk ? (
+        <section className="card">
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 8, flexWrap: "wrap" }}>
+            <h2 className="label">Change the plan with the coach</h2>
+            <Link href="/plan">Close</Link>
+          </div>
+          <PlanTalk initial={talk} />
+        </section>
+      ) : null}
       {edit === "days" ? (
         <section className="card">
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 8, flexWrap: "wrap" }}>
@@ -150,50 +188,43 @@ export default async function PlanPageView({ searchParams }: { searchParams: Pro
 
       {p.draft ? <Draft draft={p.draft} hasAccepted={!!p.accepted} /> : null}
 
-      <Calendar initial={schedule} />
-
       <div className="row">
-        <div style={{ flex: "2 1 520px", minWidth: 0, display: "flex", flexDirection: "column", gap: 16 }}>
-          {p.accepted && p.this_week ? <ThisWeek w={p.this_week} /> : null}
-          {p.accepted ? (
-            <section className="card">
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 8, flexWrap: "wrap" }}>
-                <h2 className="label">Next 7 days</h2>
-                <span className="muted">Cut from each week&apos;s target, less what you&apos;ve done and your own runs</span>
-              </div>
-              <DayCards sessions={p.sessions} today={p.date} />
-            </section>
-          ) : null}
-          {p.review ? <Suspense fallback={null}><Review fallback={p.review} /></Suspense> : null}
-          {p.accepted ? (
-            <section className="card">
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 8, flexWrap: "wrap" }}>
-                <h2 className="label">Weekly targets</h2>
-                <Link href="/plan/weeks">Full plan</Link>
-              </div>
-              <WeeksTable weeks={p.accepted.weeks} current={weekStart(p.date)} limit={6} actuals={p.actuals} />
-              <PlanActions replan />
-            </section>
-          ) : null}
-          {plan ? (
-            <section className="card">
-              <h2 className="label">Coach&apos;s read of the {p.draft ? "draft" : "plan"}</h2>
-              <Suspense fallback={<CoachPlanPending />}><CoachPlan /></Suspense>
-            </section>
-          ) : (
-            <section className="card">
-              <h2 className="label">No plan yet</h2>
-              <div className="muted">Talus builds the plan from your last four weeks of training. Sync your recent activities, then build it.</div>
-              <PlanActions replan />
-            </section>
-          )}
+        <div style={{ flex: "3 1 420px", minWidth: 0, display: "flex" }}>
+          <div style={{ flex: 1, display: "flex", flexDirection: "column" }}><NextRun sessions={p.sessions} today={p.date} /></div>
         </div>
-        <div style={{ flex: "1 1 340px", minWidth: 0, display: "flex", flexDirection: "column", gap: 16 }}>
-          {p.readiness ? <Readiness r={p.readiness} projected={plan?.projected ?? null} note={p.fitness_only} /> : null}
-          <Chat initial={chat.messages} />
+        <div style={{ flex: "2 1 320px", minWidth: 0, display: "flex", flexDirection: "column" }}>
+          {p.this_week ? <ThisWeek w={p.this_week} /> : null}
         </div>
       </div>
 
+      <Calendar initial={schedule} compact />
+
+      <div className="row">
+        <section className="card" style={{ flex: "3 1 420px", minWidth: 0 }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 8, flexWrap: "wrap" }}>
+            <h2 className="label">Road to {obj.name}</h2>
+            <Link href="/plan/weeks">Every week</Link>
+          </div>
+          <div className="muted" style={{ fontSize: 14 }}>
+            Peak {mi(p.accepted.peak.miles)} mi and {n0(p.accepted.peak.gain_ft)} ft up a week. Lighter weeks are recovery and taper; this week is outlined.
+          </div>
+          <RoadChart weeks={p.accepted.weeks} current={weekStart(p.date)} actuals={p.actuals} />
+        </section>
+        <div style={{ flex: "2 1 320px", minWidth: 0, display: "flex", flexDirection: "column" }}>
+          {p.readiness ? <ReadinessCompact r={p.readiness} projected={p.accepted.projected} note={p.fitness_only} /> : null}
+        </div>
+      </div>
+
+      <div className="row">
+        <div style={{ flex: "3 1 420px", minWidth: 0, display: "flex", flexDirection: "column", gap: 16 }}>
+          <section className="card">
+            <h2 className="label">Coach</h2>
+            <Suspense fallback={<CoachPlanPending />}><CoachPlan /></Suspense>
+            {p.review ? <Suspense fallback={null}><Review fallback={p.review} compact /></Suspense> : null}
+          </section>
+        </div>
+        <div style={{ flex: "2 1 320px", minWidth: 0 }}><Chat initial={chat.messages} /></div>
+      </div>
     </>
   );
 }

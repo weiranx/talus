@@ -171,7 +171,12 @@ export interface CoachReply<T> {
   feedback: number | null;
   fallback_reason: string | null;
   model: string | null;
+  cost?: AiCost | null;
 }
+
+// Only present when the admin's "Show AI cost" flag is on. A reused reply is cached: it cost
+// nothing this time, and carries its first call's cost.
+export interface AiCost { usd: number; model: string | null; input_tokens: number; output_tokens: number; cached: boolean }
 
 // Settings, per account. The engine only says whether a key is set, never its value.
 export interface ZoneSettings extends ZoneModel {
@@ -250,6 +255,9 @@ export interface Settings {
     key_set: boolean;
     kind: "api_key" | "oauth" | null;
     athlete_id: string | null;
+    athlete_name: string | null;
+    // Whether the server can connect intervals.icu with OAuth (it has a client id).
+    oauth_available: boolean;
     updated_at: string | null;
     garmin_fallback_set: boolean;
     activities: number;
@@ -263,7 +271,11 @@ export interface Settings {
     upload: { last_import: LastImport | null; max_mb: number };
     // Posted by the Talus iOS app to /api/import/healthkit.
     healthkit: { last_sync: { at: string; workouts_added: number; workouts_skipped: number; wellness_days: number } | null };
+    // Files the web or iOS app pulled straight off a Garmin watch over Bluetooth.
+    watch: { last_sync: string | null };
   };
+  // How new activities arrive. File upload works with either.
+  sync_method: "intervals" | "watch";
   coach: {
     enabled: boolean;
     key_set: boolean;
@@ -436,7 +448,7 @@ export interface WeekProgress { start: string; dated: boolean; target: (Vol & { 
 export interface PlanReply { verdict: string; limiter: string; plan: string }
 export interface ReviewReply { week: string; next: string }
 
-export interface ChatMessage { id: number; created_at: string; role: "athlete" | "coach"; text: string; source: string | null; log_id: number | null }
+export interface ChatMessage { id: number; created_at: string; role: "athlete" | "coach"; text: string; source: string | null; log_id: number | null; cost?: AiCost | null }
 
 export type RunKind = "easy" | "long" | "hills" | "tempo" | "intervals" | "hike" | "race" | "other";
 
@@ -492,6 +504,7 @@ export interface AdminOverview {
   accounts: AdminAccount[];
   month: string;
   signup: { open: boolean; chosen: boolean | null; env: boolean };
+  features: { show_ai_cost: boolean };
   system: {
     revision: string | null;
     model_version: string;
@@ -501,4 +514,45 @@ export interface AdminOverview {
     disk: { total: number; free: number };
   };
   log: { id: number; at: string; action: string; admin: string | null; target: string | null; detail: Record<string, unknown> | null }[];
+}
+
+// Planning with the coach: the conversation that fills the plan's inputs.
+export interface TalkGroup { key: string; options: string[]; multi?: boolean; label?: string; value?: string | string[] | null }
+export interface TalkMessage {
+  role: "athlete" | "coach"; text: string; step?: string | null;
+  groups?: TalkGroup[]; actions?: { id: "accept" | "keep" | "retry"; label: string }[]; cost?: AiCost | null;
+}
+export interface Talk { messages: TalkMessage[]; step: string; mode: "setup" | "change"; reads_with_ai: boolean }
+
+export type OnboardingStep = "connect" | "import" | "thresholds" | "sleep" | "coach" | "tour";
+export type ImportRange = "6w" | "6m" | "all";
+
+export interface ImportStatus {
+  state: "running" | "done";
+  source: "intervals" | "garmin";
+  range: ImportRange;
+  days: number;
+  started: string;
+  finished?: string;
+  done: number;
+  total: number | null;
+  saved: number;
+  duplicates?: number;
+  wellness_days?: number;
+  error: string | null;
+}
+
+export interface Onboarding {
+  needed: boolean;
+  started: string | null;
+  finished: string | null;
+  established: boolean;
+  steps: { key: OnboardingStep; done: boolean; skipped: boolean; required: boolean }[];
+  next: OnboardingStep | null;
+  import: ImportStatus | null;
+  activities: number;
+  sources: { intervals: boolean; garmin: boolean; garmin_available: boolean };
+  resting_hint: number | null;
+  coach: { enabled: boolean; style: string; key_set: boolean; styles: { key: string; label: string; description: string }[] };
+  import_choices: Record<ImportRange, number>;
 }

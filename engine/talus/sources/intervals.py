@@ -1,10 +1,8 @@
 """intervals.icu source. Each Talus account syncs with its own credential.
 
-Today that is a personal API key over basic auth, which each person pastes into Settings. An app
-used by more than one person is meant to use intervals.icu OAuth instead (apps registered at
-intervals.icu/settings/apps; Bearer tokens; 100 requests per user per day, 500 users by default).
-from_credential() already takes an "oauth" credential with an access token, so adding OAuth means
-registering Talus there and adding the authorize and token-exchange routes; sync is unchanged. intervals.icu said on 2026-10-09 that
+Either an OAuth access token (Settings > Connect intervals.icu, see intervals_auth.py; Bearer
+auth; 100 requests per user per day, 500 users by default) or a personal API key over basic auth,
+which still works as a fallback. intervals.icu said on 2026-10-09 that
 Garmin data through its API will likely be blocked soon, so keep the Garmin adapter as a fallback.
 Strava-sourced activities are skipped: the API does not serve them, and Talus does not use Strava data.
 """
@@ -34,6 +32,7 @@ class IntervalsSource:
         # "0" means the athlete that owns the API key or token.
         self.athlete_id = athlete_id or (None if access_token else os.environ.get("INTERVALS_ATHLETE_ID")) or "0"
         self.client = client or httpx.Client(base_url=BASE_URL, timeout=60)
+        self.oauth = bool(access_token)
         if access_token:
             self.client.headers["Authorization"] = f"Bearer {access_token}"
         else:
@@ -51,10 +50,15 @@ class IntervalsSource:
             raise RuntimeError("The saved intervals.icu key is blank. Add it again in Settings > Data source.")
         return cls(api_key=api_key, athlete_id=cred.get("athlete_id") or "0", client=client)
 
+    def _ok(self, resp: httpx.Response) -> None:
+        if self.oauth and resp.status_code in (401, 403):
+            raise RuntimeError("intervals.icu no longer accepts Talus's connection. Connect again in Settings > Data sources.")
+        resp.raise_for_status()
+
     def list_activities(self, since: date, until: date | None = None) -> list[RemoteActivity]:
         params = {"oldest": since.isoformat(), "newest": (until or date.today()).isoformat()}
         resp = self.client.get(f"/athlete/{self.athlete_id}/activities", params=params)
-        resp.raise_for_status()
+        self._ok(resp)
         out = []
         for a in resp.json():
             if a.get("source") == "STRAVA":
@@ -94,7 +98,7 @@ class IntervalsSource:
         """Daily wellness: overnight HRV (rMSSD), resting HR and sleep, one record per day."""
         params = {"oldest": since.isoformat(), "newest": (until or date.today()).isoformat()}
         resp = self.client.get(f"/athlete/{self.athlete_id}/wellness", params=params)
-        resp.raise_for_status()
+        self._ok(resp)
         out = []
         for w in resp.json():
             day = WellnessDay(source=self.name, day=date.fromisoformat(w["id"][:10]), hrv=w.get("hrv") or None,

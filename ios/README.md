@@ -1,13 +1,14 @@
 # Talus for iPhone
 
-A native SwiftUI app (iOS 17+) over the Talus engine API: Today, Load, Activity and Settings, plus Apple Health sync. Every number comes from the engine; the app only formats it, in miles and feet, distance and vert together.
+A native SwiftUI app (iOS 17+) over the Talus engine API: Today, Plan, Load, Activity and Settings, plus Apple Health sync. It does what the web app does, except Google sign-in and the intervals.icu OAuth button, which stay on the web. Every number comes from the engine; the app only formats it, in miles and feet, distance and vert together.
 
 | Screen | What it shows |
 |---|---|
 | Today | The call for the day (the AI coach's brief when it's on, rule-based otherwise), the morning check-in, engine and legs readiness, overnight HRV, resting HR and sleep, each ledger against your normal, this week's miles and vert, and 28-day intensity |
+| Plan | The objective and its plan: the next run, this week against its target, the calendar of scheduled runs (add, move, edit, delete), the road to the objective week by week, readiness for the day, the coach's read and weekly review, and chat. Until a plan is accepted, a three-step setup: objective (type it or pick a GPX), training days, review and accept |
 | Load | Cardio, distance, climb and descent ledgers over 6 weeks, 6 months or a year: daily load, your normal and your last 7 days; intensity by week; biggest days |
-| Activity | Every activity by month; the detail has the elevation profile, the loads against a usual day, and climb and descent segments |
-| Settings | Apple Health sync, the engine address, and sign-out |
+| Activity | Every activity by month; the detail has the route map, the elevation profile, the coach's read, the loads against a usual day, and climb and descent segments |
+| Settings | Data sources (intervals.icu key, Garmin Connect, file upload, Apple Health), heart rate thresholds with the estimate from your runs, zones, the AI coach, sleep need, appearance, account (password, export, delete), the engine address, and Admin for the admin account |
 
 ## Run it in the Simulator
 

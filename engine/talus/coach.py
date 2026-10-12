@@ -126,6 +126,33 @@ CHAT_SCHEMA = {
     "additionalProperties": False,
 }
 
+def _maybe(t: str) -> dict:
+    return {"anyOf": [{"type": t}, {"type": "null"}]}
+
+
+INTAKE_FIELDS = {"name": "string", "date": "string", "distance_mi": "number", "distance_km": "number",
+                 "gain_ft": "number", "gain_m": "number", "loss_ft": "number", "loss_m": "number"}
+INTAKE_SCHEMA = {"type": "object", "properties": {k: _maybe(t) for k, t in INTAKE_FIELDS.items()},
+                 "required": list(INTAKE_FIELDS), "additionalProperties": False}
+EDIT_KINDS = ("long_day", "add_day", "drop_day", "weekday_minutes", "weekend_minutes", "week")
+EDIT_SCHEMA = {
+    "type": "object",
+    "properties": {"edits": {"type": "array", "items": {
+        "type": "object",
+        "properties": {"kind": {"type": "string", "enum": list(EDIT_KINDS)}, "day": _maybe("integer"),
+                       "minutes": _maybe("integer"), "week": _maybe("integer"),
+                       "dims": {"type": "array", "items": {"type": "string", "enum": ["miles", "vert"]}},
+                       "direction": {"anyOf": [{"type": "string", "enum": ["less", "more"]}, {"type": "null"}]}},
+        "required": ["kind", "day", "minutes", "week", "dims", "direction"], "additionalProperties": False}}},
+    "required": ["edits"],
+    "additionalProperties": False,
+}
+
+# Reading the athlete's own words into fields. These replies hold no prose, so the number check
+# doesn't apply; the engine checks every field before using it.
+INTAKE_PROMPT = """Read the athlete's text, which describes the race or mountain day they are training for, into fields. Use null for anything the text doesn't say; never guess. Put a distance in kilometers in distance_km and climbing in meters in gain_m or loss_m, unconverted. A "50k" is a distance of 50 km. date is YYYY-MM-DD: when the text gives no year, use the first such date after today (in the data). name is the event or route name as written, without the date or numbers."""
+EDIT_PROMPT = """Read the athlete's request to change their training plan into edits. Days are 0 (Monday) to 6 (Sunday). Kinds: long_day (move the long day to day), add_day or drop_day (a training day), weekday_minutes or weekend_minutes (the most time on one such day, in minutes), week (week number counted from this week as week 1, with dims miles and/or vert and direction less or more). Leave unused fields null and dims empty when not a week edit. Anything else, such as a new objective, pace or a specific session, can't be done: return no edits for it."""
+
 MODES = {
     # Short reply, so low effort keeps it quick; analysis gets more thought.
     "brief": {"label": "daily brief", "schema": BRIEF_SCHEMA, "effort": "low", "max_tokens": 6000},
@@ -133,7 +160,13 @@ MODES = {
     "plan": {"label": "plan", "schema": _schema(PLAN_FIELDS), "effort": "medium", "max_tokens": 16000},
     "review": {"label": "weekly review", "schema": _schema(REVIEW_FIELDS), "effort": "low", "max_tokens": 8000},
     "chat": {"label": "chat", "schema": CHAT_SCHEMA, "effort": "low", "max_tokens": 8000},
+    # Plan setup in conversation: reading free text into fields, on the cheaper model.
+    "intake": {"label": "plan intake", "schema": INTAKE_SCHEMA, "effort": "low", "max_tokens": 2000,
+               "prompt": INTAKE_PROMPT, "fields_only": True},
+    "edit": {"label": "plan change", "schema": EDIT_SCHEMA, "effort": "low", "max_tokens": 2000,
+             "prompt": EDIT_PROMPT, "fields_only": True},
 }
+FIELD_MODES = {k for k, v in MODES.items() if v.get("fields_only")}
 
 
 # Context packets ---------------------------------------------------------------------------
@@ -534,6 +567,8 @@ PROMPT_NUMBERS = {x for x in allowed_numbers(SYSTEM) if x >= 10}
 
 def check(reply: dict, packet: dict, mode: str) -> list[str]:
     """Problems with a reply, as sentences the model can act on. Empty means it passes."""
+    if mode in FIELD_MODES:
+        return []
     allowed = allowed_numbers(packet) | PROMPT_NUMBERS
     bad = []
     for value in reply.values():
@@ -631,6 +666,8 @@ def _ask(client: Client, mode: str, packet: dict, problems: list[str], model_id:
          style: str = DEFAULT_STYLE) -> tuple[Any, dict | None]:
     cfg = MODES[mode]
     text = f"Mode: {cfg['label']}.\n"
+    if cfg.get("prompt"):
+        text += cfg["prompt"] + "\n"
     if STYLES.get(style, STYLES[DEFAULT_STYLE])["prompt"]:
         text += STYLES[style]["prompt"] + "\n"  # after the cached system prompt, so every style shares it
     text += "Data:\n" + json.dumps(packet, sort_keys=True)

@@ -143,6 +143,7 @@ struct Call: Codable, Hashable {
     let session: String
     let detail: String
     let why: String
+    let planned: Bool?
 }
 
 struct Week: Codable, Hashable {
@@ -171,6 +172,26 @@ struct CoachReply: Codable, Hashable {
     let reply: Call
     let source: String
     let fallbackReason: String?
+    let logId: Int?
+    let feedback: Int?
+    let cost: AICost?
+}
+
+/// What the AI call behind a coach reply cost. Only sent when the admin turns on "Show AI cost".
+struct AICost: Codable, Hashable {
+    let usd: Double
+    let model: String?
+    let inputTokens: Int
+    let outputTokens: Int
+    let cached: Bool
+
+    /// Same wording as web/components/AiCost.tsx.
+    var text: String {
+        let dollars = String(format: usd < 0.01 ? "$%.4f" : "$%.3f", usd)
+        let tokens = "\(inputTokens.formatted()) in, \(outputTokens.formatted()) out"
+        return cached ? "AI cost $0 (reused; first call \(dollars), \(model ?? "unknown model"), \(tokens))"
+            : "AI cost \(dollars) · \(model ?? "unknown model") · \(tokens) tokens"
+    }
 }
 
 struct LoadLedger: Codable, Hashable {
@@ -224,6 +245,8 @@ struct Streams: Codable, Hashable {
     let distanceMi: [Double]?
     let altitudeFt: [Double]?
     let heartRate: [Double]?
+    let lat: [Double?]?
+    let lon: [Double?]?
 }
 
 struct ActivityDetail: Codable, Hashable {
@@ -267,4 +290,17 @@ enum LedgerName {
             return ia == ib ? a < b : ia < ib
         }
     }
+}
+
+/// GET /api/onboarding: which first-run steps are done. The phone only shows what Today still needs.
+struct Onboarding: Codable {
+    struct Step: Codable, Hashable {
+        let key: String
+        let done: Bool
+        let skipped: Bool
+        let required: Bool
+    }
+    let needed: Bool
+    let steps: [Step]
+    let activities: Int
 }

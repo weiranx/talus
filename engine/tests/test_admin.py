@@ -127,3 +127,38 @@ def test_new_columns_are_added_to_an_existing_accounts_db(tmp_path):
     db.close()
     a = Accounts(root).get(1)
     assert a.email == "a@example.com" and a.disabled_at is None and a.coach_ceiling_usd is None
+
+
+def test_show_ai_cost_flag_adds_each_calls_cost(tmp_path, monkeypatch):
+    from tests.conftest import OWNER
+    from tests.test_coach import FakeClient, _demo
+
+    monkeypatch.setattr(accounts, "ADMIN_EMAIL", OWNER["email"])
+    owner = _demo(tmp_path, monkeypatch)
+    fake = FakeClient({"call": "rest", "why": "Rest today."}, {"call": "rest", "why": "Rest today."},
+                      {"answer": "Rest is the call.", "used": []})
+    monkeypatch.setattr(api, "coach_client", lambda: fake)
+    assert owner.get("/api/coach/brief").json()["cost"] is None  # off by default
+    assert owner.get("/api/admin").json()["features"] == {"show_ai_cost": False}
+
+    assert owner.put("/api/admin/features/show_ai_cost", json={"on": True}).json() == {"show_ai_cost": True}
+    assert owner.put("/api/admin/features/nope", json={"on": True}).status_code == 404
+    friend = sign_in(**FRIEND)
+    assert friend.put("/api/admin/features/show_ai_cost", json={"on": False}).status_code == 404
+
+    # The reused brief cost nothing now and carries its first call's cost: 900 in, 120 out,
+    # an unknown model priced as the dearest (Opus 5.5, $4 / $20 per MTok).
+    cached = owner.get("/api/coach/brief").json()["cost"]
+    assert cached == {"usd": 0.006, "model": "claude-test", "input_tokens": 900, "output_tokens": 120, "cached": True}
+    fresh = owner.get("/api/coach/brief?refresh=1").json()["cost"]
+    assert fresh["cached"] is False and fresh["usd"] == 0.006
+
+    msgs = owner.post("/api/coach/chat", json={"question": "Should I rest?"}).json()["messages"]
+    assert msgs[0]["cost"] is None and msgs[1]["cost"]["usd"] == 0.006
+    assert owner.get("/api/coach/chat").json()["messages"][1]["cost"]["cached"] is False
+    log = owner.get("/api/admin").json()["log"]
+    assert log[0]["action"] == "feature_on" and log[0]["detail"] == {"feature": "show_ai_cost"}
+
+    owner.put("/api/admin/features/show_ai_cost", json={"on": False})
+    assert owner.get("/api/coach/brief").json()["cost"] is None
+    assert "cost" not in owner.get("/api/coach/chat").json()["messages"][1]

@@ -59,6 +59,39 @@ export function planSummary(plan: Plan, name: string): string {
   ].join(" ").trim();
 }
 
+// The draft in detail beside the conversation: its first weeks, the coach's read and readiness.
+export function DraftDetail({ p }: { p: PlanPage }) {
+  const obj = p.objective;
+  const draft = p.draft;
+  if (!obj || !draft) return null;
+  return (
+    <section className="card" style={{ gap: 14 }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 12, flexWrap: "wrap" }}>
+        <div>
+          <h2 style={{ fontSize: 18, fontWeight: 600 }}>The draft for {obj.name}</h2>
+          <div className="muted">
+            {dayLabel(obj.day, { weekday: "long", month: "long", day: "numeric" })} · {obj.days_to_go} days to go ·{" "}
+            {mi(obj.distance_mi)} mi, {n0(obj.gain_ft)} ft up, {n0(obj.loss_ft)} ft down
+          </div>
+        </div>
+        <Pill tone={draft.reachable ? "good" : "bad"}>{draft.reachable ? "Reachable inside the limits" : "Out of reach by this date"}</Pill>
+      </div>
+      <div className="row">
+        <div style={{ flex: "2 1 520px", minWidth: 0, display: "flex", flexDirection: "column", gap: 12 }}>
+          <h3 className="label">The first weeks</h3>
+          <WeeksTable weeks={draft.weeks} current={draft.weeks[0].start} limit={6} />
+          <h3 className="label">Coach&apos;s read</h3>
+          <Suspense fallback={<CoachPlanPending />}><CoachPlan /></Suspense>
+        </div>
+        <div style={{ flex: "1 1 340px", minWidth: 0 }}>
+          {p.readiness ? <Readiness r={p.readiness} projected={draft.projected} note={p.fitness_only} /> : null}
+        </div>
+      </div>
+      <div className="muted">Nothing is on your calendar until you accept.</div>
+    </section>
+  );
+}
+
 // Setting up a plan, one step at a time: the objective, the days you can train, then the
 // drafted plan to review and accept. Shown until a plan is accepted.
 export default function Setup({ p, step }: { p: PlanPage; step: Step }) {

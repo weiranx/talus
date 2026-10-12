@@ -1,3 +1,4 @@
+import Link from "next/link";
 import AccountCard from "@/components/AccountCard";
 import AppearanceCard from "@/components/AppearanceCard";
 import CoachSettings from "@/components/CoachSettings";
@@ -5,8 +6,10 @@ import EngineDown from "@/components/EngineDown";
 import GarminCard from "@/components/GarminCard";
 import ReadinessSettings from "@/components/ReadinessSettings";
 import SourceCard from "@/components/SourceCard";
+import SyncMethodCard from "@/components/SyncMethodCard";
 import ThresholdsCard from "@/components/ThresholdsCard";
 import UploadCard from "@/components/UploadCard";
+import WatchCard from "@/components/WatchCard";
 import ZonesCard from "@/components/ZonesCard";
 import { engine, EngineError } from "@/lib/api";
 import type { Account, Settings } from "@/lib/types";
@@ -26,13 +29,17 @@ export default async function SettingsPage() {
     <>
       <header className="page-head">
         <h1 className="title">Settings</h1>
+        <Link href="/welcome" style={{ paddingBottom: 6 }}>Setup guide</Link>
       </header>
       <ThresholdsCard current={s.thresholds} inferred={s.inferred} />
       {s.thresholds ? <ZonesCard zones={s.thresholds.zones} /> : null}
       <div className="row">
         <div style={{ flex: "1 1 380px", minWidth: 0, display: "flex", flexDirection: "column", gap: 16 }}>
           <h2 className="label" style={{ margin: "4px 0 -8px" }}>Data sources</h2>
-          <SourceCard source={s.source} lastSync={s.sources.intervals.last_sync} />
+          <SyncMethodCard method={s.sync_method} />
+          {s.sync_method === "watch"
+            ? <WatchCard lastSync={s.sources.watch.last_sync} />
+            : <SourceCard source={s.source} lastSync={s.sources.intervals.last_sync} />}
           {s.sources.garmin.available ? <GarminCard garmin={s.sources.garmin} /> : null}
           <UploadCard upload={s.sources.upload} />
           <ReadinessSettings readiness={s.readiness} />

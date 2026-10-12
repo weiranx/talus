@@ -6,33 +6,111 @@ struct TodayView: View {
 
     var body: some View {
         NavigationStack {
-            Loader(load: { try await api.get("/api/today", as: Today.self) }) { t, reload in
-                ScrollView {
-                    VStack(alignment: .leading, spacing: 14) {
-                        Text(Fmt.day(t.date, .dateTime.weekday(.wide).month(.abbreviated).day()))
-                            .font(.subheadline).foregroundStyle(.secondary)
-                        CoachCallCard(rules: t.call)
-                        CheckInCard(initial: t.checkin, onSaved: reload)
-                        ReadinessCard(readiness: t.readiness, score: t.score)
-                        if let w = t.wellness { OvernightCard(w: w) }
-                        ForEach(LedgerName.sorted(t.ledgers.keys), id: \.self) { name in
-                            if let d = t.ledgers[name] {
-                                TodayLedgerCard(name: name, d: d,
-                                                limiter: t.readiness.legs.limiter == name && t.readiness.legs.state != "fresh")
+            Loader(load: { try await loadToday() }) { state, reload in
+                switch state {
+                case .setup(let ob):
+                    SetupView(ob: ob, reload: reload).navigationTitle("Today")
+                case .ready(let t):
+                    ScrollView {
+                        VStack(alignment: .leading, spacing: 14) {
+                            Text(Fmt.day(t.date, .dateTime.weekday(.wide).month(.abbreviated).day()))
+                                .font(.subheadline).foregroundStyle(.secondary)
+                            CoachCallCard(rules: t.call)
+                            CheckInCard(initial: t.checkin, onSaved: reload)
+                            ReadinessCard(readiness: t.readiness, score: t.score)
+                            if let w = t.wellness { OvernightCard(w: w) }
+                            ForEach(LedgerName.sorted(t.ledgers.keys), id: \.self) { name in
+                                if let d = t.ledgers[name] {
+                                    TodayLedgerCard(name: name, d: d,
+                                                    limiter: t.readiness.legs.limiter == name && t.readiness.legs.state != "fresh")
+                                }
                             }
+                            WeekCard(week: t.week)
+                            IntensityCard(share: t.zones28D?.share ?? t.intensity28D.share, model: t.zoneModel,
+                                          belowAet: t.intensity28D.share["z1"] ?? 0)
                         }
-                        WeekCard(week: t.week)
-                        IntensityCard(share: t.zones28D?.share ?? t.intensity28D.share, model: t.zoneModel,
-                                      belowAet: t.intensity28D.share["z1"] ?? 0)
+                        .padding()
                     }
-                    .padding()
+                    .refreshable { await reload() }
+                    .navigationDestination(for: Int.self) { ActivityDetailView(id: $0) }
+                    .navigationTitle("Today")
                 }
-                .refreshable { await reload() }
-                .navigationDestination(for: Int.self) { ActivityDetailView(id: $0) }
-                .navigationTitle("Today")
             }
             .background(Color(uiColor: .systemGroupedBackground))
         }
+    }
+
+    /// Today answers 409 until the account has thresholds; then it's setup that's needed.
+    private func loadToday() async throws -> TodayState {
+        do {
+            return .ready(try await api.get("/api/today", as: Today.self))
+        } catch APIError.server(409, _) {
+            return .setup(try await api.get("/api/onboarding", as: Onboarding.self))
+        }
+    }
+}
+
+enum TodayState {
+    case ready(Today)
+    case setup(Onboarding)
+}
+
+/// A new account: what Today still needs, Apple Health as the phone's own source, and the rest of
+/// setup (intervals.icu, thresholds, coach consent) in the web app.
+struct SetupView: View {
+    let ob: Onboarding
+    let reload: () async -> Void
+    @EnvironmentObject private var api: API
+    @EnvironmentObject private var health: HealthSync
+
+    private static let labels = [
+        "connect": "Connect a data source",
+        "import": "Import your training history",
+        "thresholds": "Set your heart rate thresholds",
+    ]
+
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 14) {
+                Card {
+                    Text("Finish setting up").font(.title2.bold())
+                    Text("Today needs your history and heart rate thresholds before it can make a call.")
+                        .foregroundStyle(.secondary)
+                    ForEach(ob.steps.filter { Self.labels[$0.key] != nil }, id: \.self) { step in
+                        Label(Self.labels[step.key]!, systemImage: step.done ? "checkmark.circle.fill" : "circle")
+                            .foregroundStyle(step.done ? Tone.good.ink : .primary)
+                    }
+                }
+                Card {
+                    SectionLabel("Apple Health")
+                    Text("Send workouts with route and heart rate, plus resting heart rate, HRV and sleep, from this iPhone.")
+                        .font(.subheadline).foregroundStyle(.secondary)
+                    if health.enabled {
+                        Button { Task { await health.sync(api); await reload() } } label: {
+                            BusyLabel(title: health.running ? "Syncing…" : "Sync now", busy: health.running)
+                        }
+                        .disabled(health.running)
+                    } else {
+                        Button("Connect Apple Health") { Task { await health.turnOn(api); await reload() } }
+                            .buttonStyle(.borderedProminent)
+                    }
+                    if let status = health.status { Text(status).font(.footnote).foregroundStyle(.secondary) }
+                }
+                Card {
+                    SectionLabel("More ways to set up")
+                    Text("Connect intervals.icu or Garmin, set heart rate thresholds from your runs, and choose whether to use the AI coach.")
+                        .font(.subheadline).foregroundStyle(.secondary)
+                    NavigationLink { SourcesPage() } label: { Label("Data sources", systemImage: "arrow.triangle.2.circlepath") }
+                    NavigationLink { HeartRatePage() } label: { Label("Heart rate thresholds", systemImage: "heart") }
+                    NavigationLink { CoachPage() } label: { Label("AI coach", systemImage: "text.bubble") }
+                    if let url = URL(string: api.server.trimmingCharacters(in: CharacterSet(charactersIn: "/ ")) + "/welcome") {
+                        Link("Or use the guided setup on the web", destination: url).font(.subheadline)
+                    }
+                }
+            }
+            .padding()
+        }
+        .refreshable { await reload() }
     }
 }
 
@@ -51,12 +129,21 @@ struct CoachCallCard: View {
                 Spacer()
                 Pill(text: Fmt.capitalized(call.call), tone: Tone.call(call.call))
             }
+            if rules.planned == true {
+                Text("From your plan").font(.caption).foregroundStyle(.white.opacity(0.6))
+            }
             Text(call.session).font(.title.bold()).foregroundStyle(.white)
             Text(call.detail).foregroundStyle(.white.opacity(0.92))
             Text("Why: \(call.why)").font(.subheadline).foregroundStyle(.white.opacity(0.75))
             HStack(spacing: 8) {
                 if waiting { ProgressView().controlSize(.small).tint(.white.opacity(0.7)) }
                 Text(note).font(.caption).foregroundStyle(.white.opacity(0.6))
+            }
+            if let cost = coach?.cost {
+                Text(cost.text).font(.caption2.monospaced()).foregroundStyle(.white.opacity(0.5))
+            }
+            if let id = coach?.logId {
+                CoachFeedback(logId: id, initial: coach?.feedback, dark: true)
             }
         }
         .padding(18)

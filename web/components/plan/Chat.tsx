@@ -1,5 +1,6 @@
 "use client";
 
+import AiCost from "@/components/AiCost";
 import { useEffect, useRef, useState } from "react";
 import CoachFeedback from "@/components/CoachFeedback";
 import { Dots } from "@/components/Loading";
@@ -58,7 +59,7 @@ export default function Chat({ initial }: { initial: ChatMessage[] }) {
             <div style={{ whiteSpace: "pre-wrap" }}>{m.text}</div>
             {m.role === "coach" && m.source === "coach" && m.log_id ? (
               <div style={{ display: "flex", justifyContent: "space-between", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
-                <span className="muted" style={{ fontSize: 11 }}>AI coach, numbers checked</span>
+                <span className="muted" style={{ fontSize: 11 }}>AI coach, numbers checked<AiCost cost={m.cost} /></span>
                 <CoachFeedback logId={m.log_id} initial={null} />
               </div>
             ) : null}

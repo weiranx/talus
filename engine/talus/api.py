@@ -19,6 +19,7 @@ from contextvars import ContextVar
 from dataclasses import asdict
 from datetime import date, datetime, timedelta
 from http.cookies import SimpleCookie
+from typing import Literal
 
 import httpx
 import numpy as np
@@ -26,7 +27,7 @@ from fastapi import BackgroundTasks, FastAPI, HTTPException, Request, Response
 from fastapi.responses import JSONResponse, RedirectResponse, StreamingResponse
 from pydantic import BaseModel, ConfigDict, Field
 
-from . import admin, cli, coach, explain, google_auth, ledger, readiness_score, wellness, zones
+from . import admin, cli, coach, explain, google_auth, interview, intervals_auth, ledger, readiness_score, wellness, zones
 from . import plan as planner
 from . import schedule
 from . import settings as app_settings
@@ -435,6 +436,36 @@ def _coach_cap(store: Store) -> dict:
             "month": month.isoformat()}
 
 
+def _show_ai_cost() -> bool:
+    """The admin page's "Show AI cost" feature flag, for every account. Off by default."""
+    return bool(get_accounts().config("show_ai_cost"))
+
+
+def _shown_cost(model: str | None, usage, cached: bool) -> dict | None:
+    """The cost line under a coach reply, when the flag is on. A reused reply cost nothing this
+    time; it carries what its first call cost."""
+    if not _show_ai_cost():
+        return None
+    cost = app_settings.call_cost(model, usage)
+    return None if cost is None else cost | {"cached": cached}
+
+
+def _chat_costs(messages: list[dict]) -> list[dict]:
+    """Each coach answer's cost from its logged call, when the flag is on. An answer reusing an
+    earlier logged call shows as cached."""
+    if not _show_ai_cost():
+        return messages
+    store, seen = get_store(), set()
+    for m in messages:
+        m["cost"] = None
+        if m["role"] == "coach" and m["log_id"]:
+            r = store.db.execute("SELECT model, usage FROM coach_log WHERE id = ?", (m["log_id"],)).fetchone()
+            cost = r and app_settings.call_cost(r["model"], r["usage"])
+            m["cost"] = cost and cost | {"cached": m["log_id"] in seen}
+            seen.add(m["log_id"])
+    return messages
+
+
 def _coach(store: Store, mode: str, subject: str, packet: dict, fallback: dict, refresh: bool) -> dict:
     """Reuse the logged reply for the same packet, model and prompt version, so reloading a page
     doesn't call the API again. Only API calls are logged; with no key or the coach off, the rules
@@ -442,26 +473,30 @@ def _coach(store: Store, mode: str, subject: str, packet: dict, fallback: dict, 
     cfg = _coach_settings(store)
     if not cfg["coach_enabled"]:
         return {"source": "rules", "reply": fallback, "log_id": None, "feedback": None,
-                "fallback_reason": "off", "model": None}
-    # Plan, weekly review and chat are longer reads, so they run on the analysis model.
-    model_id, style = cfg.get(f"{mode}_model", cfg["analysis_model"]), cfg["coach_style"]
+                "fallback_reason": "off", "model": None, "cost": None}
+    # Plan, weekly review and chat are longer reads, so they run on the analysis model; reading
+    # typed answers into fields is short work for the brief's cheaper model.
+    model_id = cfg["brief_model"] if mode in coach.FIELD_MODES else cfg.get(f"{mode}_model", cfg["analysis_model"])
+    style = cfg["coach_style"]
     if style not in coach.STYLES:
         style = coach.DEFAULT_STYLE
     h = coach.cache_key(packet, model_id, style)
     row = None if refresh else store.coach_entry(mode, subject, coach.PROMPT_VERSION, h)
     if row is not None and not (row["fallback_reason"] or "").startswith("api_error"):
         return {"source": row["source"], "reply": json.loads(row["reply"]), "log_id": row["id"],
-                "feedback": row["feedback"], "fallback_reason": row["fallback_reason"], "model": row["model"]}
+                "feedback": row["feedback"], "fallback_reason": row["fallback_reason"], "model": row["model"],
+                "cost": _shown_cost(row["model"], row["usage"], cached=True)}
     cap = _coach_cap(store)
     if cap["limit"] is not None and cap["spent"] >= cap["limit"]:
         return {"source": "rules", "reply": fallback, "log_id": None, "feedback": None,
-                "fallback_reason": "cap", "model": None}
+                "fallback_reason": "cap", "model": None, "cost": None}
     result = coach.run(mode, packet, fallback, coach_client(), model_id, style)
     log_id = None
     if result.fallback_reason != "no_key":
         log_id = store.log_coach(mode, subject, coach.PROMPT_VERSION, h, packet, result)
     return {"source": result.source, "reply": result.reply, "log_id": log_id, "feedback": None,
-            "fallback_reason": result.fallback_reason, "model": result.model}
+            "fallback_reason": result.fallback_reason, "model": result.model,
+            "cost": _shown_cost(result.model, result.usage, cached=False)}
 
 
 @app.get("/api/coach/brief")
@@ -723,7 +758,7 @@ def put_constraints(body: ConstraintsIn) -> dict:
     if body.long_day not in body.days:
         raise HTTPException(422, "Your long day has to be one of your training days.")
     store = get_store()
-    c = planner.Constraints.from_json(body.model_dump())
+    c = planner.Constraints.from_json(body.model_dump() | {"adjust": _constraints(store).adjust})
     store.save_settings({"plan_constraints": asdict(c)})
     obj = store.objective()
     if obj is not None:
@@ -743,6 +778,240 @@ def new_draft(body: DraftIn) -> dict:
         raise HTTPException(409, "Add an objective first.")
     _build_draft(store, obj, body.reason)
     return get_plan()
+
+
+# Planning with the coach: a conversation that fills the same inputs as the plan form. The
+# questions and summaries are written by the engine; only typed answers go to the model, and only
+# to be read into fields the engine then checks.
+
+TALK_KEY = "plan_talk"
+TALK_KEEP = 80  # messages kept
+
+
+class TalkIn(BaseModel):
+    text: str | None = Field(default=None, max_length=1000)
+    answers: dict[str, str | list[str]] | None = None
+    route: dict | None = None  # a GPX route's numbers from /api/plan/route
+    action: str | None = Field(default=None, pattern="^(accept|keep|retry)$")
+
+
+class TalkStart(BaseModel):
+    mode: str = Field(default="setup", pattern="^(setup|change)$")
+
+
+def _talk_new(store: Store, mode: str) -> dict:
+    c = asdict(_constraints(store))
+    obj = store.objective()
+    if mode == "change" and obj is not None and (store.plan("accepted") or store.plan("draft")):
+        return interview.change(obj.name, c)
+    return interview.start(c, obj.json() if obj else None)
+
+
+def _talk_state(store: Store, mode: str | None = None) -> dict:
+    """The conversation in progress, or a fresh one when it ended or no longer fits the plan."""
+    st = store.settings().get(TALK_KEY)
+    has_plan = store.plan("accepted") is not None or store.plan("draft") is not None
+    stale = (st is None or st.get("step") == "done" or (mode is not None and st.get("mode") != mode)
+             or (st.get("step") == "draft" and not has_plan)
+             or (st.get("mode") == "setup" and store.plan("accepted") is not None and st.get("step") != "draft"))
+    if stale:
+        st = _talk_new(store, mode or "setup")
+        store.save_settings({TALK_KEY: st})
+    return st
+
+
+def _talk_json(store: Store, st: dict) -> dict:
+    cfg = _coach_settings(store)
+    return {"messages": st["messages"], "step": st["step"], "mode": st.get("mode", "setup"),
+            "reads_with_ai": bool(cfg["coach_enabled"] and os.environ.get("ANTHROPIC_API_KEY"))}
+
+
+def _talk_read(store: Store, mode: str, text: str, packet: dict, fallback: dict) -> tuple[dict, dict | None]:
+    """Typed words read into fields by the cheaper model, or by the rules without it."""
+    out = _coach(store, mode, mode, packet, fallback, False)
+    return out["reply"], ({"cost": out["cost"]} if out["source"] == "coach" else None)
+
+
+def _talk_objective(store: Store, st: dict, body: TalkIn, day: date) -> list[dict]:
+    o = dict(st["objective"])
+    current = store.objective()
+    meta = None
+    if body.answers and body.answers.get("keep") and current is not None:
+        o = current.json() | {"keep": True}
+    if body.route:
+        o |= {k: body.route[k] for k in ("distance_mi", "gain_ft", "loss_ft", "longest_climb_ft", "longest_descent_ft",
+                                         "high_point_ft") if isinstance(body.route.get(k), (int, float))}
+        o["source"] = "gpx"
+        o.pop("keep", None)
+        if body.route.get("name") and not o.get("name"):
+            o["name"] = str(body.route["name"])[:80]
+    if body.text:
+        got = interview.rules_objective(body.text, day)
+        if interview.missing(o | got):
+            read, meta = _talk_read(store, "intake", body.text, {"today": day.isoformat(), "text": body.text}, {})
+            ai = interview.from_intake(read, day)
+            name = ai.get("name") or got.get("name")  # the model reads names better; the rules, numbers
+            got = ai | got | ({"name": name} if name else {})
+        if o.get("name") and sum(k in got for k in ("day", "distance_mi", "gain_ft")) < 2:
+            got.pop("name", None)  # filling in a missing piece, like "it's on March 3", keeps the name
+        o |= got
+        o.pop("keep", None)
+    problems = []
+    if o.get("day") and date.fromisoformat(o["day"]) <= day:
+        o.pop("day")
+        problems.append("That date has passed; the objective needs a date after today.")
+    st["objective"] = o
+    need = interview.missing(o)
+    if need:
+        have = []
+        if o.get("name"):
+            have.append(o["name"])
+        if o.get("distance_mi"):
+            have.append(f"{o['distance_mi']:.1f} mi")
+        if o.get("gain_ft"):
+            have.append(f"{round(o['gain_ft']):,} ft up")
+        if o.get("day"):
+            d = date.fromisoformat(o["day"])
+            have.append(f"{d.strftime('%b')} {d.day}")
+        text = " ".join(problems + ([f"Got {', '.join(have)}."] if have else []) +
+                        [f"I still need {interview._join_words([interview.MISSING_TEXT[k] for k in need])}."])
+        return [interview.coach(text, "objective", st["messages"][-1].get("groups") if not body.text else []) | (meta or {})]
+    o.setdefault("loss_ft", o["gain_ft"])
+    st["step"] = "goal"
+    return [interview.coach(f"Training for {interview.objective_line(o)}.") | (meta or {}),
+            interview.ask("goal")]
+
+
+def _talk_finish(store: Store, st: dict, day: date) -> list[dict]:
+    """Save the answers as the objective and training days, then draft the plan."""
+    a, o = st["answers"], st["objective"]
+    c = _constraints(store)
+    c.days = sorted(interview.DAY_SHORT.index(d) for d in a["days"])
+    c.long_day = interview.DAY_SHORT.index(a["long_day"])
+    c.weekday_min, c.weekend_min = a["weekday_min"], a["weekend_min"]
+    c.notes = interview.notes(a)
+    c.adjust = interview.lighter_start(day) if a.get("feel") == "Tired lately" else []
+    store.save_settings({"plan_constraints": asdict(c), "plan_context": interview.context(a)})
+    current = store.objective()
+    fields = {k: o.get(k) for k in ("name", "distance_mi", "gain_ft", "loss_ft", "longest_climb_ft",
+                                    "longest_descent_ft", "high_point_ft")} | {
+        "day": date.fromisoformat(o["day"]), "source": o.get("source", "manual")}
+    if o.get("keep") and current is not None:
+        obj, reason = current, "constraints"
+    else:
+        obj = planner.Objective(**fields)
+        obj.id = store.save_objective(obj)
+        reason = "new"
+    try:
+        plan = _build_draft(store, obj, reason)
+    except HTTPException as e:
+        st["step"] = "stuck"
+        return [interview.coach(str(e.detail), "stuck", actions=[{"id": "retry", "label": "Try again"}])]
+    st["step"] = "draft"
+    actions = [{"id": "accept", "label": "Accept plan"}]
+    if store.plan("accepted") is not None:
+        actions.append({"id": "keep", "label": "Keep my current plan"})
+    return [interview.coach(interview.draft_summary(plan, obj.name, c.long_day, a), "draft", actions=actions)]
+
+
+def _talk_change(store: Store, st: dict, text: str, day: date) -> list[dict]:
+    obj = store.objective()
+    before = store.plan("draft") or store.plan("accepted")
+    if obj is None or before is None:
+        st["step"] = "done"
+        return [interview.coach("There's no plan to change. Start a new one from the Plan page.")]
+    c = _constraints(store)
+    packet = {"today": day.isoformat(), "text": text, "training_days": c.days, "long_day": c.long_day,
+              "weeks_in_plan": len(before["weeks"])}
+    read, meta = _talk_read(store, "edit", text, packet, {"edits": interview.rules_edits(text)})
+    edits = read["edits"] if meta is None else interview.from_edits(read["edits"])
+    if not edits:
+        return [interview.coach(interview.EDIT_HELP, "draft") | (meta or {})]
+    new_c, done, skipped = interview.apply_edits(edits, asdict(c), before["weeks"])
+    if not done:
+        return [interview.coach(interview.change_text(done, skipped, []) + "\n" + interview.EDIT_HELP, "draft") | (meta or {})]
+    store.save_settings({"plan_constraints": asdict(planner.Constraints.from_json(new_c))})
+    try:
+        plan = _build_draft(store, obj, "constraints")
+    except HTTPException as e:
+        return [interview.coach(str(e.detail), "draft") | (meta or {})]
+    st["step"] = "draft"
+    actions = [{"id": "accept", "label": "Accept plan"}]
+    if store.plan("accepted") is not None:
+        actions.append({"id": "keep", "label": "Keep my current plan"})
+    return [interview.coach(interview.change_text(done, skipped, planner.diff(before, plan)), "draft", actions=actions)
+            | (meta or {})]
+
+
+@app.get("/api/plan/talk")
+def get_talk(mode: str | None = None) -> dict:
+    if mode not in (None, "setup", "change"):
+        raise HTTPException(422, "Mode is setup or change.")
+    store = get_store()
+    return _talk_json(store, _talk_state(store, mode))
+
+
+@app.post("/api/plan/talk/restart")
+def restart_talk(body: TalkStart) -> dict:
+    store = get_store()
+    st = _talk_new(store, body.mode)
+    store.save_settings({TALK_KEY: st})
+    return _talk_json(store, st)
+
+
+@app.post("/api/plan/talk")
+def post_talk(body: TalkIn) -> dict:
+    """One turn: chip answers, typed words, a GPX route or an action on the draft."""
+    store = get_store()
+    day = date.today()
+    st = _talk_state(store)
+    step = st["step"]
+    text = (body.text or "").strip()
+    body.text = text or None
+    answers = {k: v for k, v in (body.answers or {}).items() if v not in (None, "", [])}
+    if body.action == "accept" or body.action == "keep":
+        line = "Accept plan" if body.action == "accept" else "Keep my current plan"
+    elif body.route:
+        line = f"Uploaded a route: {body.route.get('distance_mi', 0):.1f} mi, {round(body.route.get('gain_ft', 0)):,} ft up"
+    else:
+        line = " · ".join(x for x in (interview.said(step, answers), text) if x)
+    if not line and body.action != "retry":
+        raise HTTPException(422, "Say something, or tap an answer.")
+    if line:
+        st["messages"].append({"role": "athlete", "text": line})
+    if body.action in ("accept", "keep"):
+        draft = store.plan("draft")
+        if draft is None:
+            reply = [interview.coach("There's no draft waiting. Your plan is as it was.")]
+        else:
+            store.decide_draft(draft["id"], body.action == "accept")
+            reply = [interview.coach("Done. Your plan is on the calendar, and you can change it here any time."
+                                     if body.action == "accept" else "Kept your current plan.")]
+        st["step"] = "done"
+    elif body.action == "retry" or step == "stuck":
+        reply = _talk_finish(store, st, day)
+    elif step == "objective":
+        reply = _talk_objective(store, st, body, day)
+    elif step in interview.STEPS:
+        got, problem = interview.chip_answers(step, answers, text, st["defaults"])
+        if problem:
+            reply = [interview.coach(problem, step, [g | {"value": answers.get(g["key"]) or st["defaults"].get(g["key"])}
+                                                     for g in interview.QUESTIONS[step]["groups"]])]
+        else:
+            st["answers"] |= got
+            nxt = interview.next_step(step)
+            if nxt is None:
+                reply = _talk_finish(store, st, day)
+            else:
+                st["step"] = nxt
+                reply = [interview.ask(nxt, st["defaults"])]
+    else:  # a draft is up: typed changes
+        if not text:
+            raise HTTPException(422, "Tell me what to change.")
+        reply = _talk_change(store, st, text, day)
+    st["messages"] = (st["messages"] + reply)[-TALK_KEEP:]
+    store.save_settings({TALK_KEY: st})
+    return _talk_json(store, st)
 
 
 @app.post("/api/plan/{plan_id}/{decision}")
@@ -766,6 +1035,8 @@ def coach_plan(refresh: bool = False) -> dict:
         raise HTTPException(404, "No plan yet.")
     packet = coach.plan_packet(p, p["now"], date.fromisoformat(p["built_on"]),
                                planner.REPLAN_TEXT.get(p["reason"], p["reason"]), p.get("changes") or [])
+    if answers := store.settings().get("plan_context"):
+        packet["athlete_answers"] = answers  # tap answers from planning with the coach; no typed text
     return _coach(store, "plan", f"plan-{p['id']}", packet, coach.rules_plan(packet), refresh) | {"plan_id": p["id"]}
 
 
@@ -855,7 +1126,7 @@ class ChatIn(BaseModel):
 
 @app.get("/api/coach/chat")
 def get_chat() -> dict:
-    return {"messages": get_store().chat()}
+    return {"messages": _chat_costs(get_store().chat())}
 
 
 @app.delete("/api/coach/chat")
@@ -895,7 +1166,7 @@ def post_chat(body: ChatIn) -> dict:
     out = _coach(store, "chat", "chat", packet, {"answer": coach.CHAT_FALLBACK, "used": []}, False)
     answer = CHAT_UNAVAILABLE.get(out["fallback_reason"] or "", out["reply"]["answer"])
     store.add_chat("coach", answer, out["source"], out["log_id"])
-    return {"messages": store.chat(), "source": out["source"], "fallback_reason": out["fallback_reason"]}
+    return {"messages": _chat_costs(store.chat()), "source": out["source"], "fallback_reason": out["fallback_reason"]}
 
 
 # Settings. Keys stay in .env: the engine reports whether each one is set, never its value.
@@ -976,6 +1247,8 @@ def get_settings() -> dict:
             "key_set": cred is not None,
             "kind": cred and cred["kind"],
             "athlete_id": cred and cred.get("athlete_id"),
+            "athlete_name": cred and cred.get("athlete_name"),
+            "oauth_available": intervals_auth.enabled(),
             "updated_at": cred and cred["updated_at"],
             "garmin_fallback_set": _is_owner() and bool(os.environ.get("GARMIN_EMAIL")),
             "activities": len(acts),
@@ -983,6 +1256,7 @@ def get_settings() -> dict:
             "last_sync": saved.get("last_sync"),
         },
         "sources": _sources(saved),
+        "sync_method": saved.get("sync_method", "intervals"),
         "coach": {
             "enabled": cfg["coach_enabled"],
             "key_set": bool(os.environ.get("ANTHROPIC_API_KEY")),
@@ -1105,6 +1379,18 @@ def put_readiness(body: ReadinessIn) -> dict:
     return {"ok": True}
 
 
+class SyncMethodIn(BaseModel):
+    method: Literal["intervals", "watch"]
+
+
+@app.put("/api/settings/sync-method")
+def put_sync_method(body: SyncMethodIn) -> dict:
+    """How new activities arrive: intervals.icu's API, or straight off a Garmin watch over
+    Bluetooth from the web (Chrome) or iOS app. File upload works either way."""
+    get_store().save_settings({"sync_method": body.method})
+    return {"ok": True}
+
+
 def _intervals_credential() -> dict | None:
     return cli.credential_for(get_accounts(), _account.get())
 
@@ -1125,7 +1411,13 @@ def put_source(body: SourceIn) -> dict:
 
 @app.delete("/api/settings/source")
 def delete_source() -> dict:
-    get_accounts().clear_credential(current_account().id, "intervals")
+    """Forget this account's intervals.icu key or connection. A connection is also ended on
+    intervals.icu's side, so Talus leaves its list of connected apps."""
+    accounts, account = get_accounts(), current_account()
+    cred = accounts.credential(account.id, "intervals")
+    accounts.clear_credential(account.id, "intervals")
+    if cred and cred["kind"] == "oauth":
+        intervals_auth.disconnect(cred["access_token"])
     return {"ok": True}
 
 
@@ -1144,6 +1436,7 @@ def _sources(saved: dict) -> dict:
                    "last_sync": saved.get("last_sync_garmin")},
         "upload": {"last_import": saved.get("last_import"), "max_mb": MAX_UPLOAD_MB},
         "healthkit": {"last_sync": saved.get("last_sync_healthkit")},
+        "watch": {"last_sync": saved.get("last_sync_watch")},
     }
 
 
@@ -1164,7 +1457,7 @@ def sync_now(body: SyncIn, background: BackgroundTasks) -> dict:
     if body.source == "intervals":
         cred = _intervals_credential()
         if cred is None:
-            raise HTTPException(409, "Add your intervals.icu API key under Data sources first.")
+            raise HTTPException(409, "Connect intervals.icu under Data sources first.")
     else:
         account = current_account()
         if not account.is_owner:
@@ -1185,6 +1478,179 @@ def sync_now(body: SyncIn, background: BackgroundTasks) -> dict:
     background.add_task(warm_coach, result.pop("added_ids"))
     background.add_task(start_inferring, store.dir)
     return result | {"log": lines}
+
+
+# First run. A new account is walked through six steps; only connecting a source is required.
+# Progress lives in the account's own settings (`onboarding`), so the flow resumes where it
+# stopped, and an account already set up before the flow existed never sees it.
+
+ONBOARDING_STEPS = ("connect", "import", "thresholds", "sleep", "coach", "tour")
+OPTIONAL_STEPS = ("thresholds", "sleep", "coach", "tour")
+IMPORT_DAYS = {"6w": 42, "6m": 180, "all": 730}
+
+_imports: dict[str, dict] = {}
+_imports_guard = threading.Lock()
+
+
+def _resting_hint(store: Store) -> int | None:
+    """A resting heart rate to start from: the median of the last 30 nights' readings, if any."""
+    nights = store.wellness(date.today() - timedelta(days=30), date.today())
+    values = sorted(n["resting_hr"] for n in nights.values() if n["resting_hr"])
+    return round(values[len(values) // 2]) if values else None
+
+
+def _import_status(store: Store) -> dict | None:
+    with _imports_guard:
+        live = _imports.get(str(store.dir))
+    return dict(live) if live else store.settings().get("onboarding_import")
+
+
+def _onboarding(store: Store) -> dict:
+    saved = store.settings()
+    ob = saved.get("onboarding") or {}
+    th = store.thresholds()
+    activities = store.db.execute("SELECT COUNT(*) FROM activity WHERE start_time IS NOT NULL").fetchone()[0]
+    if not ob and th is not None and activities:
+        # Set up before this flow existed: recorded once as finished, so it never opens on its own.
+        ob = {"finished": datetime.now().isoformat(timespec="seconds"), "established": True}
+        store.save_settings({"onboarding": ob})
+    done, skipped = set(ob.get("done") or []), set(ob.get("skipped") or [])
+    accounts, account = get_accounts(), _account.get()
+    garmin = bool(account) and accounts.credential(account.id, "garmin") is not None
+    intervals = _intervals_credential() is not None
+    imp = _import_status(store)
+    state = {
+        "connect": intervals or garmin or activities > 0,
+        "import": activities > 0 or bool(imp and imp.get("state") == "done" and not imp.get("error")),
+        "thresholds": th is not None,
+        "sleep": wellness.sleep_need(saved)[1] == "saved",
+        "coach": "coach" in done,
+        "tour": "tour" in done,
+    }
+    steps = [{"key": k, "done": state[k] or k in done, "skipped": k in skipped and not state[k],
+              "required": k not in OPTIONAL_STEPS} for k in ONBOARDING_STEPS]
+    nxt = next((s["key"] for s in steps if not s["done"] and not s["skipped"]), None)
+    return {
+        "needed": not ob.get("finished"),
+        "started": ob.get("started"), "finished": ob.get("finished"),
+        "established": bool(ob.get("established")),
+        "steps": steps, "next": nxt,
+        "import": imp, "activities": activities,
+        "sources": {"intervals": intervals, "garmin": garmin, "garmin_available": _is_owner()},
+        "resting_hint": _resting_hint(store),
+        "coach": {"enabled": _coach_settings(store)["coach_enabled"], "style": _coach_settings(store)["coach_style"],
+                  "key_set": bool(os.environ.get("ANTHROPIC_API_KEY")),
+                  "styles": [{"key": k, "label": v["label"], "description": v["description"]}
+                             for k, v in coach.STYLES.items()]},
+        "import_choices": IMPORT_DAYS,
+    }
+
+
+@app.get("/api/onboarding")
+def get_onboarding() -> dict:
+    return _onboarding(get_store())
+
+
+class OnboardingIn(BaseModel):
+    action: str = Field(pattern="^(start|done|skip|finish|restart)$")
+    step: str | None = None
+    coach_enabled: bool | None = None
+    coach_style: str | None = None
+
+
+@app.put("/api/onboarding")
+def put_onboarding(body: OnboardingIn) -> dict:
+    """start: the flow was opened. done or skip: one step, with the coach choice on the coach
+    step. finish: land on Today, also how "skip setup" ends it. restart: open it again."""
+    store = get_store()
+    _onboarding(store)  # records an account set up before this flow as established
+    ob = dict(store.settings().get("onboarding") or {})
+    now = datetime.now().isoformat(timespec="seconds")
+    if body.action in ("done", "skip"):
+        if body.step not in ONBOARDING_STEPS:
+            raise HTTPException(422, f"Unknown step {body.step}")
+        if body.action == "skip" and body.step not in OPTIONAL_STEPS:
+            raise HTTPException(422, "Connect a data source and import some history first; those can't be skipped.")
+        if body.step == "coach" and body.action == "done":
+            if body.coach_style is not None and body.coach_style not in coach.STYLES:
+                raise HTTPException(422, f"Unknown style {body.coach_style}")
+            values = {"coach_enabled": bool(body.coach_enabled)}
+            if body.coach_style is not None:
+                values["coach_style"] = body.coach_style
+            store.save_settings(values)
+        if body.step == "coach" and body.action == "skip" and not ob.get("established"):
+            # The spec's default without consent: load tracking only. Settings can turn it on.
+            store.save_settings({"coach_enabled": False})
+        key, other = ("done", "skipped") if body.action == "done" else ("skipped", "done")
+        ob[key] = sorted(set(ob.get(key) or []) | {body.step})
+        ob[other] = sorted(set(ob.get(other) or []) - {body.step})
+    if body.action == "start" or not ob.get("started"):
+        ob["started"] = ob.get("started") or now
+    if body.action == "finish":
+        ob["finished"] = now
+        if not ob.get("established") and "coach" not in set(ob.get("done") or []) | set(ob.get("skipped") or []):
+            store.save_settings({"coach_enabled": False})  # left setup before consenting
+    if body.action == "restart":
+        ob.pop("finished", None)
+        ob["started"] = now
+    store.save_settings({"onboarding": ob})
+    return _onboarding(store)
+
+
+class ImportIn(BaseModel):
+    source: str = Field(default="intervals", pattern="^(intervals|garmin)$")
+    range: str = Field(default="6m", pattern="^(6w|6m|all)$")
+
+
+@app.post("/api/onboarding/import")
+def start_import(body: ImportIn) -> dict:
+    """Pull history from a synced source in the background, so the athlete can carry on with the
+    next steps while it runs. GET /api/onboarding reports the progress."""
+    store = get_store()
+    account = current_account()
+    save = None
+    if body.source == "intervals":
+        cred = _intervals_credential()
+        if cred is None:
+            raise HTTPException(409, "Connect intervals.icu first.")
+    else:
+        if not account.is_owner:
+            raise HTTPException(403, "Garmin Connect is for the owner account only.")
+        cred = get_accounts().credential(account.id, "garmin")
+        if cred is None:
+            raise HTTPException(409, "Connect Garmin first.")
+
+        def save(values: dict) -> None:
+            get_accounts().set_credential(account.id, "garmin", "tokens", values)
+    key, folder, days = str(store.dir), store.dir, IMPORT_DAYS[body.range]
+    status = {"state": "running", "source": body.source, "range": body.range, "days": days,
+              "started": datetime.now().isoformat(timespec="seconds"), "done": 0, "total": None,
+              "saved": 0, "error": None}
+
+    def progress(done: int, total: int) -> None:
+        with _imports_guard:
+            _imports[key].update(done=done, total=total)
+
+    def run() -> None:
+        s = Store(folder)
+        try:
+            result = cli.sync(s, body.source, date.today() - timedelta(days=days), log=lambda _: None,
+                              credential=cred, save_credential=save, progress=progress)
+            final = {"saved": result["saved"], "duplicates": result["duplicates"],
+                     "wellness_days": result.get("wellness_days", 0)}
+        except Exception as e:
+            final = {"error": f"{type(e).__name__}: {e}"}
+        with _imports_guard:
+            done = _imports.pop(key) | final | {"state": "done", "finished": datetime.now().isoformat(timespec="seconds")}
+        s.save_settings({"onboarding_import": done})
+        start_inferring(folder)
+
+    with _imports_guard:
+        if key in _imports:
+            return dict(_imports[key])
+        _imports[key] = status
+        threading.Thread(target=run, name=f"import {key}", daemon=True).start()
+    return status
 
 
 class GarminIn(BaseModel):
@@ -1276,10 +1742,14 @@ MAX_UPLOAD_MB = int(os.environ.get("TALUS_MAX_UPLOAD_MB", "2048"))
 
 
 @app.post("/api/import")
-async def import_file(request: Request, background: BackgroundTasks, name: str = "upload") -> dict:
+async def import_file(request: Request, background: BackgroundTasks, name: str = "upload",
+                      watch_file: str | None = None) -> dict:
     """Upload one file as the request body: a FIT, GPX or TCX file (gzipped or not), a zip of
     them, or the Health app's export.zip. Streamed to disk, since an Apple Health export can run
-    to gigabytes, and deleted once read."""
+    to gigabytes, and deleted once read.
+
+    watch_file is set when the web or iOS app pulled the file off a Garmin watch over Bluetooth:
+    its key (type, file number and time) is remembered so the next sync skips it."""
     store = get_store()
     tmp_dir = store.dir / "uploads"
     tmp_dir.mkdir(parents=True, exist_ok=True)
@@ -1306,9 +1776,28 @@ async def import_file(request: Request, background: BackgroundTasks, name: str =
             return store.settings()["last_import"] | {"log": lines}
     finally:
         tmp.unlink(missing_ok=True)
+    if watch_file and not result.get("error") and not result.get("failed"):
+        remember_watch_file(store, watch_file)
     background.add_task(warm_coach, result.pop("added_ids"))
     background.add_task(start_inferring, store.dir)
     return result | {"log": lines}
+
+
+WATCH_KEYS_KEPT = 2000
+
+
+def remember_watch_file(store: Store, key: str) -> None:
+    saved = store.settings()
+    keys = [k for k in saved.get("watch_files", []) if k != key] + [key]
+    store.save_settings({"watch_files": keys[-WATCH_KEYS_KEPT:],
+                         "last_sync_watch": datetime.now().isoformat(timespec="seconds")})
+
+
+@app.get("/api/import/watch")
+def watch_files() -> dict:
+    """Files already pulled off the watch, so the apps download only what is new."""
+    saved = get_store().settings()
+    return {"files": saved.get("watch_files", []), "last_sync": saved.get("last_sync_watch")}
 
 
 # The analysis is written right after a sync only for recent activities: a first sync of a
@@ -1559,12 +2048,13 @@ def _safe_next(path: str | None) -> str:
     return path if path and path.startswith("/") and not path.startswith("//") else "/"
 
 
-def _back(path: str, error: str | None = None) -> RedirectResponse:
+def _back(path: str, error: str | None = None, param: str = "google_error",
+          cookie: str = OAUTH_COOKIE) -> RedirectResponse:
     from urllib.parse import urlencode
 
-    target = path if error is None else f"{path}?{urlencode({'google_error': error})}"
+    target = path if error is None else f"{path}{'&' if '?' in path else '?'}{urlencode({param: error})}"
     response = RedirectResponse(target, status_code=303)
-    response.delete_cookie(OAUTH_COOKIE, path="/")
+    response.delete_cookie(cookie, path="/")
     return response
 
 
@@ -1638,6 +2128,63 @@ def google_callback(request: Request, code: str | None = None, state: str | None
     return response
 
 
+# Connect intervals.icu with OAuth. Same sealed-cookie pattern as Google: the callback only
+# completes in the browser, and for the account, that started it.
+
+INTERVALS_COOKIE = "talus_intervals_oauth"
+
+
+def _intervals_back(error: str | None = None, path: str = "/settings") -> RedirectResponse:
+    return _back(path, error, param="intervals_error", cookie=INTERVALS_COOKIE)
+
+
+@app.get("/api/auth/intervals/start")
+def intervals_start(request: Request, next: str | None = None) -> RedirectResponse:
+    """Send the browser to intervals.icu to approve Talus for the signed-in account. It comes back
+    to `next` (a path in Talus, default /settings), with ?intervals_error=... if it failed."""
+    back = _safe_next(next or "/settings")
+    if not intervals_auth.enabled():
+        return _intervals_back("Connecting with intervals.icu isn't set up on this Talus. Use an API key.", back)
+    accounts = get_accounts()
+    account = accounts.session_account(request.cookies.get(COOKIE))
+    if account is None:
+        return _back("/login", "Sign in first.")
+    state = secrets.token_urlsafe(24)
+    sealed = accounts._cipher().encrypt(json.dumps({"state": state, "account": account.id, "next": back}).encode()).decode()
+    response = RedirectResponse(intervals_auth.authorize_url(state), status_code=303)
+    response.set_cookie(INTERVALS_COOKIE, sealed, max_age=OAUTH_TTL_S, httponly=True, samesite="lax", path="/",
+                        secure=os.environ.get("TALUS_SECURE_COOKIE", "") == "1")
+    return response
+
+
+@app.get(intervals_auth.CALLBACK_PATH)
+def intervals_callback(request: Request, code: str | None = None, state: str | None = None,
+                       error: str | None = None) -> RedirectResponse:
+    """intervals.icu sends the browser back here. The token replaces any saved API key."""
+    accounts = get_accounts()
+    try:
+        flow = json.loads(accounts._cipher().decrypt(request.cookies.get(INTERVALS_COOKIE, "").encode(),
+                                                     ttl=OAUTH_TTL_S))
+    except Exception:
+        return _intervals_back("Connecting intervals.icu timed out. Try again.")
+    back = flow.get("next", "/settings")
+    if error or not code:
+        return _intervals_back("Connecting intervals.icu was cancelled.", back)
+    if not state or not secrets.compare_digest(state, flow["state"]):
+        return _intervals_back("The connection didn't match this browser. Try again.", back)
+    current = accounts.session_account(request.cookies.get(COOKIE))
+    if current is None or current.id != flow["account"]:
+        return _back("/login", "Sign in first.")
+    try:
+        values = intervals_auth.exchange_code(code)
+    except intervals_auth.IntervalsAuthError as e:
+        return _intervals_back(str(e), back)
+    except httpx.HTTPError:
+        return _intervals_back("Couldn't reach intervals.icu. Try again.", back)
+    accounts.set_credential(current.id, "intervals", "oauth", values)
+    return _intervals_back(path=back)
+
+
 @app.post("/api/account/google/unlink")
 def google_unlink() -> dict:
     try:
@@ -1677,7 +2224,26 @@ def admin_overview() -> dict:
     return {"accounts": rows, "month": month.isoformat(),
             "signup": {"open": _signup_open(accounts), "chosen": accounts.config("signup_open"),
                        "env": os.environ.get("TALUS_SIGNUP", "open").lower() != "closed"},
+            "features": {k: bool(accounts.config(k)) for k in FEATURES},
             "system": admin.system(accounts), "log": log}
+
+
+# Feature flags the admin turns on for everyone. All off by default.
+FEATURES = ("show_ai_cost",)
+
+
+class FeatureIn(BaseModel):
+    on: bool
+
+
+@app.put("/api/admin/features/{name}")
+def admin_feature(name: str, body: FeatureIn) -> dict:
+    accounts, me = _admin()
+    if name not in FEATURES:
+        raise HTTPException(404, "No such feature.")
+    accounts.set_config(name, body.on)
+    accounts.log_admin(me.id, "feature_on" if body.on else "feature_off", None, {"feature": name})
+    return {name: body.on}
 
 
 class SignupIn(BaseModel):

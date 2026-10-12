@@ -2,6 +2,7 @@
 
 import { useRouter } from "next/navigation";
 import { useState } from "react";
+import Link from "next/link";
 import Pill from "@/components/Pill";
 import type { CostEstimate, Settings } from "@/lib/types";
 
@@ -70,6 +71,9 @@ export default function CoachSettings({ coach }: { coach: Settings["coach"] }) {
           </span>
         </span>
       </label>
+      <div className="muted" style={{ fontSize: 14 }}>
+        Tell the coach what kind of training you want under <Link href="/coach">Coach, Your training goals</Link>.
+      </div>
       {!coach.key_set ? (
         <div className="muted">
           {coach.cap.ceiling == null

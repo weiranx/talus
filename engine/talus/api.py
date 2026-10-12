@@ -677,13 +677,56 @@ def _coach(store: Store, mode: str, subject: str, packet: dict, fallback: dict, 
             "cost": _shown_cost(result.model, result.usage, cached=False)}
 
 
+def _noted(store: Store, packet: dict) -> dict:
+    """Every coach answer reads the athlete's training note, when they have written one."""
+    if note := (store.settings().get("coach_note") or "").strip():
+        packet["athlete_note"] = note
+    return packet
+
+
+@app.get("/api/coach/note")
+def get_coach_note() -> dict:
+    return {"note": get_store().settings().get("coach_note") or ""}
+
+
+class NoteIn(BaseModel):
+    note: str = Field(max_length=coach.NOTE_MAX)
+
+
+@app.put("/api/coach/note")
+def put_coach_note(body: NoteIn) -> dict:
+    get_store().save_settings({"coach_note": body.note.strip()})
+    return {"ok": True}
+
+
+class NoteDraftIn(BaseModel):
+    training_for: str = Field(default="", max_length=300)
+    wants: str = Field(default="", max_length=300)
+    avoid: str = Field(default="", max_length=300)
+
+
+@app.post("/api/coach/note/draft")
+def draft_coach_note(body: NoteDraftIn) -> dict:
+    """The coach drafts the training note from three short answers and the athlete's recent
+    training. The draft is returned to edit; nothing is saved until the athlete saves it."""
+    answers = body.model_dump()
+    if not any(v.strip() for v in answers.values()):
+        raise HTTPException(422, "Answer at least one question.")
+    store = get_store()
+    day = date.today()
+    packet = coach.note_packet(answers, _activities(store, day - timedelta(weeks=13)), day)
+    out = _coach(store, "note", "note", packet, coach.rules_note(packet), False)
+    return {"note": out["reply"]["note"][:coach.NOTE_MAX], "source": out["source"],
+            "fallback_reason": out["fallback_reason"], "cost": out["cost"]}
+
+
 @app.get("/api/coach/brief")
 def coach_brief(refresh: bool = False) -> dict:
     t = today()
     store = get_store()
     day = date.fromisoformat(t["date"])
     acts = _activities(store, day - timedelta(weeks=coach.BRIEF_WEEKS))
-    packet = coach.brief_packet(t, [a for a in acts if a["day"] >= (day - timedelta(days=13)).isoformat()], acts)
+    packet = _noted(store, coach.brief_packet(t, [a for a in acts if a["day"] >= (day - timedelta(days=13)).isoformat()], acts))
     fallback = {k: t["call"][k] for k in ("call", "session", "detail", "why")}
     out = _coach(store, "brief", t["date"], packet, fallback, refresh)
     if out["source"] == "coach":
@@ -698,7 +741,7 @@ def coach_activity(activity_id: int, refresh: bool = False) -> dict:
     day = date.today()
     now = {d.ledger: _ledger_json(d) for d in store.ledgers(day) if d.day == day}
     since = date.fromisoformat(a["day"]) - timedelta(days=max(coach.SIMILAR_DAYS, coach.BEST_DAYS))
-    packet = coach.analysis_packet(a, _thresholds(store), now, day, _activities(store, since))
+    packet = _noted(store, coach.analysis_packet(a, _thresholds(store), now, day, _activities(store, since)))
     return _coach(store, "analysis", str(activity_id), packet, coach.rules_analysis(packet), refresh)
 
 
@@ -1282,6 +1325,7 @@ def coach_plan(refresh: bool = False) -> dict:
         raise HTTPException(404, "No plan yet.")
     packet = coach.plan_packet(p, p["now"], date.fromisoformat(p["built_on"]),
                                planner.REPLAN_TEXT.get(p["reason"], p["reason"]), p.get("changes") or [])
+    _noted(store, packet)
     if answers := store.settings().get("plan_context"):
         packet["athlete_answers"] = answers  # tap answers from planning with the coach; no typed text
     return _coach(store, "plan", f"plan-{p['id']}", packet, coach.rules_plan(packet), refresh) | {"plan_id": p["id"]}
@@ -1299,6 +1343,7 @@ def coach_review(refresh: bool = False) -> dict:
     obj = coach._objective(accepted, day)
     packet = coach.review_packet(review, next_week, {"date": obj["date"], "days_to_go": obj["days_to_go"]},
                                  review["replan_text"])
+    _noted(store, packet)
     return _coach(store, "review", review["start"], packet, coach.rules_review(packet), refresh) | {"review": review}
 
 
@@ -1410,6 +1455,7 @@ def post_chat(body: ChatIn) -> dict:
     sessions = _with_own_runs(store, _sessions(store, plan_ctx, acts, day, t["thresholds"]["aet"] if t else 150), acts)
     packet = coach.chat_packet(question, history, t, plan_ctx, now if plan_ctx else None, sessions,
                                [a for a in acts if a["day"] >= (day - timedelta(days=13)).isoformat()], day, acts)
+    _noted(store, packet)
     store.add_chat("athlete", question)
     out = _coach(store, "chat", "chat", packet, {"answer": coach.CHAT_FALLBACK, "used": []}, False)
     answer = CHAT_UNAVAILABLE.get(out["fallback_reason"] or "", out["reply"]["answer"])

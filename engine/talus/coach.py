@@ -18,7 +18,7 @@ from dataclasses import dataclass, field
 from datetime import date, timedelta
 from typing import Any, Protocol
 
-PROMPT_VERSION = "coach-v0.6"
+PROMPT_VERSION = "coach-v0.7"
 # The daily brief is short and mostly explains the engine's call, so it runs on Haiku; the
 # workout analysis has more to read and judge, so it stays on Opus. Both can be changed in
 # Settings, and TALUS_COACH_MODEL overrides both defaults.
@@ -66,6 +66,8 @@ The readiness score (0 to 100) is the engine's: it starts at 100 and each input 
 
 effort_mi is distance plus climbing as flat-equivalent miles. min_per_effort_mi is moving minutes per effort mile: on similar ground, lower at the same or lower cardio_load_per_hour means the athlete is moving better for the same cost.
 History: "weeks" holds weekly totals (Monday to Sunday, oldest first); the last week is this week and is partial when "complete" is false, so never call it short. "bests_90d" holds the athlete's longest day, biggest climb and biggest descent in the last 90 days. "rest" says how many days in a row the athlete has trained and how many rest days the last 14 days held.
+
+"athlete_note", when present, is the athlete's own description of the training they want. Shape your emphasis, comparisons and suggestions around it, and say plainly when the data shows them drifting from it. It never overrides the rules below, the pain rule, the engine's call or the plan's targets. Numbers in it are the athlete's and may be quoted.
 
 Your reader is the athlete. They use miles and feet, never km or meters, and they always weigh distance and vert together.
 
@@ -201,6 +203,25 @@ def lookup_race(client: Client, text: str, today: str, model_id: str) -> tuple[d
         return None, resp.model, usage
     return found, resp.model, usage
 
+NOTE_FIELDS = ("note",)
+NOTE_MAX = 1500
+NOTE_PROMPT = """Write the athlete's training note: the kind of training they want, which the coach will read before every answer. Write it in their voice ("I ..."), as three to six short sentences, from their answers and their recent training. Keep every goal and limit they gave. Add what their history shows that matters for those goals, such as how much they run and climb a week now, how often they rest or how much of their time is below AeT. Do not invent goals, races, dates, injuries or preferences they didn't give. Miles and feet."""
+
+
+def note_packet(answers: dict, acts: list[dict], day: date) -> dict:
+    """Context for drafting the training note: the athlete's answers and their recent training."""
+    return {"date": day.isoformat(), "answers": {k: v for k, v in answers.items() if v},
+            "weeks": weekly_history(acts, day, 8), "bests_90d": bests(acts, day), "rest": rest_pattern(acts, day)}
+
+
+def rules_note(packet: dict) -> dict:
+    """The note from the answers alone, for when the coach is off or fails."""
+    a = packet["answers"]
+    lines = [f"{label} {a[k].strip().rstrip('.')}." for k, label in (
+        ("training_for", "I'm training for"), ("wants", "I want"), ("avoid", "Avoid or limits:")) if a.get(k)]
+    return {"note": " ".join(lines)}
+
+
 MODES = {
     # Short reply, so low effort keeps it quick; analysis gets more thought.
     "brief": {"label": "daily brief", "schema": BRIEF_SCHEMA, "effort": "low", "max_tokens": 6000},
@@ -213,6 +234,9 @@ MODES = {
                "prompt": INTAKE_PROMPT, "fields_only": True},
     "edit": {"label": "plan change", "schema": EDIT_SCHEMA, "effort": "low", "max_tokens": 2000,
              "prompt": EDIT_PROMPT, "fields_only": True},
+    # Drafting the athlete's training note from a few answers and their history.
+    "note": {"label": "training note", "schema": _schema(NOTE_FIELDS), "effort": "low", "max_tokens": 4000,
+             "prompt": NOTE_PROMPT},
 }
 FIELD_MODES = {k for k, v in MODES.items() if v.get("fields_only")}
 

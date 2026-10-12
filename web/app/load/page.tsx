@@ -3,10 +3,11 @@ import EngineDown from "@/components/EngineDown";
 import IntensityChart from "@/components/IntensityChart";
 import LedgerChart from "@/components/LedgerChart";
 import LinkPending from "@/components/LinkPending";
+import NextWeek from "@/components/NextWeek";
 import Pill from "@/components/Pill";
 import WeeklyStats from "@/components/WeeklyStats";
 import { engine, engineFailed } from "@/lib/api";
-import { chartDay, dayLabel, duration, LEDGER_LABEL, LEDGER_UNIT, ledgerBadge, ledgerDecimals, ledgerNum, ledgerUnit, mi, n0, pct, zoneColors, zoneKeys } from "@/lib/format";
+import { chartDay, dayLabel, duration, LEDGER_LABEL, LEDGER_UNIT, ledgerBadge, ledgerDecimals, ledgerNum, ledgerUnit, mi, n0, pct, zoneColors, zoneKeys, signedPct } from "@/lib/format";
 import { LEDGERS, type LoadData } from "@/lib/types";
 
 export const dynamic = "force-dynamic";
@@ -27,9 +28,12 @@ export default async function LoadPage({ searchParams }: { searchParams: Promise
   return (
     <>
       <header className="page-head">
-        <div>
+        <div style={{ flex: "1 1 320px" }}>
           <h1 className="title">Load</h1>
-          <div className="muted">Solid line: your normal, a 6-week average. Dashed line: your last 7 days.</div>
+          <div className="muted">
+            Solid: your normal, a 6-week average. Dashed: your last 7 days. Shaded: room before ramping too fast.
+            {data.projection?.until ? " Dotted: where your scheduled runs take it." : ""}
+          </div>
           {data.history.gap ? (
             <div className="muted">
               No activities from {dayLabel(data.history.gap.from, { month: "short", day: "numeric" })} to{" "}
@@ -46,44 +50,56 @@ export default async function LoadPage({ searchParams }: { searchParams: Promise
         </nav>
       </header>
 
+      <NextWeek data={data.next_week} />
+
       <WeeklyStats weekly={data.weekly} lastToDate={data.last_week_to_date} />
 
-      {LEDGERS.map((name) => {
-        const l = data.ledgers[name];
-        if (!l.today) return null;
-        const badge = ledgerBadge(l.today);
-        const spike = l.series.slice(-7).find((d) => d.flags.some((f) => f.key === "spike"));
-        const nd = ledgerDecimals(name), unit = ledgerUnit(name);
-        return (
-          <section key={name} className="card">
-            <div style={{ display: "flex", flexWrap: "wrap", justifyContent: "space-between", alignItems: "center", gap: 8 }}>
-              <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                <span className="swatch" style={{ background: `var(--${name})` }} />
-                <h2 style={{ fontSize: 17, fontWeight: 600 }}>{LEDGER_LABEL[name]}</h2>
+      <div className="ledger-grid">
+        {LEDGERS.map((name) => {
+          const l = data.ledgers[name];
+          if (!l.today) return null;
+          const badge = ledgerBadge(l.today);
+          const spike = l.series.slice(-7).find((d) => d.flags.some((f) => f.key === "spike"));
+          const nd = ledgerDecimals(name), unit = ledgerUnit(name);
+          return (
+            <section key={name} className="card ledger-card" style={{ ["--accent" as string]: `var(--${name})` }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8 }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                  <span className="swatch" style={{ background: `var(--${name})` }} />
+                  <h2 style={{ fontSize: 17, fontWeight: 600 }}>{LEDGER_LABEL[name]}</h2>
+                </div>
                 <Pill tone={badge.tone}>{badge.text}</Pill>
               </div>
-              <div style={{ textAlign: "right" }}>
-                <div className="big">{l.today.vs_normal_text.replace(/^./, (c) => c.toUpperCase())}</div>
+              <div>
+                {l.today.vs_normal == null ? (
+                  <div className="big">{l.today.vs_normal_text.replace(/^./, (c) => c.toUpperCase())}</div>
+                ) : (
+                  <div style={{ display: "flex", alignItems: "baseline", gap: 8, flexWrap: "wrap", marginBottom: 4 }}>
+                    <span className="mono" style={{ fontSize: 30, fontWeight: 600, letterSpacing: "-0.03em", lineHeight: 1.1 }}>
+                      {signedPct(l.today.vs_normal)}
+                    </span>
+                    <span className="muted">vs your normal</span>
+                  </div>
+                )}
                 <div className="muted">
                   Last 7 days <span className="mono" style={{ color: "var(--ink)" }}>{ledgerNum(l.today.fatigue, nd) + unit}</span> a day. Your normal{" "}
                   <span className="mono" style={{ color: "var(--ink)" }}>{ledgerNum(l.today.fitness, nd) + unit}</span>.
                 </div>
               </div>
-            </div>
-            <LedgerChart series={l.series.map(chartDay)} projected={data.projection?.series[name] ?? []} color={`var(--${name})`} label={LEDGER_LABEL[name]} decimals={nd} unit={unit} />
-            {(data.projection?.warnings ?? []).filter((w) => w.ledgers.includes(name)).map((w) => (
-              <div key={w.week} style={{ color: "var(--warn-ink)", fontSize: 14 }}>
-                Week of {dayLabel(w.week, { month: "short", day: "numeric" })}: {w.text} <Link href="/plan">Change the schedule</Link>
+              <LedgerChart series={l.series.map(chartDay)} projected={data.projection?.series[name] ?? []} color={`var(--${name})`} label={LEDGER_LABEL[name]} decimals={nd} unit={unit} height={160} />
+              {(data.projection?.warnings ?? []).filter((w) => w.ledgers.includes(name)).map((w) => (
+                <div key={w.week} style={{ color: "var(--warn-ink)", fontSize: 14 }}>
+                  Week of {dayLabel(w.week, { month: "short", day: "numeric" })}: {w.text} <Link href="/plan">Change the schedule</Link>
+                </div>
+              ))}
+              <div className="muted" style={{ fontSize: 13 }}>
+                {spike ? `${dayLabel(spike.day, { weekday: "long" })} was your biggest ${name} day in 6 weeks. ` : ""}
+                {LEDGER_UNIT[name]}
               </div>
-            ))}
-            <div className="muted">
-              {data.projection?.series[name]?.length ? "Dotted: where your scheduled runs take it. " : ""}
-              {spike ? `${dayLabel(spike.day, { weekday: "long" })} was your biggest ${name} day in 6 weeks. ` : ""}
-              {LEDGER_UNIT[name]}
-            </div>
-          </section>
-        );
-      })}
+            </section>
+          );
+        })}
+      </div>
 
       <div className="row">
         <section className="card" style={{ flex: "1 1 380px" }}>

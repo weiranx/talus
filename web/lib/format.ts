@@ -14,6 +14,11 @@ const int = new Intl.NumberFormat("en-US", { maximumFractionDigits: 0 });
 export const n0 = (v: number | null | undefined) => (v == null ? "–" : int.format(Math.round(v)));
 export const mi = (v: number) => v.toFixed(1);
 export const pct = (v: number) => `${Math.round(v * 100)}%`;
+// A change with its sign: "+31%", "−8%".
+export const signedPct = (v: number) => {
+  const p = Math.round(v * 100);
+  return p === 0 ? "0%" : `${p > 0 ? "+" : "−"}${Math.abs(p)}%`;
+};
 
 // Ledger numbers: distance reads in miles to a tenth, the other loads as whole numbers.
 export const ledgerDecimals = (name: string) => (name === "distance" ? 1 : 0);

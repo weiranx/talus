@@ -327,7 +327,7 @@ def load(days: int = 182) -> dict:
         "zone_model": _zone_model_json(zm),
         "biggest_days": sorted(acts, key=lambda a: a["effort_mi"], reverse=True)[:5],
         "thresholds": _thresholds(store),
-        "projection": _projection(store, day),
+        **_ahead(store, day, hist["since"]),
     }
 
 
@@ -340,12 +340,46 @@ def _week_totals(acts: list[dict], start: str, end: str) -> dict:
                 "cardio_load", "climb_load", "descent_load")}}
 
 
-def _projection(store: Store, day: date) -> dict:
-    """Where the scheduled runs take each ledger, drawn after today on the Load charts."""
+def _ahead(store: Store, day: date, since: date | None) -> dict:
+    """What's ahead on the Load page: `projection`, where the scheduled runs take each ledger, and
+    `next_week`, how much the next 7 days can hold beside what's scheduled in them."""
     acts = _activities(store, day - timedelta(days=planner.CAPACITY_DAYS))
     items = _calendar(store, day, schedule.PROJECT_DAYS + 1, acts)
     done_today = any(a["day"] == day.isoformat() and planner.is_foot(a["sport"]) for a in acts)
-    return schedule.project(items, _plan_history(store, day), planner.rates(acts, day), day, done_today)
+    history = _plan_history(store, day)
+    rates = planner.rates(acts, day)
+    return {"projection": schedule.project(items, history, rates, day, done_today),
+            "next_week": _next_week(items, history, rates, day + timedelta(days=1 if done_today else 0), since)}
+
+
+# Each ledger's load in the units a run is planned in: hours, miles, feet up, feet down.
+ROOM_UNITS = {"cardio": ("hours", "cardio_per_hour"), "distance": ("miles", None),
+              "climb": ("gain_ft", "climb_per_ft"), "descent": ("loss_ft", "descent_per_ft")}
+
+
+def _next_week(items: list[dict], history: list[ledger.LedgerDay], rates: dict, first: date,
+               since: date | None) -> dict:
+    """The 7 days from `first`: what's scheduled, and per ledger the total that holds your normal
+    and the most before ramping too fast, spread evenly. A ledger still building its normal, or
+    with none, has no room figures: any load would read as a ramp."""
+    end = first + timedelta(days=7)
+    ahead = [it for it in items if first.isoformat() <= it["day"] < end.isoformat() and it["status"] != "done"]
+    minutes = [it["minutes"] for it in ahead]
+    scheduled = {"runs": len(ahead), "miles": sum(it["miles"] for it in ahead),
+                 "gain_ft": sum(it["gain_ft"] for it in ahead), "loss_ft": sum(it["loss_ft"] for it in ahead),
+                 "hours": None if None in minutes else sum(minutes) / 60}
+    room = {}
+    for name in ledger.LEDGERS:
+        days = [d for d in history if d.ledger == name and d.day < first]
+        if not days or (since is not None and (days[-1].day - since).days + 1 < ledger.MIN_HISTORY_DAYS):
+            continue
+        r = ledger.week_room(days[-1].fitness, days[-1].fatigue)
+        if r is None:
+            continue
+        unit, rate = ROOM_UNITS[name]
+        per = rates[rate] if rate else 1.0
+        room[name] = {"unit": unit, "hold": r["hold"] / per, "limit": r["limit"] / per}
+    return {"start": first.isoformat(), "end": (end - timedelta(days=1)).isoformat(), "scheduled": scheduled, "room": room}
 
 
 @app.get("/api/activities")
@@ -1215,7 +1249,7 @@ def get_schedule(start: date | None = None, days: int = 35) -> dict:
     items = _calendar(store, start, days, acts)
     return {"date": day.isoformat(), "start": start.isoformat(), "days": days, "items": items,
             "weeks": schedule.weeks(items, acts, store.plan("accepted"), start, days, day),
-            "warnings": _projection(store, day)["warnings"],
+            "warnings": _ahead(store, day, None)["projection"]["warnings"],
             "kinds": [{"key": k, "label": v} for k, v in schedule.KINDS.items()],
             "zone_model": _zone_model_json(_zone_model(store))}
 

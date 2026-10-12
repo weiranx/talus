@@ -406,3 +406,26 @@ code { font-family: var(--code); font-size: 13px; background: var(--bg); padding
 .score-ring-track { stroke: var(--line); }
 .score-ring-fill { stroke: var(--ring); stroke-linecap: round; stroke-dasharray: calc(var(--pct) * 1) 100; }
 .score-ring .mono { font-size: 28px; font-weight: 700; letter-spacing: -0.03em; }
+
+/* Load: next 7 days. Each column is a meter from zero: the fill is what's scheduled, the thin tick
+   your normal, the heavy tick the ramp limit, and the hatched end past it is too fast. */
+.nw-head { font-size: 15px; }
+.nw-head.warn { color: var(--warn-ink); font-weight: 600; }
+.nw-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 16px 24px; }
+.nw-col { display: flex; flex-direction: column; gap: 6px; }
+.nw-v { font-family: var(--mono); font-variant-numeric: tabular-nums; font-size: 24px; font-weight: 700; letter-spacing: -0.02em; }
+.nw-tag { font-size: 12px; font-weight: 600; color: var(--muted); }
+.nw-tag.builds { color: var(--good-ink); }
+.nw-tag.over { color: var(--warn-ink); }
+.nw-meter { position: relative; height: 10px; border-radius: 5px; background: var(--line); overflow: hidden; }
+.nw-fill { position: absolute; inset: 0 auto 0 0; background: var(--c); border-radius: 5px; }
+.nw-over { position: absolute; top: 0; bottom: 0; right: 0;
+  background: repeating-linear-gradient(135deg, var(--warn-bg) 0 4px, color-mix(in srgb, var(--warn-ink) 30%, transparent) 4px 6px); }
+.nw-tick { position: absolute; top: 0; bottom: 0; width: 2px; margin-left: -1px; background: var(--ink); opacity: 0.45; }
+.nw-tick.limit { opacity: 1; background: var(--warn-ink); }
+.nw-scale { display: flex; justify-content: space-between; gap: 8px; font-size: 12px; color: var(--muted); }
+.nw-scale .mono { color: var(--ink); }
+
+/* Load: the four ledger charts sit two by two when there's room. */
+.ledger-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(420px, 1fr)); gap: 16px; }
+@media (max-width: 560px) { .ledger-grid { grid-template-columns: 1fr; } }

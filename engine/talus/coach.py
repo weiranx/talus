@@ -15,10 +15,10 @@ import json
 import os
 import re
 from dataclasses import dataclass, field
-from datetime import date
+from datetime import date, timedelta
 from typing import Any, Protocol
 
-PROMPT_VERSION = "coach-v0.5"
+PROMPT_VERSION = "coach-v0.6"
 # The daily brief is short and mostly explains the engine's call, so it runs on Haiku; the
 # workout analysis has more to read and judge, so it stays on Opus. Both can be changed in
 # Settings, and TALUS_COACH_MODEL overrides both defaults.
@@ -47,6 +47,11 @@ STYLES = {
 DEFAULT_STYLE = "plain"
 ROUNDING_SLACK = 0.05  # "4,500" may stand for 4,512, but "10" may not stand for 12
 MAX_SEGMENTS = 40
+HISTORY_WEEKS = 12  # weekly totals in chat, for trend questions
+BRIEF_WEEKS = 6  # and in the daily brief, kept short for the cheaper model
+BEST_DAYS = 90  # the window for the athlete's biggest days
+SIMILAR_DAYS = 120  # how far back an activity looks for comparable ones
+SIMILAR_MAX = 3
 
 SYSTEM = """You are the coach inside Talus, a training app for mountain runners and hikers.
 
@@ -59,6 +64,9 @@ For each load, "normal" is the 42-day average per day (miles for distance) and "
 Overnight signals from the watch can only make the engine worse, never the legs: HRV is the 7-day average against a 60-day baseline, resting heart rate is last night against a 60-day baseline, and sleep is last night and the 7-day average against the athlete's stated need. A signal with status "no_data" or "building" is missing or has too little history: say so if it matters, and never guess its value.
 The readiness score (0 to 100) is the engine's: it starts at 100 and each input that reads worse than normal costs points ("points_lost"); inputs in "not_used" had no data and cost nothing. rule_call sets the top of its band (go 100, modify 66, rest 33, shown as the "Today's call" line) and the inputs place it within the band (go 67 to 100, modify 34 to 66, rest 0 to 33). Never compute or change the score; you may quote it and name what cost the most.
 
+effort_mi is distance plus climbing as flat-equivalent miles. min_per_effort_mi is moving minutes per effort mile: on similar ground, lower at the same or lower cardio_load_per_hour means the athlete is moving better for the same cost.
+History: "weeks" holds weekly totals (Monday to Sunday, oldest first); the last week is this week and is partial when "complete" is false, so never call it short. "bests_90d" holds the athlete's longest day, biggest climb and biggest descent in the last 90 days. "rest" says how many days in a row the athlete has trained and how many rest days the last 14 days held.
+
 Your reader is the athlete. They use miles and feet, never km or meters, and they always weigh distance and vert together.
 
 Rules:
@@ -66,13 +74,14 @@ Rules:
 2. Never quote GPS, names or anything not in the data.
 3. Plain language. Short sentences. Talk to the athlete as "you". No hype, no exclamation marks, no emoji.
 4. Ground every claim in a load, a state, a flag, a segment or the check-in, and name it.
-5. Pain above 3 of 5 means rest and, if it persists, see a clinician. Never talk an athlete into training through pain.
+5. Be specific to this athlete. Compare with their own history (weeks, bests, similar activities) instead of general advice, and skip lines that would fit anyone, like "listen to your body" or "stay consistent".
+6. Pain above 3 of 5 means rest and, if it persists, see a clinician. Never talk an athlete into training through pain.
 
 Daily brief: you get today's readiness, the overnight signals, the four loads, the last 14 days of activities, this week's totals, 28-day intensity and the rule-based call. The engine sets the session; you make the call and explain it:
 - call: go, modify or rest. Keep rule_call's call unless something in the data argues for more caution; never be less cautious. If you keep it, the athlete gets rule_call's session; if you choose a more cautious call, they get an easier one.
-- why: two or three sentences on what in the data drives the call, naming the loads, states or check-in behind it. Do not prescribe a different session.
+- why: two or three sentences on what in the data drives the call, naming the loads, states or check-in behind it. When it matters, set today against the recent weeks or the run of training days in "rest". Do not prescribe a different session.
 
-Workout analysis: you get one activity with its segments, its four loads against a usual day, and the athlete's current state. Answer five questions, one or two sentences each:
+Workout analysis: you get one activity with its segments, its four loads against a usual day, the athlete's current state, "similar_recent" (up to three earlier activities of the same sport with the closest effort miles) and "biggest_in_90_days" (the dimensions where it was the athlete's biggest day). Use the similar activities to say whether this one went better or worse than its peers: time in each zone, min_per_effort_mi and cardio_load_per_hour. Answer five questions, one or two sentences each:
 - job: did it do its job? Judge from time in each zone, where the vert came from and the hike share.
 - off: where did it go off? Name the segment (as labeled) where heart rate or effort drifted, or say nothing stood out.
 - cost: what did it cost? Name the loads, especially any 6-week high or any load well above a usual day.
@@ -88,7 +97,7 @@ Weekly review: you get last week against its plan targets, the flags it raised a
 - week: two or three sentences on how the week went against its targets, naming miles and feet together, time below AeT and any flag.
 - next: one or two sentences on what next week asks for, or why a new plan is suggested.
 
-Chat: the athlete asks a question about their training. Answer it from the data in two to five sentences, naming the numbers you use. If the data can't answer it, say what is missing. You can't change the plan or its targets: to change them, the athlete edits the objective or training days, or asks for a new plan on the Plan page. If the athlete mentions pain above 3 of 5, illness or chest symptoms, recommend rest and a clinician, and do not diagnose. No weight-loss or fueling-restriction advice. You don't judge weather, snow, route conditions or technical skill.
+Chat: the athlete asks a question about their training. Answer the question they asked first, then back it with the data in two to five sentences, naming the numbers you use. For trends (mileage, vert, consistency, intensity) use "weeks"; for "biggest" or "longest" use "bests_90d". If the data can't answer it, say what is missing. You can't change the plan or its targets: to change them, the athlete edits the objective or training days, or asks for a new plan on the Plan page. When they ask for a kind of workout the plan doesn't hold (track, tempo, intervals, strength, a specific session), give a coach's view of whether it fits their objective and their recent intensity split, and tell them they can add it as their own run on the Plan page calendar (kinds: easy, long, hills, tempo, intervals, hike, race), where the plan fills the rest of the week around it. Never reply with only a list of what you can't do. If the athlete mentions pain above 3 of 5, illness or chest symptoms, recommend rest and a clinician, and do not diagnose. No weight-loss or fueling-restriction advice. You don't judge weather, snow, route conditions or technical skill.
 - used: the names of the data fields your answer relies on.
 """
 
@@ -250,10 +259,111 @@ def _score(s: dict | None) -> dict | None:
             "not_used": s["missing"]}
 
 
-def brief_packet(today: dict, last_14_days: list[dict]) -> dict:
-    """Compact context for the daily brief, built from the /api/today payload."""
+def _hours(seconds: float) -> float | None:
+    return _r(seconds / 3600, 1)
+
+
+def _below_aet_pct(acts: list[dict]) -> int | None:
+    zs = [a["zone_minutes"] for a in acts if a.get("zone_minutes")]
+    total = sum(sum(z.values()) for z in zs)
+    return None if not total else _r(sum(z["z1"] for z in zs) / total * 100)
+
+
+def _day_line(a: dict) -> dict:
+    return {"day": a["day"], "sport": a["sport"], "distance_mi": _r(a["distance_mi"], 1),
+            "gain_ft": _r(a["gain_ft"]), "loss_ft": _r(a["loss_ft"]), "moving_time": _hm(a["moving_time_s"])}
+
+
+def weekly_history(acts: list[dict], day: date, weeks: int) -> list[dict]:
+    """Totals for each of the last `weeks` Monday-to-Sunday weeks, oldest first, this week last."""
+    monday = day - timedelta(days=day.weekday())
+    out = []
+    for k in range(weeks - 1, -1, -1):
+        start = monday - timedelta(weeks=k)
+        end = start + timedelta(days=6)
+        wk = [a for a in acts if start.isoformat() <= a["day"] <= end.isoformat()]
+        longest = max(wk, key=lambda a: a["distance_mi"], default=None)
+        out.append({"week_start": start.isoformat(), "complete": end < day, "activities": len(wk),
+                    "days_active": len({a["day"] for a in wk}),
+                    "distance_mi": _r(sum(a["distance_mi"] for a in wk), 1),
+                    "gain_ft": _r(sum(a["gain_ft"] for a in wk)), "loss_ft": _r(sum(a["loss_ft"] for a in wk)),
+                    "hours": _hours(sum(a["moving_time_s"] for a in wk)), "below_aet_pct": _below_aet_pct(wk),
+                    "longest": None if longest is None else _day_line(longest)})
+    return out
+
+
+def bests(acts: list[dict], day: date, days: int = BEST_DAYS) -> dict | None:
+    """The athlete's biggest single activities in the window, by distance, climb and descent."""
+    since = (day - timedelta(days=days - 1)).isoformat()
+    recent = [a for a in acts if since <= a["day"] <= day.isoformat()]
+    if not recent:
+        return None
+    return {key: _day_line(max(recent, key=lambda a: a[field]))
+            for key, field in (("longest", "distance_mi"), ("most_gain", "gain_ft"), ("most_loss", "loss_ft"))}
+
+
+def rest_pattern(acts: list[dict], day: date) -> dict:
+    """Training days in a row up to yesterday, and rest days in the 14 days before today."""
+    active = {a["day"] for a in acts}
+    streak = 0
+    d = day - timedelta(days=1)
+    while d.isoformat() in active and streak < 60:
+        streak += 1
+        d -= timedelta(days=1)
+    rest = sum(1 for k in range(1, 15) if (day - timedelta(days=k)).isoformat() not in active)
+    return {"training_days_in_a_row_before_today": streak, "rest_days_last_14": rest,
+            "trained_today": day.isoformat() in active}
+
+
+def _efficiency(a: dict, cardio: float | None) -> dict:
+    """Engine-computed rates, so the coach can compare activities without doing math."""
+    effort, hours = a["effort_mi"] or 0, a["moving_time_s"] / 3600
+    return {"min_per_effort_mi": _r(a["moving_time_s"] / 60 / effort, 1) if effort > 0.5 else None,
+            "cardio_load_per_hour": _r(cardio / hours) if cardio is not None and hours > 0.2 else None}
+
+
+def similar_recent(a: dict, acts: list[dict], n: int = SIMILAR_MAX) -> list[dict]:
+    """Earlier activities of the same sport closest in effort miles, from the last SIMILAR_DAYS."""
+    day = date.fromisoformat(a["day"])
+    since = (day - timedelta(days=SIMILAR_DAYS)).isoformat()
+    effort = a["effort_mi"] or 0
+    pool = [b for b in acts if b["id"] != a["id"] and b["sport"] == a["sport"] and since <= b["day"]
+            and b["start_time"] < a["start_time"] and effort and 0.67 <= (b["effort_mi"] or 0) / effort <= 1.5]
+    pool.sort(key=lambda b: abs(b["effort_mi"] - effort))
+    return [_day_line(b) | {"effort_mi": _r(b["effort_mi"], 1), "below_aet_pct": _below_aet_pct([b]),
+                            "cardio_load": _r(b["cardio_load"]), "climb_load": _r(b["climb_load"]),
+                            "descent_load": _r(b["descent_load"])} | _efficiency(b, b["cardio_load"])
+            for b in sorted(pool[:n], key=lambda b: b["start_time"])]
+
+
+def biggest_in(a: dict, acts: list[dict], days: int = BEST_DAYS) -> list[str]:
+    """The dimensions where this activity was the biggest of its sport in the window before it."""
+    day = date.fromisoformat(a["day"])
+    since = (day - timedelta(days=days - 1)).isoformat()
+    pool = [b for b in acts if b["sport"] == a["sport"] and since <= b["day"] <= a["day"]]
+    if len(pool) < 3:
+        return []
+    return [name for name, f in (("distance", "distance_mi"), ("climb", "gain_ft"), ("descent", "loss_ft"),
+                                 ("moving time", "moving_time_s"))
+            if a[f] > 0 and a[f] >= max(b[f] for b in pool)]
+
+
+def _week_so_far(week: dict) -> dict:
+    return {"start": week["start"], "activities": len(week["activities"]),
+            "distance_mi": _r(week["distance_mi"], 1), "gain_ft": _r(week["gain_ft"]),
+            "loss_ft": _r(week["loss_ft"])}
+
+
+def _intensity(today: dict) -> dict:
+    return {name: _r(today["intensity_28d"]["share"][f"z{k + 1}"] * 100) for k, name in enumerate(ENGINE_SPLIT)}
+
+
+def brief_packet(today: dict, last_14_days: list[dict], history: list[dict] | None = None) -> dict:
+    """Compact context for the daily brief, built from the /api/today payload. history is the
+    athlete's activities for the weekly totals; without it the brief reads the last 14 days only."""
     ready = today["readiness"]
-    week = today["week"]
+    day = date.fromisoformat(today["date"])
+    acts = last_14_days if history is None else history
     return {
         "date": today["date"],
         "athlete": _athlete(today["thresholds"], today.get("zone_model")),
@@ -264,12 +374,11 @@ def brief_packet(today: dict, last_14_days: list[dict]) -> dict:
         "readiness_score": _score(today.get("score")),
         "rule_call": {k: today["call"][k] for k in ("call", "session", "detail", "why")},
         "ledgers": {name: _ledger(d, name) for name, d in today["ledgers"].items()},
-        "week_so_far": {"start": week["start"], "activities": len(week["activities"]),
-                        "distance_mi": _r(week["distance_mi"], 1), "gain_ft": _r(week["gain_ft"]),
-                        "loss_ft": _r(week["loss_ft"])},
-        "intensity_28d_pct": {name: _r(today["intensity_28d"]["share"][f"z{k + 1}"] * 100)
-                              for k, name in enumerate(ENGINE_SPLIT)},
+        "week_so_far": _week_so_far(today["week"]),
+        "intensity_28d_pct": _intensity(today),
         "last_14_days": [_activity_line(a) for a in sorted(last_14_days, key=lambda a: a["start_time"])],
+        "weeks": weekly_history(acts, day, BRIEF_WEEKS),
+        "rest": rest_pattern(acts, day),
     }
 
 
@@ -282,9 +391,12 @@ def segment_labels(segments: list[dict]) -> list[str]:
     return out
 
 
-def analysis_packet(a: dict, thresholds: dict, ledgers_now: dict, today: date) -> dict:
+def analysis_packet(a: dict, thresholds: dict, ledgers_now: dict, today: date,
+                    history: list[dict] | None = None) -> dict:
     """Compact context for a workout analysis, built from the /api/activities/{id} payload.
-    Streams and GPS are left out; segments carry the shape of the effort."""
+    Streams and GPS are left out; segments carry the shape of the effort. history is the athlete's
+    activity list, for comparing this one with similar earlier ones."""
+    history = history or []
     zm = a.get("hr_zone_minutes", a["zone_minutes"])
     total_z = sum(zm.values()) if zm else 0
     segs = a["segments"][:MAX_SEGMENTS]
@@ -303,7 +415,10 @@ def analysis_packet(a: dict, thresholds: dict, ledgers_now: dict, today: date) -
             "longest_climb_ft": _r(a["longest_climb_ft"]), "longest_descent_ft": _r(a["longest_descent_ft"]),
             "minutes_above_8000ft": _r(a["minutes_above_8000ft"]),
             "cardio_estimated_without_hr": a["cardio_estimated"], "notes": a["notes"],
+            "below_aet_pct": _below_aet_pct([a]), **_efficiency(a, a["loads"]["cardio"]["load"]),
         },
+        "similar_recent": similar_recent(a, history),
+        "biggest_in_90_days": biggest_in(a, history),
         "loads": {name: {"load": _r(l["load"], _nd(name)), "times_usual_day": _r(l["times_usual_day"], 1),
                          "six_week_high": l["six_week_high"]} for name, l in a["loads"].items()},
         "segments": [{"label": label, "distance_mi": _r(s["distance_mi"], 2), "gain_ft": _r(s["gain_ft"]),
@@ -409,9 +524,12 @@ def review_packet(review: dict, next_week: dict | None, objective: dict | None, 
 
 
 def chat_packet(question: str, history: list[dict], today: dict | None, plan: dict | None, now: dict | None,
-                sessions: list[dict], last_14_days: list[dict], day: date) -> dict:
+                sessions: list[dict], last_14_days: list[dict], day: date,
+                activities: list[dict] | None = None) -> dict:
     """Context for one chat answer. The question and the last few turns are in the packet, so a
-    number the athlete typed may be quoted back."""
+    number the athlete typed may be quoted back. activities is the athlete's full list, for the
+    weekly totals and biggest days."""
+    acts = last_14_days if activities is None else activities
     week = None
     if plan:
         from .plan import plan_for_day
@@ -425,8 +543,12 @@ def chat_packet(question: str, history: list[dict], today: dict | None, plan: di
                                                        "reason": today["readiness"][k]["reason"]}
                                                    for k in ("engine", "legs")},
         "readiness_score_today": None if not today else _score(today.get("score")),
-        "todays_call": None if not today else {k: today["call"][k] for k in ("call", "session", "detail")},
-        "ledgers": None if not today else {name: _ledger(d) for name, d in today["ledgers"].items()},
+        "todays_call": None if not today else {k: today["call"][k] for k in ("call", "session", "detail", "why")},
+        "checkin": None if not today else today["checkin"],
+        "overnight": None if not today else _overnight(today.get("wellness")),
+        "ledgers": None if not today else {name: _ledger(d, name) for name, d in today["ledgers"].items()},
+        "week_so_far": None if not today else _week_so_far(today["week"]),
+        "intensity_28d_pct": None if not today else _intensity(today),
         "objective": None if not plan else _objective(plan, day),
         "objective_readiness_now": None if not now else _dims(now),
         "plan_this_week": week,
@@ -434,6 +556,9 @@ def chat_packet(question: str, history: list[dict], today: dict | None, plan: di
                          "gain_ft": _r(s["gain_ft"]), "loss_ft": _r(s["loss_ft"]), "minutes": _r(s["minutes"])}
                         for s in sessions],
         "last_14_days": [_activity_line(a) for a in sorted(last_14_days, key=lambda a: a["start_time"])],
+        "weeks": weekly_history(acts, day, HISTORY_WEEKS),
+        "bests_90d": bests(acts, day),
+        "rest": rest_pattern(acts, day),
         "conversation": [{"role": m["role"], "text": m["text"]} for m in history],
         "question": question,
     }

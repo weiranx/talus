@@ -237,3 +237,59 @@ def test_import_writes_the_coach_right_away(tmp_path, monkeypatch, capsys):
     assert len(fake.calls) == 3
     cli.main(["import", "--no-coach", files[0]])
     assert "Coach" not in capsys.readouterr().out
+
+
+def _act(i: int, day: str, miles: float, gain: float, sport: str = "run", hours: float = 1.0) -> dict:
+    return {"id": i, "day": day, "start_time": f"{day}T14:00:00", "sport": sport, "distance_mi": miles,
+            "gain_ft": gain, "loss_ft": gain, "effort_mi": miles + gain / 528, "moving_time_s": hours * 3600,
+            "cardio_load": 60 * hours, "climb_load": gain / 10, "descent_load": gain / 12,
+            "zone_minutes": {"z1": 48 * hours, "z2": 9 * hours, "z3": 3 * hours}}
+
+
+def test_weekly_history_and_rest_pattern_give_the_coach_trends_without_math():
+    day = date(2026, 10, 14)  # a Wednesday
+    acts = [_act(1, "2026-10-04", 20.0, 5000, hours=5), _act(2, "2026-10-06", 6.0, 800),
+            _act(3, "2026-10-12", 8.0, 1200), _act(4, "2026-10-13", 5.0, 400)]
+    weeks = coach.weekly_history(acts, day, 3)
+    assert [w["week_start"] for w in weeks] == ["2026-09-28", "2026-10-05", "2026-10-12"]
+    assert weeks[0] | {"longest": None} == {
+        "week_start": "2026-09-28", "complete": True, "activities": 1, "days_active": 1, "distance_mi": 20.0,
+        "gain_ft": 5000, "loss_ft": 5000, "hours": 5.0, "below_aet_pct": 80, "longest": None}
+    assert weeks[2]["complete"] is False and weeks[2]["distance_mi"] == 13.0 and weeks[2]["gain_ft"] == 1600
+    assert weeks[2]["longest"]["distance_mi"] == 8.0
+    assert coach.rest_pattern(acts, day) == {"training_days_in_a_row_before_today": 2, "rest_days_last_14": 10,
+                                             "trained_today": False}
+    b = coach.bests(acts, day)
+    assert b["longest"]["day"] == "2026-10-04" and b["most_gain"]["gain_ft"] == 5000
+
+
+def test_analysis_compares_with_similar_earlier_activities():
+    this = _act(9, "2026-10-10", 10.0, 2640)  # 15 effort mi
+    acts = [_act(1, "2026-09-01", 9.0, 2700), _act(2, "2026-09-20", 10.0, 2000),
+            _act(3, "2026-09-25", 3.0, 100), _act(4, "2026-09-26", 10.0, 2640, sport="hike"),
+            _act(5, "2026-10-11", 10.0, 2640), this]
+    sim = coach.similar_recent(this, acts)
+    # Same sport, before it, within half to one and a half times its effort; oldest first.
+    assert [s["day"] for s in sim] == ["2026-09-01", "2026-09-20"]
+    assert sim[0]["min_per_effort_mi"] == round(60 / (9 + 2700 / 528), 1)
+    assert coach.biggest_in(this, acts) == ["distance", "moving time"]
+
+
+def test_chat_packet_carries_history_and_keeps_miles_to_a_tenth(tmp_path, monkeypatch):
+    client = _demo(tmp_path, monkeypatch)
+    t = client.get("/api/today").json()
+    acts = api._activities(api.get_store())
+    p = coach.chat_packet("How was my month?", [], t, None, None, [], acts, date.today(), acts)
+    assert len(p["weeks"]) == coach.HISTORY_WEEKS and p["bests_90d"]["longest"]["distance_mi"] > 0
+    assert p["ledgers"]["distance"]["normal_per_day"] == round(t["ledgers"]["distance"]["fitness"], 1)
+    assert p["week_so_far"] is not None and p["overnight"] is not None and p["rest"]["rest_days_last_14"] >= 0
+    # Every weekly total is a number the coach may quote.
+    allowed = coach.allowed_numbers(p)
+    assert all(coach.traceable(f"{w['distance_mi']}", allowed) for w in p["weeks"])
+    brief = coach.brief_packet(t, acts, acts)
+    assert len(brief["weeks"]) == coach.BRIEF_WEEKS and "rest" in brief
+
+
+def test_chat_prompt_answers_workout_asks_instead_of_listing_limits():
+    assert "own run on the Plan page calendar" in coach.SYSTEM and "intervals" in coach.SYSTEM
+    assert "Never reply with only a list" in coach.SYSTEM

@@ -308,6 +308,8 @@ def load(days: int = 182) -> dict:
         start = day - timedelta(days=day.weekday()) - timedelta(weeks=w)
         in_week = [a for a in acts if start.isoformat() <= a["day"] < (start + timedelta(days=7)).isoformat()]
         weeks.append({"start": start.isoformat(), **_zone_share(in_week), "zones": _display_share(in_week, zm)})
+    this_week = day - timedelta(days=day.weekday())
+    last_week = this_week - timedelta(weeks=1)
     return {
         "date": day.isoformat(),
         "ledgers": {name: {"today": _ledger_json([d for d in series if d.ledger == name][-1], hist["since"])
@@ -316,11 +318,25 @@ def load(days: int = 182) -> dict:
                     for name in ledger.LEDGERS},
         "history": {"since": hist["since"] and hist["since"].isoformat(), "gap": hist["gap"]},
         "intensity_by_week": weeks,
+        "weekly": [_week_totals(acts, w["start"], (date.fromisoformat(w["start"]) + timedelta(days=7)).isoformat())
+                   | {"days": min(7, (day - date.fromisoformat(w["start"])).days + 1)} for w in weeks],
+        # Last week through the same weekday as today, so the week in progress compares like for like.
+        "last_week_to_date": _week_totals(acts, last_week.isoformat(),
+                                          (last_week + timedelta(days=day.weekday() + 1)).isoformat()),
         "zone_model": _zone_model_json(zm),
         "biggest_days": sorted(acts, key=lambda a: a["effort_mi"], reverse=True)[:5],
         "thresholds": _thresholds(store),
         "projection": _projection(store, day),
     }
+
+
+def _week_totals(acts: list[dict], start: str, end: str) -> dict:
+    """What was done from `start` up to, not including, `end`: every activity, as the Activities page counts it."""
+    got = [a for a in acts if start <= a["day"] < end]
+    return {"start": start, "activities": len(got),
+            **{k: sum(a[k] or 0 for a in got) for k in (
+                "distance_mi", "gain_ft", "loss_ft", "effort_mi", "moving_time_s",
+                "cardio_load", "climb_load", "descent_load")}}
 
 
 def _projection(store: Store, day: date) -> dict:

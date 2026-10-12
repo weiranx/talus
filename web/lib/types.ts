@@ -596,3 +596,48 @@ export interface Onboarding {
   coach: { enabled: boolean; style: string; key_set: boolean; styles: { key: string; label: string; description: string }[] };
   import_choices: Record<ImportRange, number>;
 }
+
+// The status page (GET /api/status). Each check is ok, warn (working, worth a look), bad or idle.
+export type CheckState = "ok" | "warn" | "bad" | "idle";
+export interface EngineHealth { ok: boolean; revision: string | null; model_version: string; started_at: string; uptime_s: number }
+export interface SourceStatus {
+  key: "intervals" | "garmin" | "watch" | "healthkit" | "upload";
+  label: string;
+  state: CheckState;
+  connected: boolean | null;
+  at: string | null;
+  error: string | null;
+  saved: number | null;
+  how?: string | null;
+}
+export interface StatusOverview {
+  engine: EngineHealth;
+  sources: SourceStatus[];
+  data: { activities: number; newest_activity: string | null; newest_night: string | null };
+  read_ahead: { state: CheckState; ready: number; total: number; running: boolean; waiting_for: "thresholds" | null };
+  importing: ImportStatus | null;
+  coach: {
+    state: CheckState;
+    why: "off" | "no_key" | "cap" | "api_error" | "recent_errors" | null;
+    enabled: boolean;
+    key_set: boolean;
+    limit: number | null;
+    ceiling: number | null;
+    spent: number;
+    month: string;
+    last_call: { at: string; mode: string; model: string | null; ok: boolean; fallback_reason: string | null } | null;
+    errors_24h: number;
+    last_error_at: string | null;
+  };
+  server: (AdminOverview["system"] & {
+    disk_state: CheckState;
+    accounts: number;
+    active_7d: number;
+    failing_syncs: { email: string; source: string; at: string }[];
+    coach_spent: number;
+    month: string;
+    signup_open: boolean;
+    sign_in: { google: boolean };
+    intervals_oauth: { enabled: boolean; connected: number };
+  }) | null;
+}

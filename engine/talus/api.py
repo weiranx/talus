@@ -1080,7 +1080,7 @@ def _talk_json(store: Store, st: dict) -> dict:
 
 def _talk_read(store: Store, mode: str, text: str, packet: dict, fallback: dict) -> tuple[dict, dict | None]:
     """Typed words read into fields by the cheaper model, or by the rules without it."""
-    out = _coach(store, mode, mode, packet, fallback, False)
+    out = _coach(store, mode, mode, _noted(store, packet), fallback, False)
     return out["reply"], ({"cost": out["cost"]} if out["source"] == "coach" else None)
 
 
@@ -1094,13 +1094,14 @@ def _race_lookup(store: Store, text: str, day: date) -> tuple[dict, dict | None]
         return {}, None
     model_id = cfg["analysis_model"]
     try:
-        found, model, usage = coach.lookup_race(client, text, day.isoformat(), model_id)
+        note = (store.settings().get("coach_note") or "").strip()
+        found, model, usage = coach.lookup_race(client, text, day.isoformat(), model_id, note)
     except Exception as e:  # noqa: BLE001 - a failed lookup only means asking for the numbers
         import anthropic
         if not isinstance(e, (anthropic.APIError, ValueError)):
             raise
         return {}, None
-    packet = {"today": day.isoformat(), "text": text}
+    packet = _noted(store, {"today": day.isoformat(), "text": text})
     store.log_coach("lookup", "lookup", coach.PROMPT_VERSION, coach.cache_key(packet, model_id, coach.DEFAULT_STYLE),
                     packet, coach.Result("coach" if found else "rules", found or {}, model, 1,
                                          None if found else "not_found", [], usage))

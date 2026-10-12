@@ -4,7 +4,7 @@ import CoachRead, { CoachReadPending } from "@/components/CoachRead";
 import ActivityView from "@/components/ActivityView";
 import EngineDown from "@/components/EngineDown";
 import Explain from "@/components/Explain";
-import { engine, EngineError } from "@/lib/api";
+import { engine, engineFailed } from "@/lib/api";
 import { dayLabel, duration, LEDGER_LABEL, mi, n0, pct } from "@/lib/format";
 import { LEDGERS, type ActivityDetail } from "@/lib/types";
 
@@ -18,7 +18,7 @@ export default async function ActivityPage({ params }: { params: Promise<{ id: s
   try {
     a = await engine<ActivityDetail>(`/api/activities/${encodeURIComponent(id)}`);
   } catch (e) {
-    return <EngineDown message={e instanceof EngineError ? e.message : "Could not reach the engine."} />;
+    return <EngineDown message={engineFailed(e)} />;
   }
   const stats: [string, ReactNode][] = [
     ["Distance", `${mi(a.distance_mi)} mi`],

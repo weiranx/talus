@@ -11,7 +11,7 @@ import ThresholdsCard from "@/components/ThresholdsCard";
 import UploadCard from "@/components/UploadCard";
 import WatchCard from "@/components/WatchCard";
 import ZonesCard from "@/components/ZonesCard";
-import { engine, EngineError } from "@/lib/api";
+import { engine, engineFailed } from "@/lib/api";
 import type { Account, Settings } from "@/lib/types";
 
 export const dynamic = "force-dynamic";
@@ -22,7 +22,7 @@ export default async function SettingsPage() {
   try {
     [s, account] = await Promise.all([engine<Settings>("/api/settings"), engine<Account>("/api/account")]);
   } catch (e) {
-    return <EngineDown message={e instanceof EngineError ? e.message : "Could not reach the engine."} />;
+    return <EngineDown message={engineFailed(e)} />;
   }
 
   return (

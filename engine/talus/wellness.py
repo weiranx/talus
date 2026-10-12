@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import os
 from datetime import date, timedelta
-from statistics import mean
+from math import fsum
 
 BASELINE_DAYS = 60
 MIN_BASELINE_NIGHTS = 14  # fewer than this and the baseline is still building
@@ -38,6 +38,11 @@ def sleep_need(saved: dict | None = None) -> tuple[float, str]:
     except ValueError:
         pass
     return DEFAULT_SLEEP_NEED_H, "default"
+
+
+def mean(vals: list[float]) -> float:
+    # Not statistics.mean: its exact fractions made Today's 28-day score trend slow.
+    return fsum(vals) / len(vals)
 
 
 def _values(days: dict[date, dict], key: str, start: date, end: date) -> list[float]:

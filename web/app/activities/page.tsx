@@ -1,6 +1,6 @@
 import Link from "next/link";
 import EngineDown from "@/components/EngineDown";
-import { engine, EngineError } from "@/lib/api";
+import { engine, engineFailed } from "@/lib/api";
 import { dayLabel, duration, mi, n0 } from "@/lib/format";
 import type { ActivitySummary } from "@/lib/types";
 
@@ -11,7 +11,7 @@ export default async function ActivitiesPage() {
   try {
     acts = await engine<ActivitySummary[]>("/api/activities?limit=100");
   } catch (e) {
-    return <EngineDown message={e instanceof EngineError ? e.message : "Could not reach the engine."} />;
+    return <EngineDown message={engineFailed(e)} />;
   }
   return (
     <>

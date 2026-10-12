@@ -1,7 +1,7 @@
 import { notFound } from "next/navigation";
 import AdminView from "@/components/AdminView";
 import EngineDown from "@/components/EngineDown";
-import { engine, EngineError } from "@/lib/api";
+import { engine, engineFailed, EngineError } from "@/lib/api";
 import type { AdminOverview } from "@/lib/types";
 
 export const dynamic = "force-dynamic";
@@ -14,7 +14,7 @@ export default async function AdminPage() {
     data = await engine<AdminOverview>("/api/admin");
   } catch (e) {
     if (e instanceof EngineError && e.status === 404) notFound();
-    return <EngineDown message={e instanceof EngineError ? e.message : "Could not reach the engine."} />;
+    return <EngineDown message={engineFailed(e)} />;
   }
   return (
     <>

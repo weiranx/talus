@@ -1,24 +1,19 @@
 import { NextResponse, type NextRequest } from "next/server";
 
-// Pages need a signed-in account. The engine checks the session cookie; anyone without a valid
-// one goes to /login. Browser calls to /api/* are checked by the engine itself.
-const ENGINE = process.env.ENGINE_URL ?? "http://127.0.0.1:8000";
-
-export async function middleware(req: NextRequest) {
-  const cookie = req.headers.get("cookie");
-  let signedIn = false;
-  if (cookie?.includes("talus_session=")) {
-    try {
-      const res = await fetch(`${ENGINE}/api/auth/status`, { headers: { cookie }, cache: "no-store" });
-      signedIn = res.ok && Boolean((await res.json()).account);
-    } catch {
-      return NextResponse.next(); // engine down: let the page say so
-    }
+// Pages need a signed-in account. Without a session cookie, go to /login straight away. With one,
+// the page goes ahead and the engine checks it on the page's own first call (a stale session
+// gets a 401 there and engine() sends it to /login), which saves a round trip to the engine on
+// every page. Browser calls to /api/* are checked by the engine itself.
+export function middleware(req: NextRequest) {
+  const path = req.nextUrl.pathname + req.nextUrl.search;
+  if (req.cookies.get("talus_session")?.value) {
+    const headers = new Headers(req.headers);
+    headers.set("x-talus-path", path);
+    return NextResponse.next({ request: { headers } });
   }
-  if (signedIn) return NextResponse.next();
   const url = req.nextUrl.clone();
   url.pathname = "/login";
-  url.search = req.nextUrl.pathname === "/" ? "" : `?next=${encodeURIComponent(req.nextUrl.pathname + req.nextUrl.search)}`;
+  url.search = req.nextUrl.pathname === "/" ? "" : `?next=${encodeURIComponent(path)}`;
   return NextResponse.redirect(url);
 }
 

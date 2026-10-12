@@ -188,6 +188,8 @@ export interface ActivityDetail extends Omit<ActivitySummary, "cardio_load" | "c
 }
 
 export type Call = { call: "go" | "modify" | "rest"; session: string; detail: string; why: string };
+export interface LoadReply { last_week: string; trend: string; watch: string; next: string }
+
 export interface AnalysisReply { job: string; off: string; cost: string; changes: string; takeaway: string }
 
 export interface CoachReply<T> {

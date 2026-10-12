@@ -675,7 +675,8 @@ def _coach(store: Store, mode: str, subject: str, packet: dict, fallback: dict, 
                 "fallback_reason": "off", "model": None, "cost": None}
     # Plan, weekly review and chat are longer reads, so they run on the analysis model; reading
     # typed answers into fields is short work for the brief's cheaper model.
-    model_id = cfg["brief_model"] if mode in coach.FIELD_MODES else cfg.get(f"{mode}_model", cfg["analysis_model"])
+    cheap = mode in coach.FIELD_MODES or mode in coach.CHEAP_MODES
+    model_id = cfg["brief_model"] if cheap else cfg.get(f"{mode}_model", cfg["analysis_model"])
     style = cfg["coach_style"]
     if style not in coach.STYLES:
         style = coach.DEFAULT_STYLE
@@ -753,6 +754,19 @@ def coach_brief(refresh: bool = False) -> dict:
     if out["source"] == "coach":
         out["reply"] = coach.brief_reply(out["reply"], fallback, t["thresholds"]["aet"])
     return out
+
+
+@app.get("/api/coach/load")
+def coach_load(refresh: bool = False) -> dict:
+    """The Load page's read: last week, the trend, what to watch and what the next 7 days should
+    hold. On the brief's model, and reused all day while the numbers don't change."""
+    t = today()
+    store = get_store()
+    day = date.fromisoformat(t["date"])
+    acts = _activities(store, day - timedelta(weeks=8))
+    ahead = _ahead(store, day, _history(store)["since"])
+    packet = _noted(store, coach.load_packet(t, acts, ahead["next_week"]))
+    return _coach(store, "load", t["date"], packet, coach.rules_load(packet), refresh)
 
 
 @app.get("/api/coach/activity/{activity_id}")

@@ -88,7 +88,7 @@ def said(step: str, answers: dict) -> str:
     if answers.get("keep"):
         parts.append("Keep it")
     if answers.get("confirm"):
-        parts.append("Use these")
+        parts.append(str(answers["confirm"]))
     return " · ".join(parts)
 
 
@@ -178,8 +178,8 @@ def chip_answers(step: str, answers: dict, text: str, defaults: dict) -> tuple[d
 def from_intake(r: dict, today: date) -> dict:
     """The model's reading of the objective, checked and in miles and feet."""
     out: dict = {}
-    if isinstance(r.get("name"), str) and r["name"].strip():
-        out["name"] = r["name"].strip()[:80]
+    if isinstance(r.get("name"), str) and (name := clean_name(r["name"].strip())):
+        out["name"] = name[:80]
     if isinstance(r.get("date"), str):
         try:
             out["day"] = date.fromisoformat(r["date"]).isoformat()
@@ -279,9 +279,9 @@ def rules_objective(text: str, today: date) -> dict:
         out["distance_mi"] = _n(m[1])
     elif m := re.search(NUM + r"\s*(?:k|km|kilometers?)\b", t, re.IGNORECASE):
         out["distance_mi"] = round(_n(m[1]) / KM_PER_MI, 1)
-    feet = [(_n(m[1]), m.group(0).lower()) for m in re.finditer(NUM + r"\s*(?:ft|feet|')(?:\s*(?:up|down|gain|loss|of (?:gain|vert|descent)|vert|climbing|descent))?", t, re.IGNORECASE)]
+    feet = [(_n(m[1]), m.group(0).lower()) for m in re.finditer(NUM + r"\s*(?:ft|feet|')(?:\s*(?:up|down|gain|loss|of (?:gain|vert|descent)|vert|climbing|descent|descending|descend))?", t, re.IGNORECASE)]
     for v, s in feet:
-        if any(w in s for w in ("down", "loss", "descent")):
+        if any(w in s for w in ("down", "loss", "descen")):
             out.setdefault("loss_ft", v)
         else:
             out.setdefault("gain_ft", v)
@@ -289,10 +289,58 @@ def rules_objective(text: str, today: date) -> dict:
         out["day"] = d.isoformat()
     t = re.sub(r"^\s*(?:i'?m|i am|we'?re)?\s*(?:training|signed up|registered|going|aiming)?\s*(?:for|to (?:run|do|hike))\s+(?:the\s+)?", "", t, flags=re.IGNORECASE)
     name = re.split(r"\s(?:on|in|,|-|–)\s|,|\bon\b|\d{1,2}/|\b(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\b", t, maxsplit=1, flags=re.IGNORECASE)[0]
-    name = name.strip(" .,-–")
-    if name and not re.fullmatch(r"[\d\s.,]*", name):
+    name = clean_name(name)
+    if name:
         out["name"] = name[:80]
+    elif out.get("distance_mi") and (out.get("gain_ft") or out.get("day")):
+        out["name"] = f"{out['distance_mi']:.0f} mi objective"
     return out
+
+
+VERT_WORDS = r"\b(?:climbing|climb|gain|vert|vertical|descent|descend|descending|loss|up|down|of|and|with|elevation)\b"
+
+
+def clean_name(name: str) -> str | None:
+    """An objective's name without the numbers typed after it ("100miles 18000ft climbing"), and
+    nothing for a sentence that names no objective ("i want to train for mountains")."""
+    name = re.sub(NUM + r"\s*(?:mi|miles?|ft|feet|')(?![a-z])", " ", name, flags=re.IGNORECASE)
+    name = re.sub(VERT_WORDS, " ", name, flags=re.IGNORECASE)
+    name = re.sub(r"\s+", " ", name).strip(" .,-–")
+    if not name or re.fullmatch(r"[\d\s.,]*", name) or GENERIC_NAME.search(name):
+        return None
+    return name
+
+
+# A sentence about training in general, not an objective's name.
+GENERIC_NAME = re.compile(r"^(?:i|i'm|im|i am|my|we|just|want|get|be|stay|maybe|not sure|no|nothing|general|"
+                          r"fitness|train|training|mountains?|some|something|anything)\b", re.IGNORECASE)
+GENERAL = re.compile(r"\b(?:general|overall|base|all[- ]round|mountain) fitness\b|\bno (?:race|objective|event|goal)\b|"
+                     r"\bstay (?:fit|in shape)\b|\bget (?:fit|fitter|in shape)\b|\bnothing (?:specific|planned|in mind)\b|"
+                     r"\bno specific\b|\btrain for (?:the )?mountains\b|\bjust (?:fitness|training|train|running|run)\b|"
+                     r"\bin general\b", re.IGNORECASE)
+BLOCK_WEEKS = 12
+
+
+def general(text: str) -> bool:
+    """Training with no race or date in mind."""
+    return bool(GENERAL.search(text))
+
+
+def fitness_block(acts: list[dict], today: date) -> dict:
+    """With no race in mind, a 12-week block that ends in a long mountain day a little past the
+    biggest of the last 8 weeks, so the plan builds miles and vert toward something."""
+    first = (today - timedelta(days=55)).isoformat()
+    days: dict[str, list[float]] = {}
+    for a in acts:
+        if a["day"] >= first and a["day"] <= today.isoformat():
+            d = days.setdefault(a["day"], [0.0, 0.0])
+            d[0] += a["distance_mi"]
+            d[1] += a["gain_ft"]
+    miles = max((v[0] for v in days.values()), default=0.0)
+    gain = max((v[1] for v in days.values()), default=0.0)
+    miles, gain = round(max(10.0, miles * 1.2), 1), round(max(2500.0, gain * 1.2), -2)
+    return {"name": "Mountain fitness block", "day": (today + timedelta(weeks=BLOCK_WEEKS)).isoformat(),
+            "distance_mi": miles, "gain_ft": gain, "loss_ft": gain, "looked_up": "block"}
 
 
 def missing(obj: dict) -> list[str]:

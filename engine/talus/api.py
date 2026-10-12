@@ -778,6 +778,7 @@ def _plan_json(p: dict | None) -> dict | None:
         return None
     return {k: p.get(k) for k in ("id", "status", "reason", "created_at", "decided_at", "built_on", "constraints",
                                   "baseline", "pace", "demand", "peak", "weeks", "projected", "reachable",
+                                  "back_to_back",
                                   "options", "now", "changes")} | {"reason_text": planner.REPLAN_TEXT.get(p["reason"], p["reason"])}
 
 
@@ -1020,6 +1021,8 @@ def _talk_objective(store: Store, st: dict, body: TalkIn, day: date) -> list[dic
     o = dict(st["objective"])
     current = store.objective()
     meta = None
+    if o.get("looked_up") == "block" and body.text:
+        o = {}  # typed a race instead of the offered block
     if o.get("looked_up") and ((body.answers and body.answers.get("confirm")) or body.text):
         o["confirmed"] = True  # tapped "Use these", or typed what's different
     if body.answers and body.answers.get("keep") and current is not None:
@@ -1031,6 +1034,15 @@ def _talk_objective(store: Store, st: dict, body: TalkIn, day: date) -> list[dic
         o.pop("keep", None)
         if body.route.get("name") and not o.get("name"):
             o["name"] = str(body.route["name"])[:80]
+    if body.text and interview.general(body.text) and not interview.rules_objective(body.text, day).get("distance_mi"):
+        # No race in mind: offer a fitness block that ends in a long mountain day.
+        st["objective"] = interview.fitness_block(_activities(store, day - timedelta(days=56)), day)
+        o = st["objective"]
+        return [interview.coach(
+            f"No race needed. I'll set up a {interview.BLOCK_WEEKS}-week block that builds your weekly miles and vert "
+            f"toward a long mountain day of {o['distance_mi']:.1f} mi with {round(o['gain_ft']):,} ft up, a little past "
+            "your biggest day of the last 8 weeks, then you can start the next block. Use this, or tell me a race or a "
+            "day you have in mind.", "objective", [{"key": "confirm", "options": ["Use this"], "value": None}])]
     if body.text:
         got = interview.rules_objective(body.text, day)
         if interview.missing(o | got):
@@ -1057,7 +1069,7 @@ def _talk_objective(store: Store, st: dict, body: TalkIn, day: date) -> list[dic
         problems.append("That date has passed; the objective needs a date after today.")
     st["objective"] = o
     need = interview.missing(o)
-    if not need and o.get("looked_up") and not o.get("confirmed"):
+    if not need and o.get("looked_up") and o["looked_up"] != "block" and not o.get("confirmed"):
         where = "" if o["looked_up"] == "web" else f" ({o['looked_up']})"
         return [interview.coach(f"I looked it up{where}: {interview.objective_line(o | {'loss_ft': o.get('loss_ft') or o['gain_ft']})}. "
                                 "Use these, or type what's different.", "objective",

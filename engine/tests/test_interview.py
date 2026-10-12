@@ -169,3 +169,21 @@ def test_a_paused_search_is_resumed_and_a_miss_asks_for_the_numbers():
     out, model, usage = coach.lookup_race(fake, "my local fun run", "2026-10-12", "claude-opus-5-5")
     assert out is None and len(fake.calls) == 2 and usage["output_tokens"] == 240
     assert fake.calls[1]["messages"][1]["role"] == "assistant"  # sent back to carry on, no extra user turn
+
+
+def test_sentences_and_numbers_are_not_objective_names():
+    assert "name" not in interview.rules_objective("i want to train for mountains", TODAY)
+    o = interview.rules_objective("100miles 18000ft climbing 22000ft descend", TODAY)
+    assert o["name"] == "100 mi objective" and o["gain_ft"] == 18000 and o["loss_ft"] == 22000
+    assert interview.clean_name("Baldy 50k") == "Baldy 50k" and interview.clean_name("Canyons 100M") == "Canyons 100M"
+    assert interview.general("just general fitness") and interview.general("i want to train for mountains")
+    assert not interview.general("Baldy 50k on Jan 2")
+
+
+def test_no_race_gets_a_fitness_block(tmp_path, monkeypatch):
+    client = _setup(tmp_path, monkeypatch)
+    r = client.post("/api/plan/talk", json={"text": "just general fitness"}).json()
+    last = r["messages"][-1]
+    assert r["step"] == "objective" and "12-week block" in last["text"] and last["groups"][0]["key"] == "confirm"
+    r = client.post("/api/plan/talk", json={"answers": {"confirm": "Use this"}}).json()
+    assert r["step"] == "goal" and "Training for Mountain fitness block" in r["messages"][-2]["text"]

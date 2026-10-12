@@ -95,9 +95,13 @@ struct Sources: Codable, Hashable {
         let lastSync: LastSync?
     }
     struct Upload: Codable, Hashable { let lastImport: LastImport?; let maxMb: Int }
+    /// Files the web or iOS app pulled straight off a Garmin watch over Bluetooth.
+    struct Watch: Codable, Hashable { let lastSync: String? }
     let intervals: Intervals
     let garmin: Garmin
     let upload: Upload
+    /// nil on engines from before watch sync.
+    let watch: Watch?
 }
 
 struct CostEstimate: Codable, Hashable {
@@ -133,6 +137,8 @@ struct SettingsData: Codable, Hashable {
     let inferred: InferredThresholds?
     let source: SourceInfo
     let sources: Sources
+    /// How new activities arrive: "intervals" or "watch". nil on engines from before watch sync.
+    let syncMethod: String?
     let coach: CoachSettings
     let readiness: ReadinessSettings
 }

@@ -5,6 +5,7 @@ struct TalusApp: App {
     @StateObject private var api = API()
     @StateObject private var session = SessionModel()
     @StateObject private var health = HealthSync()
+    @StateObject private var watch = WatchSync()
     @AppStorage("appearance") private var appearance = "system"
 
     var body: some Scene {
@@ -13,6 +14,7 @@ struct TalusApp: App {
                 .environmentObject(api)
                 .environmentObject(session)
                 .environmentObject(health)
+                .environmentObject(watch)
                 .tint(Color(hex: 0x15211D, dark: 0xE4EAE7))
                 .preferredColorScheme(appearance == "light" ? .light : appearance == "dark" ? .dark : nil)
         }

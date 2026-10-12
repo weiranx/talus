@@ -143,7 +143,7 @@ INTAKE_FIELDS = {"name": "string", "date": "string", "distance_mi": "number", "d
                  "gain_ft": "number", "gain_m": "number", "loss_ft": "number", "loss_m": "number"}
 INTAKE_SCHEMA = {"type": "object", "properties": {k: _maybe(t) for k, t in INTAKE_FIELDS.items()},
                  "required": list(INTAKE_FIELDS), "additionalProperties": False}
-EDIT_KINDS = ("long_day", "add_day", "drop_day", "weekday_minutes", "weekend_minutes", "week")
+EDIT_KINDS = ("long_day", "add_day", "drop_day", "weekday_minutes", "weekend_minutes", "week", "workout")
 EDIT_SCHEMA = {
     "type": "object",
     "properties": {"edits": {"type": "array", "items": {
@@ -151,16 +151,55 @@ EDIT_SCHEMA = {
         "properties": {"kind": {"type": "string", "enum": list(EDIT_KINDS)}, "day": _maybe("integer"),
                        "minutes": _maybe("integer"), "week": _maybe("integer"),
                        "dims": {"type": "array", "items": {"type": "string", "enum": ["miles", "vert"]}},
-                       "direction": {"anyOf": [{"type": "string", "enum": ["less", "more"]}, {"type": "null"}]}},
-        "required": ["kind", "day", "minutes", "week", "dims", "direction"], "additionalProperties": False}}},
-    "required": ["edits"],
+                       "direction": {"anyOf": [{"type": "string", "enum": ["less", "more"]}, {"type": "null"}]},
+                       "workout": {"anyOf": [{"type": "string", "enum": ["none", "track", "tempo", "hill_repeats"]},
+                                             {"type": "null"}]}},
+        "required": ["kind", "day", "minutes", "week", "dims", "direction", "workout"], "additionalProperties": False}},
+        "cannot": _maybe("string")},
+    "required": ["edits", "cannot"],
     "additionalProperties": False,
 }
 
 # Reading the athlete's own words into fields. These replies hold no prose, so the number check
 # doesn't apply; the engine checks every field before using it.
 INTAKE_PROMPT = """Read the athlete's text, which describes the race or mountain day they are training for, into fields. Use null for anything the text doesn't say; never guess. Put a distance in kilometers in distance_km and climbing in meters in gain_m or loss_m, unconverted. A "50k" is a distance of 50 km. date is YYYY-MM-DD: when the text gives no year, use the first such date after today (in the data). name is the event or route name as written, without the date or numbers."""
-EDIT_PROMPT = """Read the athlete's request to change their training plan into edits. Days are 0 (Monday) to 6 (Sunday). Kinds: long_day (move the long day to day), add_day or drop_day (a training day), weekday_minutes or weekend_minutes (the most time on one such day, in minutes), week (week number counted from this week as week 1, with dims miles and/or vert and direction less or more). Leave unused fields null and dims empty when not a week edit. Anything else, such as a new objective, pace or a specific session, can't be done: return no edits for it."""
+EDIT_PROMPT = """Read the athlete's request to change their training plan into edits. Days are 0 (Monday) to 6 (Sunday). Kinds: long_day (move the long day to day), add_day or drop_day (a training day), weekday_minutes or weekend_minutes (the most time on one such day, in minutes), week (week number counted from this week as week 1, with dims miles and/or vert and direction less or more), workout (a weekly speed session: track for track or interval work, tempo for tempo or threshold runs, hill_repeats for hill repeats or uphill intervals, none to drop speed work). Leave unused fields null and dims empty when not a week edit. Anything else, such as a new objective, a pace or a session on one date, can't be done: return no edits for it and put what was asked in cannot, in a few plain words (like "a race-pace run on Nov 3"); otherwise cannot is null."""
+
+# Looking up a named race: the analysis model with web search, for the date, distance and vert of
+# the next edition. Its numbers are shown for the athlete to confirm before anything uses them.
+WEB_SEARCH = {"type": "web_search_20260209", "name": "web_search", "max_uses": 4}
+LOOKUP_SYSTEM = "You look up trail races and mountain objectives for a training app. Be exact; never guess."
+LOOKUP_PROMPT = """The athlete is training for the race or objective in their text (in the data). Search the web for its official page and find the next edition after today (in the data), or the year they name ("next year" is the year after today's). Find its date, distance and total climbing for the distance they name: "100M" or "100 mi" is the 100-mile race, "50k" the 50 km one. Convert km to miles and meters to feet. loss_ft is the total descent, or null if the page doesn't give it. If you can't find the race, or the page doesn't give a number, use null for it; never estimate. End your reply with one line holding only this JSON: {"found": true or false, "name": the race's name, "date": "YYYY-MM-DD" or null, "distance_mi": number or null, "gain_ft": number or null, "loss_ft": number or null, "source": the page's URL or null}"""
+MAX_CONTINUES = 3
+
+
+def lookup_race(client: Client, text: str, today: str, model_id: str) -> tuple[dict | None, str | None, dict | None]:
+    """A named race's next date, distance and vert from the web. Returns the fields read from the
+    model's last JSON line (None when it found nothing usable), the model, and the usage."""
+    messages = [{"role": "user", "content": LOOKUP_PROMPT + "\nData:\n" + json.dumps({"today": today, "text": text})}]
+    usage, resp = None, None
+    for _ in range(MAX_CONTINUES + 1):
+        resp = client.beta.messages.create(
+            model=model_id, max_tokens=8000, **_fallback_args(model_id),
+            system=[{"type": "text", "text": LOOKUP_SYSTEM}], output_config={"effort": "low"},
+            tools=[WEB_SEARCH], messages=messages)
+        usage = _add_usage(usage, _usage(resp))
+        if resp.stop_reason != "pause_turn":
+            break
+        # The server paused its search loop: send the turn back and it carries on.
+        messages = [messages[0], {"role": "assistant", "content": resp.content}]
+    if resp is None or resp.stop_reason in ("refusal", "max_tokens", "pause_turn"):
+        return None, getattr(resp, "model", None), usage
+    body = "".join(b.text for b in resp.content if getattr(b, "type", None) == "text")
+    found = None
+    for m in re.finditer(r"\{[^{}]*\}", body):
+        try:
+            found = json.loads(m.group(0))
+        except json.JSONDecodeError:
+            continue
+    if not isinstance(found, dict) or not found.get("found"):
+        return None, resp.model, usage
+    return found, resp.model, usage
 
 MODES = {
     # Short reply, so low effort keeps it quick; analysis gets more thought.
@@ -440,7 +479,10 @@ def _week(w: dict) -> dict:
             "long_day": None if not long else {
                 "distance_mi": _r(long["miles"], 1), "gain_ft": _r(long["gain_ft"]), "loss_ft": _r(long["loss_ft"]),
                 "hours": _r(long["minutes"] / 60, 1), "effort_mi": _r(long["effort_mi"], 1),
-                "longest_descent_ft": _r(long.get("longest_descent_ft"))},
+                "longest_descent_ft": _r(long.get("longest_descent_ft")),
+                "back_to_back_second_day": None if not long.get("second") else {
+                    "distance_mi": _r(long["second"]["miles"], 1), "gain_ft": _r(long["second"]["gain_ft"]),
+                    "loss_ft": _r(long["second"]["loss_ft"]), "hours": _r(long["second"]["minutes"] / 60, 1)}},
             "held_back_by_load_limit": w["limited_by"], "notes": w["notes"]}
 
 

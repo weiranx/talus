@@ -47,6 +47,18 @@ def test_edits_from_plain_words_change_the_constraints():
         {"kind": "week", "week": 2, "dims": ["miles", "vert"], "factor": interview.MORE}]
 
 
+def test_speed_work_can_be_asked_for_in_plain_words():
+    assert interview.rules_edits("add track workouts?") == [{"kind": "workout", "workout": "track"}]
+    assert interview.rules_edits("I'd like a tempo run each week") == [{"kind": "workout", "workout": "tempo"}]
+    assert interview.rules_edits("hill repeats please") == [{"kind": "workout", "workout": "hill_repeats"}]
+    assert interview.rules_edits("no more speed work") == [{"kind": "workout", "workout": "none"}]
+    c, done, _ = interview.apply_edits([{"kind": "workout", "workout": "track"}], asdict(planner.Constraints()), [])
+    assert c["workout"] == "track" and "track intervals once a week" in done[0]
+    assert interview.from_edits([{"kind": "workout", "workout": "tempo"}, {"kind": "workout", "workout": "sprint"}]) == [
+        {"kind": "workout", "workout": "tempo"}]
+    assert interview.cant_text("a race-pace run on Nov 3").startswith("I can't change that in the plan yet (a race-pace")
+
+
 def test_an_adjusted_week_changes_only_that_week():
     acts = _acts()
     c = planner.Constraints()
@@ -88,7 +100,7 @@ def test_plan_by_conversation(tmp_path, monkeypatch):
     assert "Done: long day on Sunday." in r["messages"][-1]["text"]
     assert client.get("/api/plan").json()["constraints"]["long_day"] == 6
     r = client.post("/api/plan/talk", json={"text": "make it more fun"}).json()
-    assert r["messages"][-1]["text"] == interview.EDIT_HELP
+    assert r["messages"][-1]["text"].endswith(interview.EDIT_HELP)
     r = client.post("/api/plan/talk", json={"action": "accept"}).json()
     assert r["step"] == "done" and client.get("/api/plan").json()["accepted"]
     # Changing an accepted plan starts its own conversation; keeping it declines the draft.
@@ -120,3 +132,58 @@ def test_typed_answers_go_to_the_cheaper_model(tmp_path, monkeypatch):
     assert r["messages"][-1]["groups"][0]["key"] == "keep"
     r = client.post("/api/plan/talk", json={"answers": {"keep": "Keep it"}}).json()
     assert r["step"] == "goal"
+
+
+def test_a_named_race_is_looked_up_and_confirmed(tmp_path, monkeypatch):
+    client = _setup(tmp_path, monkeypatch)
+    day = (date.today() + timedelta(weeks=30)).isoformat()
+    found = ('Canyons Endurance Runs 100M is in late April.\n{"found": true, "name": "Canyons 100M", "date": "' + day
+             + '", "distance_mi": 100.4, "gain_ft": 22000, "loss_ft": 22300, "source": "https://example.com/canyons"}')
+    fake = FakeClient({"name": "Canyons 100M", "date": None, "distance_mi": 100, "distance_km": None, "gain_ft": None,
+                       "gain_m": None, "loss_ft": None, "loss_m": None}, found)
+    monkeypatch.setattr(api, "coach_client", lambda: fake)
+    r = client.post("/api/plan/talk", json={"text": "training for canyons 100m for next year"}).json()
+    assert len(fake.calls) == 2
+    look = fake.calls[1]
+    assert look["tools"][0]["type"] == "web_search_20260209" and look["model"] == "claude-opus-5-5"
+    assert r["step"] == "objective" and "I looked it up (https://example.com/canyons)" in r["messages"][-1]["text"]
+    assert "100.0 mi, 22,000 ft up and 22,300 ft down" in r["messages"][-1]["text"]
+    assert r["messages"][-1]["groups"][0]["key"] == "confirm"
+    r = client.post("/api/plan/talk", json={"answers": {"confirm": "Use these"}}).json()
+    assert r["step"] == "goal" and "Training for Canyons 100M" in r["messages"][-2]["text"]
+
+
+def test_a_paused_search_is_resumed_and_a_miss_asks_for_the_numbers():
+    from talus import coach
+
+    class Paused(FakeClient):
+        def create(self, **kw):
+            resp = super().create(**kw)
+            if len(self.calls) == 1:
+                resp.stop_reason = "pause_turn"
+            else:
+                resp.stop_reason = "end_turn"
+            return resp
+
+    fake = Paused("searching", '{"found": false, "name": null}')
+    out, model, usage = coach.lookup_race(fake, "my local fun run", "2026-10-12", "claude-opus-5-5")
+    assert out is None and len(fake.calls) == 2 and usage["output_tokens"] == 240
+    assert fake.calls[1]["messages"][1]["role"] == "assistant"  # sent back to carry on, no extra user turn
+
+
+def test_sentences_and_numbers_are_not_objective_names():
+    assert "name" not in interview.rules_objective("i want to train for mountains", TODAY)
+    o = interview.rules_objective("100miles 18000ft climbing 22000ft descend", TODAY)
+    assert o["name"] == "100 mi objective" and o["gain_ft"] == 18000 and o["loss_ft"] == 22000
+    assert interview.clean_name("Baldy 50k") == "Baldy 50k" and interview.clean_name("Canyons 100M") == "Canyons 100M"
+    assert interview.general("just general fitness") and interview.general("i want to train for mountains")
+    assert not interview.general("Baldy 50k on Jan 2")
+
+
+def test_no_race_gets_a_fitness_block(tmp_path, monkeypatch):
+    client = _setup(tmp_path, monkeypatch)
+    r = client.post("/api/plan/talk", json={"text": "just general fitness"}).json()
+    last = r["messages"][-1]
+    assert r["step"] == "objective" and "12-week block" in last["text"] and last["groups"][0]["key"] == "confirm"
+    r = client.post("/api/plan/talk", json={"answers": {"confirm": "Use this"}}).json()
+    assert r["step"] == "goal" and "Training for Mountain fitness block" in r["messages"][-2]["text"]

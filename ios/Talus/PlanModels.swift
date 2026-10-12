@@ -107,6 +107,13 @@ struct LongDay: Codable, Hashable {
     let gainFt: Double
     let lossFt: Double
     let effortMi: Double
+    /// With back-to-back long days, the pair's other day.
+    let second: SecondDay?
+}
+
+struct SecondDay: Codable, Hashable {
+    let miles: Double
+    let gainFt: Double
 }
 
 struct PlanWeek: Codable, Hashable, Identifiable {

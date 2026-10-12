@@ -191,6 +191,99 @@ def test_plan_sessions_work_around_own_runs():
     assert {x["kind"] for x in s if not x.get("own")} == {"rest"}
 
 
+def test_long_objectives_train_with_back_to_back_long_days():
+    acts = _acts()
+    p = planner.build(_obj(), acts, _history(acts), planner.Constraints(), TODAY)  # a 50k of about 9.6 h
+    assert p["back_to_back"]
+    builds = [w for w in p["weeks"] if w["focus"] in ("build", "peak")]
+    for w in builds:
+        first, second = w["long"], w["long"]["second"]
+        assert second and second["day"] == (date.fromisoformat(first["day"]) + timedelta(days=1)).isoformat()
+        assert second["miles"] < first["miles"] and second["miles"] >= planner.B2B_MIN * first["miles"]
+    assert p["weeks"][-1]["long"] is None  # the objective's week has no long days
+    # The pair counts toward readiness, so the projection reads further than one capped day could.
+    single = planner.build(_obj(), acts, _history(acts), planner.Constraints(back_to_back=False), TODAY)
+    assert not single["back_to_back"] and all(w["long"] is None or w["long"]["second"] is None for w in single["weeks"])
+    big = lambda plan: next(d for d in plan["projected"]["dims"] if d["key"] == "big_day")  # noqa: E731
+    assert big(p)["capacity"] > big(single)["capacity"]
+    assert "back-to-back" in big(p)["capacity_label"]
+    # A short objective keeps one long day.
+    short = planner.build(_obj(distance_mi=13, gain_ft=3000, loss_ft=3000), acts, _history(acts),
+                          planner.Constraints(), TODAY)
+    assert not short["back_to_back"]
+    # The second day reads as its own session.
+    sessions = planner.upcoming_sessions(p, acts, TODAY, days=10)
+    assert [s["kind"] for s in sessions if s["day"] in ("2026-10-17", "2026-10-18")] == ["long", "long2"]
+    assert planner.session_text(sessions[-1], 150)["title"] == "Back-to-back day"
+
+
+def test_a_pair_of_days_counts_for_readiness_only_when_both_are_long():
+    acts = _acts(weeks=10)
+    base = planner.capacity(acts, 1000, TODAY)
+    paired = planner.capacity(acts, 1000, TODAY, pairs=True)
+    # Saturday's long day and Sunday's easy run: Sunday is under a third of Saturday, so no pair.
+    assert paired["big_day"] == base["big_day"]
+    d = "2026-10-04"  # make that Sunday big
+    for a in acts:
+        if a["day"] == d:
+            a.update(effort_mi=10.0, moving_time_s=10 * 13 * 60)
+    paired = planner.capacity(acts, 1000, TODAY, pairs=True)
+    sat = max(a["effort_mi"] for a in acts if a["day"] == "2026-10-03")
+    assert paired["big_day"] == pytest.approx((sat + 10) * planner.B2B_CREDIT)
+    assert planner.capacity(acts, 1000, TODAY)["big_day"] == base["big_day"]
+
+
+def test_missed_runs_are_not_piled_onto_the_days_left():
+    acts = _acts()
+    p = planner.build(_obj(), acts, _history(acts), planner.Constraints(), TODAY)
+    week = planner.plan_for_day(p, date(2026, 10, 12))
+    full, _ = planner.sessions_for_week(week, date(2026, 10, 12), date(2026, 10, 12), planner.Constraints(),
+                                        p["pace"]["min_per_effort_mi"], b2b=True)
+    size = {s["kind"]: s for s in full}
+    # Thursday, with nothing run Monday to Wednesday: the days left stay near their planned size.
+    ahead = planner.upcoming_sessions(p, acts, date(2026, 10, 15), days=4)
+    for s in ahead:
+        if s["kind"] in size:
+            for k in planner.DIMS:
+                assert s[k] <= size[s["kind"]][k] * planner.MAKEUP + 1e-6, (s["day"], k)
+    assert sum(s["miles"] for s in ahead) < week["miles"] * 0.9  # the week comes in under target
+
+
+def test_speed_work_is_one_session_a_week_away_from_the_long_days():
+    acts = _acts()
+    c = planner.Constraints(workout="track")
+    p = planner.build(_obj(), acts, _history(acts), c, TODAY)
+    # Week 0 has only the weekend left, which the long days take.
+    assert all(w["workout"] == "track" for w in p["weeks"][1:] if w["focus"] in ("build", "peak", "taper"))
+    assert all(w["workout"] is None for w in p["weeks"] if w["focus"] in ("recovery", "race"))
+    start = date(2026, 10, 12)
+    week = planner.plan_for_day(p, start)
+    ss, _ = planner.sessions_for_week(week, start, start, c, 13.0, b2b=True, workout="track")
+    track = [s for s in ss if s["kind"] == "track"]
+    assert len(track) == 1 and track[0]["gain_ft"] == 0  # flat
+    day = date.fromisoformat(track[0]["day"])
+    hard = [date.fromisoformat(s["day"]) for s in ss if s["kind"] in ("long", "long2", "hills")]
+    assert min(abs((day - h).days) for h in hard) >= 2
+    text = planner.session_text(track[0] | {"focus": "peak"}, 145, None, 168)
+    assert text["title"] == "Track intervals" and "8 × 800 m" in text["how"] and "168 bpm" in text["how"]
+    hill = planner.sessions_for_week(week, start, start, c, 13.0, workout="hill_repeats")[0]
+    assert [s["kind"] for s in hill].count("hill_repeats") == 1 and "hills" not in [s["kind"] for s in hill]
+    # The dated sessions carry it, and the calendar names it as intervals.
+    assert "track" in [s["kind"] for s in planner.upcoming_sessions(p, acts, date(2026, 10, 12), days=7)]
+
+
+def test_a_fit_athlete_holds_near_what_the_objective_needs():
+    acts = _acts(miles=(12, 24), gain=(2800, 6000))  # about 72 mi and 17,200 ft a week
+    c = planner.Constraints(days=[0, 1, 2, 3, 5, 6], weekday_min=120, weekend_min=480)
+    p = planner.build(_obj(gain_ft=8000, loss_ft=8000, weeks=12), acts, _history(acts), c, TODAY)
+    assert p["peak"]["miles"] < p["baseline"]["miles"] * 0.9
+    assert all(w["miles"] <= p["peak"]["miles"] + 0.5 for w in p["weeks"][1:])
+    biggest = max(w["long"]["miles"] for w in p["weeks"] if w["long"])
+    assert biggest < 24  # not a long day near the objective's 31 mi
+    from talus import interview
+    assert "doesn't build" in interview.draft_summary(p, "Baldy", 5, {})
+
+
 def test_weekly_review_flags_a_missed_week_and_pain():
     acts = _acts()
     p = planner.build(_obj(), acts, _history(acts), planner.Constraints(), TODAY - timedelta(days=11))

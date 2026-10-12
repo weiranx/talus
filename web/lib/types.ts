@@ -372,7 +372,12 @@ export interface Objective {
   days_to_go: number;
 }
 
-export interface Constraints { days: number[]; weekday_min: number; weekend_min: number; long_day: number; notes: string }
+export type Workout = "none" | "track" | "tempo" | "hill_repeats";
+
+export interface Constraints {
+  days: number[]; weekday_min: number; weekend_min: number; long_day: number; notes: string;
+  back_to_back?: boolean; workout?: Workout;
+}
 
 export interface LongDay {
   day: string;
@@ -382,6 +387,8 @@ export interface LongDay {
   minutes: number;
   effort_mi: number;
   longest_descent_ft: number | null;
+  // With back-to-back long days, the pair's other day.
+  second?: { day: string; miles: number; gain_ft: number; loss_ft: number; minutes: number; effort_mi: number } | null;
 }
 
 export type Focus = "build" | "peak" | "recovery" | "taper" | "race";
@@ -398,6 +405,7 @@ export interface PlanWeek {
   long: LongDay | null;
   limited_by: string[];
   notes: string[];
+  workout?: Exclude<Workout, "none"> | null;
 }
 
 export interface WeekBrief { focus: Focus; miles: number; gain_ft: number; loss_ft: number; hours: number }
@@ -418,12 +426,13 @@ export interface Plan {
   weeks: PlanWeek[];
   projected: ReadinessEval & { capacity: Record<string, number> };
   reachable: boolean;
+  back_to_back?: boolean;
   options: { smaller: { factor: number; distance_mi: number; gain_ft: number; loss_ft: number } | null; later: string | null };
   now: ReadinessEval;
   changes: { start: string; before: WeekBrief | null; after: WeekBrief }[];
 }
 
-export type SessionKind = "long" | "hills" | "easy" | "rest" | "objective" | "done";
+export type SessionKind = "long" | "long2" | "hills" | "easy" | "track" | "tempo" | "hill_repeats" | "rest" | "objective" | "done";
 
 export interface PlanSession {
   day: string;
@@ -502,6 +511,9 @@ export interface Schedule {
   start: string;
   days: number;
   items: ScheduledRun[];
+  // Activities on foot that no scheduled run matched, so the calendar shows every day you trained.
+  activities?: { id: number; day: string; name: string; sport: string | null; distance_mi: number; gain_ft: number;
+    loss_ft: number; moving_time_s: number }[];
   weeks: WeekProgress[];
   warnings: ScheduleWarning[];
   kinds: { key: RunKind; label: string }[];

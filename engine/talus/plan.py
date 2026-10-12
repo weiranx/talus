@@ -57,6 +57,19 @@ LONG_SHARE = {"miles": 0.45, "gain_ft": 0.5, "loss_ft": 0.5}  # the long day's s
 LONG_TARGET = 0.72  # long-day size against the objective, just above the 70% big-day rule
 VOLUME_TARGET = 1.35  # weekly gain and loss against the objective, above the 1.25 rule
 DURABILITY_TARGET = 0.85
+# Back-to-back long days: for an objective of B2B_FROM_H or more, the week's long day becomes a
+# pair on consecutive days instead of one huge day. A pair counts toward readiness as one day of
+# B2B_CREDIT times its combined size, when the smaller day is at least B2B_MIN of the bigger.
+B2B_FROM_H = 7.0
+B2B_CREDIT = 0.85
+B2B_MIN = 0.33
+B2B_SPLIT = 0.60  # the first day's share of the pair
+PAIR_SHARE = {"miles": 0.55, "gain_ft": 0.6, "loss_ft": 0.6}  # the pair's share of the week
+# Speed work, one session a week in build, peak and taper weeks when the athlete asks for it.
+WORKOUTS = {"track": "Track intervals", "tempo": "Tempo", "hill_repeats": "Hill repeats"}
+WORKOUT_VERT = {"track": 0.0, "tempo": 0.5, "hill_repeats": 2.0}  # the day's vert weight; easy is 1
+WORKOUT_CARDIO = 1.2  # a speed session's cardio load per hour, against an easy hour
+HOLD_ABOVE = 1.25
 ADJUST_RANGE = (0.5, 1.2)  # an asked-for week change scales its targets within these
 CUT_STEP = 0.90  # a week over a ledger limit is cut 10% at a time
 MIN_CUT = 0.30
@@ -93,6 +106,8 @@ class Constraints:
     weekend_min: int = 360
     long_day: int = 5
     notes: str = ""
+    back_to_back: bool = True  # pair the long day with a second one when the objective calls for it
+    workout: str = "none"  # weekly speed session: none, track, tempo or hill_repeats
     # Asked-for changes to single weeks: {"week": ISO Monday, "dims": ["miles"|"vert"], "factor": f}.
     # Applied to that week's targets only, and still checked against the load limits.
     adjust: list = field(default_factory=list)
@@ -102,6 +117,8 @@ class Constraints:
         c = cls(**{k: v for k, v in (d or {}).items() if k in cls.__dataclass_fields__})
         c.days = sorted({int(x) for x in c.days if 0 <= int(x) <= 6})
         c.adjust = [a for a in (c.adjust or []) if isinstance(a, dict) and a.get("week")]
+        if c.workout not in WORKOUTS:
+            c.workout = "none"
         return c
 
     def cap(self, day: date) -> int:
@@ -145,21 +162,53 @@ def demand(obj: Objective, p: dict) -> dict:
                      "altitude": obj.high_point_ft}}
 
 
-def capacity(acts: list[dict], descent_fitness: float, day: date) -> dict:
-    """What training has proven by `day`, in the same terms as the demand."""
+def b2b_sized(dem: dict) -> bool:
+    """An objective long enough to train for with back-to-back long days."""
+    return dem["time"]["mid_h"] >= B2B_FROM_H
+
+
+def pair_size(first: float, second: float) -> float:
+    """What two long days in a row count for as one big day, or 0 when they aren't a pair."""
+    if min(first, second) < B2B_MIN * max(first, second) or not first:
+        return 0.0
+    return (first + second) * B2B_CREDIT
+
+
+def _best_pair(acts: list[dict], key: str) -> float:
+    by_day: dict[str, float] = {}
+    for a in acts:
+        by_day[a["day"]] = by_day.get(a["day"], 0.0) + a[key]
+    return max((pair_size(v, by_day.get((date.fromisoformat(d) + timedelta(days=1)).isoformat(), 0.0))
+                for d, v in by_day.items()), default=0.0)
+
+
+def capacity(acts: list[dict], descent_fitness: float, day: date, pairs: bool = False) -> dict:
+    """What training has proven by `day`, in the same terms as the demand. With `pairs`, a
+    back-to-back pair of long days counts toward big-day size and time on feet."""
     last8, last4 = _within(acts, day, CAPACITY_DAYS), _within(acts, day, VOLUME_DAYS)
-    return {"big_day": max((a["effort_mi"] for a in last8), default=0.0),
-            "time_on_feet": max((a["moving_time_s"] for a in last8), default=0.0) / 3600,
+    big = max((a["effort_mi"] for a in last8), default=0.0)
+    longest = max((a["moving_time_s"] for a in last8), default=0.0) / 3600
+    if pairs:
+        big = max(big, _best_pair(last8, "effort_mi"))
+        longest = max(longest, _best_pair(last8, "moving_time_s") / 3600)
+    return {"big_day": big,
+            "time_on_feet": longest,
             "climbing_volume": sum(a["gain_ft"] for a in last4) / 4,
             "descent_durability": max((a.get("longest_descent_ft") or 0.0 for a in last8), default=0.0),
             "descent_volume": descent_fitness * 7,
             "altitude": sum(a.get("minutes_above_8000ft") or 0.0 for a in last4) / 60}
 
 
-def evaluate(dem: dict, cap: dict) -> dict:
+PAIR_LABEL = {"big_day": "Largest single day or back-to-back pair, last 8 weeks",
+              "time_on_feet": "Longest single day or back-to-back pair, last 8 weeks"}
+
+
+def evaluate(dem: dict, cap: dict, pairs: bool = False) -> dict:
     """Each dimension reads ready, close or gap; the limiter is the furthest behind its rule."""
     dims = []
     for key, name, dem_text, cap_text, rule, unit in DIMENSIONS:
+        if pairs:
+            cap_text = PAIR_LABEL.get(key, cap_text)
         need, have = dem["dims"].get(key), cap.get(key)
         ratio = None if not need else have / need
         if rule is None:
@@ -185,8 +234,10 @@ def evaluate(dem: dict, cap: dict) -> dict:
 def readiness_now(obj: Objective, acts: list[dict], descent_fitness: float, today: date) -> dict:
     p = pace(acts, today)
     dem = demand(obj, p)
-    return {"demand": dem, "capacity": capacity(acts, descent_fitness, today), "pace": p,
-            "days_to_go": (obj.day - today).days, **evaluate(dem, capacity(acts, descent_fitness, today))}
+    pairs = b2b_sized(dem)
+    cap = capacity(acts, descent_fitness, today, pairs)
+    return {"demand": dem, "capacity": cap, "pace": p,
+            "days_to_go": (obj.day - today).days, **evaluate(dem, cap, pairs)}
 
 
 # Plan builder --------------------------------------------------------------------------------
@@ -264,30 +315,62 @@ class _Projector:
         return h[-1].fitness if h else 0.0
 
 
+def _second_day(long_day: date | None, avail: list[date]) -> date | None:
+    """The other half of a back-to-back pair: the day after the long day, or the day before."""
+    if long_day is None:
+        return None
+    return next((d for d in (long_day + timedelta(days=1), long_day - timedelta(days=1)) if d in avail), None)
+
+
+def _workout_day(workout: str | None, others: list[date], hills: date | None, pair: list[date]) -> date | None:
+    """The day for the week's speed session: hill repeats take the hill day; track and tempo
+    take the easy day furthest from the long day and the hill day, never the day before or after
+    either when another day will do."""
+    if not workout:
+        return None
+    if workout == "hill_repeats" and hills:
+        return hills
+    easy = [d for d in others if d != hills]
+    if not easy:
+        return None
+    hard = pair + ([hills] if hills else [])
+    return max(easy, key=lambda d: (min((abs((d - h).days) for h in hard), default=7), -d.toordinal()))
+
+
 def sessions_for_week(target: dict, week_start: date, first_day: date, c: Constraints,
-                      pace_min: float) -> tuple[list[dict], list[str]]:
-    """Split a week's miles, gain and loss into seven days: a long day, one hill day and easy
-    days, each held to that day's time limit. Days before `first_day` and days the athlete
-    can't train are rest. Returns the days and a note for each day a time limit cut."""
+                      pace_min: float, b2b: bool = False, workout: str | None = None) -> tuple[list[dict], list[str]]:
+    """Split a week's miles, gain and loss into seven days: a long day (with `b2b`, a pair of
+    long days back to back), one hill day, at most one speed session (`workout`) and easy days,
+    each held to that day's time limit. Days before `first_day` and days the athlete can't train are rest. Returns the days and a
+    note for each day a time limit cut."""
     days = [week_start + timedelta(days=i) for i in range(7)]
     avail = [d for d in days if d.weekday() in c.days and d >= first_day]
     long_day = next((d for d in avail if d.weekday() == c.long_day), None)
-    if len(avail) == 7:  # keep one rest day, the day after the long one
-        after = long_day + timedelta(days=1) if long_day else None
-        avail.remove(after if after in avail else avail[-1])
-    others = [d for d in avail if d != long_day]
+    second = _second_day(long_day, avail) if b2b else None
+    if len(avail) == 7:  # keep one rest day, the day after the long one (or the pair)
+        pair = [d for d in (long_day, second) if d]
+        after = max(pair) + timedelta(days=1) if pair else None
+        avail.remove(after if after in avail else next(d for d in avail if d not in pair))
+    pair = [d for d in (long_day, second) if d]
+    others = [d for d in avail if d not in pair]
     hills = (max(others, key=lambda d: abs((d - long_day).days) if long_day else 0)
              if len(others) >= 2 else None)
+    speed = _workout_day(workout, others, hills, pair)
     weights: dict[date, dict[str, float]] = {}
-    long_share = {k: (1.0 if not others else max(LONG_SHARE[k], 1 / len(avail))) if long_day else 0.0
+    share = PAIR_SHARE if second else LONG_SHARE
+    long_share = {k: (1.0 if not others else max(share[k], len(pair) / len(avail))) if long_day else 0.0
                   for k in DIMS}
     if long_day:
-        weights[long_day] = dict(long_share)
-    vert = {d: 2.0 if d == hills else 1.0 for d in others}
+        split = B2B_SPLIT if second else 1.0
+        weights[long_day] = {k: v * split for k, v in long_share.items()}
+    if second:
+        weights[second] = {k: v * (1 - B2B_SPLIT) for k, v in long_share.items()}
+    # Vert goes mostly to the hill day; a track session is flat and a tempo mostly so.
+    vert = {d: 2.0 if d == hills else WORKOUT_VERT.get(workout, 1.0) if d == speed else 1.0 for d in others}
     for d in others:
         weights[d] = {"miles": (1 - long_share["miles"]) / len(others),
-                      "gain_ft": (1 - long_share["gain_ft"]) * vert[d] / sum(vert.values()),
-                      "loss_ft": (1 - long_share["loss_ft"]) * vert[d] / sum(vert.values())}
+                      "gain_ft": (1 - long_share["gain_ft"]) * vert[d] / (sum(vert.values()) or 1),
+                      "loss_ft": (1 - long_share["loss_ft"]) * vert[d] / (sum(vert.values()) or 1)}
     # Fill days in proportion to their weights; a day over its time limit is held there and
     # what it couldn't take moves to the days that still have room.
     alloc = {d: {k: 0.0 for k in DIMS} for d in weights}
@@ -318,7 +401,8 @@ def sessions_for_week(target: dict, week_start: date, first_day: date, c: Constr
             out.append({"day": d.isoformat(), "kind": "rest", "miles": 0.0, "gain_ft": 0.0, "loss_ft": 0.0,
                         "minutes": 0.0, "capped": False})
             continue
-        kind = "long" if d == long_day else "hills" if d == hills else "easy"
+        kind = ("long" if d == long_day else "long2" if d == second else workout if d == speed
+                else "hills" if d == hills else "easy")
         out.append({"day": d.isoformat(), "kind": kind, **alloc[d],
                     "minutes": effort_miles(alloc[d]["miles"], alloc[d]["gain_ft"]) * pace_min,
                     "capped": d in capped})
@@ -371,11 +455,22 @@ def build(obj: Objective, acts: list[dict], history: list[LedgerDay], c: Constra
     week0 = today - timedelta(days=today.weekday())
     n = (obj.day - week0).days // 7 + 1
     kinds = week_kinds(n)
+    pairs = b2b_sized(dem)
+    b2b = pairs and c.back_to_back
+    # With back-to-back days the pair, not one day, carries the long-day target: big enough that
+    # its readiness credit reaches the same size.
     long_target = {"miles": obj.distance_mi * LONG_TARGET, "gain_ft": obj.gain_ft * LONG_TARGET,
                    "loss_ft": obj.loss_ft * LONG_TARGET}
-    peak = {"miles": max(base["miles"], long_target["miles"] / LONG_SHARE["miles"]),
-            "gain_ft": max(base["gain_ft"], obj.gain_ft * VOLUME_TARGET, long_target["gain_ft"] / LONG_SHARE["gain_ft"]),
-            "loss_ft": max(base["loss_ft"], obj.loss_ft * VOLUME_TARGET, long_target["loss_ft"] / LONG_SHARE["loss_ft"])}
+    share = LONG_SHARE
+    if b2b:
+        long_target = {k: v / B2B_CREDIT for k, v in long_target.items()}
+        share = PAIR_SHARE
+    need = {"miles": long_target["miles"] / share["miles"],
+            "gain_ft": max(obj.gain_ft * VOLUME_TARGET, long_target["gain_ft"] / share["gain_ft"]),
+            "loss_ft": max(obj.loss_ft * VOLUME_TARGET, long_target["loss_ft"] / share["loss_ft"])}
+    # Build to what the objective needs. Already past it, hold no more than HOLD_ABOVE of it:
+    # more volume than the day calls for only makes the long day oversized.
+    peak = {k: max(need[k], min(base[k], need[k] * HOLD_ABOVE)) for k in DIMS}
     done = [a for a in acts if week0.isoformat() <= a["day"] <= today.isoformat() and is_foot(a["sport"])]
     done_today = any(a["day"] == today.isoformat() for a in done)
     done_sum = {"miles": sum(a["distance_mi"] for a in done), "gain_ft": sum(a["gain_ft"] for a in done),
@@ -391,7 +486,7 @@ def build(obj: Objective, acts: list[dict], history: list[LedgerDay], c: Constra
         start = week0 + timedelta(weeks=i)
         descent_fitness_at[i] = proj.fitness("descent")
         if kind == "build" and i > 0:
-            want = {k: level[k] if level[k] >= peak[k] else min(peak[k], max(level[k], 1.0) * BUILD_RATE)
+            want = {k: peak[k] if level[k] >= peak[k] else min(peak[k], max(level[k], 1.0) * BUILD_RATE)
                     for k in DIMS}
         else:
             want = {k: level[k] * {"build": 1.0, "recovery": RECOVERY, "taper": TAPER, "race": RACE_WEEK}[kind]
@@ -405,18 +500,21 @@ def build(obj: Objective, acts: list[dict], history: list[LedgerDay], c: Constra
                 if ("miles" if k == "miles" else "vert") in a.get("dims", []):
                     planned[k] *= f
         race = _in_week(obj.day, start)
-        sessions, notes = sessions_for_week(planned, start, first, _before(c, obj.day) if race else c, pace_min)
+        speed = c.workout if c.workout in WORKOUTS and kind in ("build", "taper") else None
+        sessions, notes = sessions_for_week(planned, start, first, _before(c, obj.day) if race else c, pace_min,
+                                            b2b and not race, speed)
         for a in asked:
             what = _join(["miles" if d == "miles" else "vert" for d in a.get("dims", [])])
             notes.insert(0, f"{'Less' if float(a.get('factor', 1.0)) < 1 else 'More'} {what} this week, as you asked")
         if race:
             for s in sessions:
-                if s["kind"] == "long":
+                if s["kind"] in ("long", "long2"):
                     s["kind"] = "easy"
 
         def day_loads(scale: float) -> list[tuple[date, dict]]:
             return [(date.fromisoformat(s["day"]),
-                     {"cardio": s["minutes"] * scale / 60 * r["cardio_per_hour"],
+                     {"cardio": s["minutes"] * scale / 60 * r["cardio_per_hour"]
+                      * (WORKOUT_CARDIO if s["kind"] in WORKOUTS else 1.0),
                       "distance": s["miles"] * scale,
                       "climb": s["gain_ft"] * scale * r["climb_per_ft"],
                       "descent": s["loss_ft"] * scale * r["descent_per_ft"]})
@@ -440,6 +538,7 @@ def build(obj: Objective, acts: list[dict], history: list[LedgerDay], c: Constra
                                            "loss_ft": obj.loss_ft, "minutes": dem["time"]["mid_h"] * 60,
                                            "capped": False}
         long = next((s for s in sessions if s["kind"] == "long"), None)
+        second = next((s for s in sessions if s["kind"] == "long2"), None)
         if long is not None:
             long["longest_descent_ft"] = _long_descent(obj, long["loss_ft"])
         total = _sum([s for s in sessions if s["kind"] != "objective"])
@@ -461,8 +560,13 @@ def build(obj: Objective, acts: list[dict], history: list[LedgerDay], c: Constra
             "long": None if long is None else {
                 "day": long["day"], "miles": long["miles"], "gain_ft": long["gain_ft"], "loss_ft": long["loss_ft"],
                 "minutes": long["minutes"], "effort_mi": effort_miles(long["miles"], long["gain_ft"]),
-                "longest_descent_ft": long["longest_descent_ft"]},
+                "longest_descent_ft": long["longest_descent_ft"],
+                "second": None if second is None else {
+                    "day": second["day"], "miles": second["miles"], "gain_ft": second["gain_ft"],
+                    "loss_ft": second["loss_ft"], "minutes": second["minutes"],
+                    "effort_mi": effort_miles(second["miles"], second["gain_ft"])}},
             "limited_by": limited_by if scale < 1 else [], "notes": list(dict.fromkeys(notes)),
+            "workout": next((s["kind"] for s in sessions if s["kind"] in WORKOUTS), None),
         })
     # Projected readiness, read at the start of the taper (or the race week): the last 4 weeks
     # before it and the biggest long day in the 8 weeks before it.
@@ -470,22 +574,27 @@ def build(obj: Objective, acts: list[dict], history: list[LedgerDay], c: Constra
     before = weeks[max(0, cut - 4):cut] or weeks[:1]
     window = weeks[max(0, cut - 8):cut] or weeks[:1]
     longs = [w["long"] for w in window if w["long"]]
-    current = capacity(acts, descent_now, today)
+    current = capacity(acts, descent_now, today, pairs)
     overlap = (obj.day - today).days <= CAPACITY_DAYS  # today's biggest days still count on the day
 
     def best(values: list[float], key: str) -> float:
         return max(values + ([current[key]] if overlap else []), default=0.0)
 
+    def biggest(l: dict, key: str) -> float:
+        two = l.get("second")
+        return max(l[key], pair_size(l[key], two[key]) if two and pairs else 0.0)
+
     proj_cap = {
-        "big_day": best([l["effort_mi"] for l in longs], "big_day"),
-        "time_on_feet": best([l["minutes"] / 60 for l in longs], "time_on_feet"),
+        "big_day": best([biggest(l, "effort_mi") for l in longs], "big_day"),
+        "time_on_feet": best([biggest(l, "minutes") / 60 for l in longs], "time_on_feet"),
         "climbing_volume": sum(w["gain_ft"] for w in before) / len(before),
         "descent_durability": best([l["longest_descent_ft"] or 0.0 for l in longs], "descent_durability"),
         "descent_volume": descent_fitness_at.get(cut, descent_now) * 7,
         "altitude": current["altitude"],
     }
-    projected = evaluate(dem, proj_cap)
+    projected = evaluate(dem, proj_cap, pairs)
     return {"objective": obj.json(), "built_on": today.isoformat(), "constraints": asdict(c),
+            "back_to_back": b2b,
             "baseline": base, "rates": r, "pace": p, "demand": dem, "peak": peak, "weeks": weeks,
             "projected": {"capacity": proj_cap, **projected}, "reachable": projected["verdict"] != "gap"}
 
@@ -521,6 +630,7 @@ def plan_for_day(plan: dict, day: date) -> dict | None:
     return None
 
 
+MAKEUP = 1.10  # a session ahead grows at most 10% past its planned size to make up what was missed
 OWN_LONG_SHARE = 0.80  # an own run this big, against the week's long day, is the long day
 MIN_SESSION_MI, MIN_SESSION_FT = 2.0, 500.0  # a session smaller than both is rest
 
@@ -555,12 +665,16 @@ def upcoming_sessions(plan: dict, acts: list[dict], today: date, days: int = 7,
 
     `own` holds the athlete's own scheduled runs by ISO day. They count toward the week the same
     as what's done: the plan spreads only what's left over the other days, and an own run on a
-    day takes that day (marked `own`)."""
+    day takes that day (marked `own`).
+
+    A missed run isn't piled onto the days left: each session ahead stays within MAKEUP of the
+    same kind of session in the week's full plan, and the week comes in under target instead."""
     own = own or {}
     c = Constraints.from_json(plan["constraints"])
     obj = plan["objective"]
     obj_day = date.fromisoformat(obj["day"])
     pace_min = plan["pace"]["min_per_effort_mi"]
+    b2b = bool(plan.get("back_to_back"))
     foot = [a for a in acts if is_foot(a["sport"])]
     done_today = any(a["day"] == today.isoformat() for a in foot)
     first = today + timedelta(days=1) if done_today else today
@@ -580,7 +694,23 @@ def upcoming_sessions(plan: dict, acts: list[dict], today: date, days: int = 7,
                            - sum(r[d] for r in mine.values())) for d in DIMS}
             race = _in_week(obj_day, start)
             cw = _around_own(_before(c, obj_day) if race else c, mine, w)
-            ss, _ = sessions_for_week(left, start, max(first, start), cw, pace_min)
+            # The week as it would run from Monday around your own runs, with nothing missed: the
+            # sizes a session ahead may grow to, by kind.
+            speed = w.get("workout")
+            full, _ = sessions_for_week({d: max(0.0, w[d] - sum(r[d] for r in mine.values())) for d in DIMS},
+                                        start, start, cw, pace_min, b2b and not race, speed)
+            most: dict[str, dict[str, float]] = {}
+            for s in full:
+                m = most.setdefault(s["kind"], dict.fromkeys(DIMS, 0.0))
+                for d in DIMS:
+                    m[d] = max(m[d], s[d])
+            ss, _ = sessions_for_week(left, start, max(first, start), cw, pace_min, b2b and not race, speed)
+            for s in ss:
+                m = most.get(s["kind"])
+                if m is not None and s["day"] not in mine:
+                    scale = min([1.0] + [m[d] * MAKEUP / s[d] for d in DIMS if s[d] > 1e-6])
+                    for d in (*DIMS, "minutes"):
+                        s[d] *= scale
             for s in ss:
                 r = mine.get(s["day"])
                 if r is not None:
@@ -590,6 +720,8 @@ def upcoming_sessions(plan: dict, acts: list[dict], today: date, days: int = 7,
                     # What's done and your own runs all but cover the week: a scrap of a run isn't worth it.
                     s.update(kind="rest", miles=0.0, gain_ft=0.0, loss_ft=0.0, minutes=0.0)
             for s in ss:
+                if s["kind"] == "long2" and race:
+                    s["kind"] = "easy"
                 if s["kind"] == "long" and not s.get("own"):
                     if race:
                         s["kind"] = "easy"
@@ -607,11 +739,30 @@ def upcoming_sessions(plan: dict, acts: list[dict], today: date, days: int = 7,
     return out
 
 
-SESSION_TITLE = {"long": "Long day", "hills": "Hills", "easy": "Easy aerobic", "rest": "Rest",
+SESSION_TITLE = {"long": "Long day", "long2": "Back-to-back day", "hills": "Hills", **WORKOUTS, "easy": "Easy aerobic", "rest": "Rest",
                  "objective": "Objective", "done": "Done for today"}
 
 
-def session_text(s: dict, aet: float, objective_name: str | None = None) -> dict:
+def _reps(s: dict, steps: tuple) -> int | str:
+    """How many reps: fewer in a taper week, more at the peak."""
+    return {"taper": steps[0], "peak": steps[2]}.get(s.get("focus"), steps[1])
+
+
+def workout_how(s: dict, aet: float, ant: float | None) -> str:
+    """How to run a speed session. Hard means around AnT, when it's known."""
+    hard = f"around {ant:.0f} bpm by the end of each" if ant else "hard but even, the last one as fast as the first"
+    if s["kind"] == "track":
+        return (f"Warm up 15 min under {aet:.0f} bpm. Then {_reps(s, (4, 6, 8))} × 800 m ({hard}), with 400 m "
+                "easy jogging between. Cool down 10 min easy. A track or any flat path.")
+    if s["kind"] == "tempo":
+        block = _reps(s, ("2 × 8", "2 × 15", "3 × 12"))
+        steady = f"just under {ant:.0f} bpm" if ant else "comfortably hard, a pace you could hold for an hour"
+        return f"Warm up 15 min under {aet:.0f} bpm. Then {block} min {steady}, 3 min easy between. Cool down 10 min."
+    return (f"Warm up 15 min under {aet:.0f} bpm. Then {_reps(s, (5, 8, 10))} × 2 min hard uphill ({hard}), "
+            "walking or jogging down to recover. Cool down 10 min.")
+
+
+def session_text(s: dict, aet: float, objective_name: str | None = None, ant: float | None = None) -> dict:
     """The words for a session: a title, how to run it, and the full detail with its numbers.
     Every number is the engine's."""
     kind = s["kind"]
@@ -629,6 +780,12 @@ def session_text(s: dict, aet: float, objective_name: str | None = None) -> dict
         if s.get("longest_descent_ft"):
             how += f" Include one continuous descent of about {round(s['longest_descent_ft'], -2):,.0f} ft."
         title = "Long day"
+    elif kind == "long2":
+        how = (f"The second of two long days, on tired legs: under {aet:.0f} bpm, hike the climbs and "
+               "practice moving well downhill.")
+        title = "Back-to-back day"
+    elif kind in WORKOUTS:
+        how, title = workout_how(s, aet, ant), WORKOUTS[kind]
     elif kind == "hills":
         how, title = f"Climb steady under {aet:.0f} bpm and hike anything steep.", "Hills"
     else:

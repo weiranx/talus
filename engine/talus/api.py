@@ -741,7 +741,8 @@ def _sessions(store: Store, accepted: dict | None, acts: list[dict], day: date, 
     if accepted is None:
         return []
     name = accepted["objective"]["name"]
-    return [s | planner.session_text(s, aet, name)
+    th = store.thresholds()
+    return [s | planner.session_text(s, aet, name, th.ant if th else None)
             for s in planner.upcoming_sessions(accepted, acts, day, days, own=_own(store, day))]
 
 
@@ -755,7 +756,8 @@ def _calendar(store: Store, start: date, days: int, acts: list[dict] | None = No
     th = store.thresholds()
     return schedule.calendar(store.planned_runs(start, start + timedelta(days=days - 1)), store.plan("accepted"),
                              acts, start, days, day, planner.pace(acts, day)["min_per_effort_mi"],
-                             th.aet if th else None, _zone_text(_zone_model(store)), own=_own(store, day))
+                             th.aet if th else None, _zone_text(_zone_model(store)), own=_own(store, day),
+                             ant=th.ant if th else None)
 
 
 def _planned_today(store: Store, day: date, aet: float) -> dict | None:
@@ -810,6 +812,7 @@ def _plan_json(p: dict | None) -> dict | None:
         return None
     return {k: p.get(k) for k in ("id", "status", "reason", "created_at", "decided_at", "built_on", "constraints",
                                   "baseline", "pace", "demand", "peak", "weeks", "projected", "reachable",
+                                  "back_to_back",
                                   "options", "now", "changes")} | {"reason_text": planner.REPLAN_TEXT.get(p["reason"], p["reason"])}
 
 
@@ -928,6 +931,8 @@ class ConstraintsIn(BaseModel):
     weekend_min: int = Field(ge=15, le=900)
     long_day: int = Field(ge=0, le=6)
     notes: str = Field(default="", max_length=500)
+    back_to_back: bool | None = None  # left out: keep the current setting
+    workout: str | None = Field(default=None, pattern="^(none|track|tempo|hill_repeats)$")  # left out: keep
 
 
 @app.put("/api/plan/constraints")
@@ -938,7 +943,10 @@ def put_constraints(body: ConstraintsIn) -> dict:
     if body.long_day not in body.days:
         raise HTTPException(422, "Your long day has to be one of your training days.")
     store = get_store()
-    c = planner.Constraints.from_json(body.model_dump() | {"adjust": _constraints(store).adjust})
+    now = _constraints(store)
+    keep = {"adjust": now.adjust} | {k: getattr(now, k) for k in ("back_to_back", "workout")
+                                     if getattr(body, k) is None}
+    c = planner.Constraints.from_json(body.model_dump(exclude_none=True) | keep)
     store.save_settings({"plan_constraints": asdict(c)})
     obj = store.objective()
     if obj is not None:
@@ -1012,10 +1020,45 @@ def _talk_read(store: Store, mode: str, text: str, packet: dict, fallback: dict)
     return out["reply"], ({"cost": out["cost"]} if out["source"] == "coach" else None)
 
 
+def _race_lookup(store: Store, text: str, day: date) -> tuple[dict, dict | None]:
+    """A named race's date, distance and vert from the web, on the analysis model. Empty when
+    the coach is off or over its cap, there's no key, or nothing usable was found."""
+    cfg = _coach_settings(store)
+    client = coach_client()
+    cap = _coach_cap(store)
+    if not cfg["coach_enabled"] or client is None or (cap["limit"] is not None and cap["spent"] >= cap["limit"]):
+        return {}, None
+    model_id = cfg["analysis_model"]
+    try:
+        found, model, usage = coach.lookup_race(client, text, day.isoformat(), model_id)
+    except Exception as e:  # noqa: BLE001 - a failed lookup only means asking for the numbers
+        import anthropic
+        if not isinstance(e, (anthropic.APIError, ValueError)):
+            raise
+        return {}, None
+    packet = {"today": day.isoformat(), "text": text}
+    store.log_coach("lookup", "lookup", coach.PROMPT_VERSION, coach.cache_key(packet, model_id, coach.DEFAULT_STYLE),
+                    packet, coach.Result("coach" if found else "rules", found or {}, model, 1,
+                                         None if found else "not_found", [], usage))
+    meta = {"cost": _shown_cost(model, usage, cached=False)}
+    if not found:
+        return {}, meta
+    got = interview.from_intake(found, day)
+    if isinstance(found.get("source"), str) and found["source"].startswith("http"):
+        got["looked_up"] = found["source"][:300]
+    elif got:
+        got["looked_up"] = "web"
+    return got, meta
+
+
 def _talk_objective(store: Store, st: dict, body: TalkIn, day: date) -> list[dict]:
     o = dict(st["objective"])
     current = store.objective()
     meta = None
+    if o.get("looked_up") == "block" and body.text:
+        o = {}  # typed a race instead of the offered block
+    if o.get("looked_up") and ((body.answers and body.answers.get("confirm")) or body.text):
+        o["confirmed"] = True  # tapped "Use these", or typed what's different
     if body.answers and body.answers.get("keep") and current is not None:
         o = current.json() | {"keep": True}
     if body.route:
@@ -1025,6 +1068,15 @@ def _talk_objective(store: Store, st: dict, body: TalkIn, day: date) -> list[dic
         o.pop("keep", None)
         if body.route.get("name") and not o.get("name"):
             o["name"] = str(body.route["name"])[:80]
+    if body.text and interview.general(body.text) and not interview.rules_objective(body.text, day).get("distance_mi"):
+        # No race in mind: offer a fitness block that ends in a long mountain day.
+        st["objective"] = interview.fitness_block(_activities(store, day - timedelta(days=56)), day)
+        o = st["objective"]
+        return [interview.coach(
+            f"No race needed. I'll set up a {interview.BLOCK_WEEKS}-week block that builds your weekly miles and vert "
+            f"toward a long mountain day of {o['distance_mi']:.1f} mi with {round(o['gain_ft']):,} ft up, a little past "
+            "your biggest day of the last 8 weeks, then you can start the next block. Use this, or tell me a race or a "
+            "day you have in mind.", "objective", [{"key": "confirm", "options": ["Use this"], "value": None}])]
     if body.text:
         got = interview.rules_objective(body.text, day)
         if interview.missing(o | got):
@@ -1034,14 +1086,28 @@ def _talk_objective(store: Store, st: dict, body: TalkIn, day: date) -> list[dic
             got = ai | got | ({"name": name} if name else {})
         if o.get("name") and sum(k in got for k in ("day", "distance_mi", "gain_ft")) < 2:
             got.pop("name", None)  # filling in a missing piece, like "it's on March 3", keeps the name
+        if got.get("name") and interview.missing(o | got) and not o.get("looked_up"):
+            # A race named without its numbers: look it up, and ask before using what's found.
+            found, lookup_meta = _race_lookup(store, body.text, day)
+            meta = lookup_meta or meta
+            filled = {k: v for k, v in found.items() if k not in got and k != "name"}
+            if any(k in filled for k in ("day", "distance_mi", "gain_ft")):
+                got |= filled
         o |= got
         o.pop("keep", None)
+        if got.get("looked_up") and not interview.missing(o):
+            o.pop("confirmed", None)
     problems = []
     if o.get("day") and date.fromisoformat(o["day"]) <= day:
         o.pop("day")
         problems.append("That date has passed; the objective needs a date after today.")
     st["objective"] = o
     need = interview.missing(o)
+    if not need and o.get("looked_up") and o["looked_up"] != "block" and not o.get("confirmed"):
+        where = "" if o["looked_up"] == "web" else f" ({o['looked_up']})"
+        return [interview.coach(f"I looked it up{where}: {interview.objective_line(o | {'loss_ft': o.get('loss_ft') or o['gain_ft']})}. "
+                                "Use these, or type what's different.", "objective",
+                                [{"key": "confirm", "options": ["Use these"], "value": None}]) | (meta or {})]
     if need:
         have = []
         if o.get("name"):
@@ -1106,7 +1172,8 @@ def _talk_change(store: Store, st: dict, text: str, day: date) -> list[dict]:
     read, meta = _talk_read(store, "edit", text, packet, {"edits": interview.rules_edits(text)})
     edits = read["edits"] if meta is None else interview.from_edits(read["edits"])
     if not edits:
-        return [interview.coach(interview.EDIT_HELP, "draft") | (meta or {})]
+        asked = read.get("cannot") if meta is not None and isinstance(read.get("cannot"), str) else None
+        return [interview.coach(interview.cant_text(asked), "draft") | (meta or {})]
     new_c, done, skipped = interview.apply_edits(edits, asdict(c), before["weeks"])
     if not done:
         return [interview.coach(interview.change_text(done, skipped, []) + "\n" + interview.EDIT_HELP, "draft") | (meta or {})]
@@ -1248,6 +1315,7 @@ def get_schedule(start: date | None = None, days: int = 35) -> dict:
     acts = _activities(store, min(start, day) - timedelta(days=planner.CAPACITY_DAYS))
     items = _calendar(store, start, days, acts)
     return {"date": day.isoformat(), "start": start.isoformat(), "days": days, "items": items,
+            "activities": schedule.unscheduled(items, acts, start, days),
             "weeks": schedule.weeks(items, acts, store.plan("accepted"), start, days, day),
             "warnings": _ahead(store, day, None)["projection"]["warnings"],
             "kinds": [{"key": k, "label": v} for k, v in schedule.KINDS.items()],

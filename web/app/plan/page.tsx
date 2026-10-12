@@ -207,6 +207,7 @@ export default async function PlanPageView({ searchParams }: { searchParams: Pro
           </div>
           <div className="muted" style={{ fontSize: 14 }}>
             Peak {mi(p.accepted.peak.miles)} mi and {n0(p.accepted.peak.gain_ft)} ft up a week. Lighter weeks are recovery and taper; this week is outlined.
+            {p.accepted.back_to_back ? " Long weekends are back-to-back long days, so no single day has to carry the whole distance." : ""}
           </div>
           <RoadChart weeks={p.accepted.weeks} current={weekStart(p.date)} actuals={p.actuals} />
         </section>

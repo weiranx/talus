@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { Fragment, useCallback, useEffect, useState } from "react";
 import { Spinner } from "@/components/Loading";
@@ -76,6 +77,8 @@ export default function Calendar({ initial, compact }: { initial: Schedule; comp
 
   const byDay = new Map<string, ScheduledRun[]>();
   for (const it of data.items) byDay.set(it.day, [...(byDay.get(it.day) ?? []), it]);
+  const ran = new Map<string, NonNullable<Schedule["activities"]>>();
+  for (const a of data.activities ?? []) ran.set(a.day, [...(ran.get(a.day) ?? []), a]);
   const days = Array.from({ length: (all ? WEEKS : 2) * 7 }, (_, i) => addDays(start, i));
   const warned = new Map(data.warnings.map((w) => [w.week, w]));
   const weeks = new Map((data.weeks ?? []).map((w) => [w.start, w]));
@@ -167,6 +170,15 @@ export default function Calendar({ initial, compact }: { initial: Schedule; comp
                       </div>
                     ) : null}
                   </button>
+                ))}
+                {(ran.get(d) ?? []).map((a) => (
+                  <Link key={a.id} href={`/activities/${a.id}`}
+                    style={{ display: "block", borderLeft: "3px solid var(--good-ink)", background: "var(--past)", borderRadius: 6,
+                      padding: "4px 6px", fontSize: 12, color: "var(--ink)", textDecoration: "none" }}>
+                    <div style={{ fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{a.name}</div>
+                    <div className="mono" style={{ fontSize: 11 }}>{mi(a.distance_mi)} mi · {n0(a.gain_ft)} ft</div>
+                    <div style={{ fontSize: 11, color: "var(--good-ink)" }}>Done</div>
+                  </Link>
                 ))}
               </div>
               {weekEnd ? <WeekLine w={weeks.get(days[i - 6])} past={d < data.date} /> : null}

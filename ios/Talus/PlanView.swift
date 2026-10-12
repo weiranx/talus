@@ -653,7 +653,12 @@ struct WeeksList: View {
                     }
                     Text(Fmt.distVert(mi: w.miles, gain: w.gainFt, loss: w.lossFt)).font(.caption.monospacedDigit())
                     if let l = w.long {
-                        Text("Long day \(Fmt.mi(l.miles)) mi, \(Fmt.n0(l.gainFt)) ft").font(.caption).foregroundStyle(.secondary)
+                        if let s = l.second {
+                            Text("Long days \(Fmt.mi(l.miles)) + \(Fmt.mi(s.miles)) mi, \(Fmt.n0(l.gainFt)) + \(Fmt.n0(s.gainFt)) ft")
+                                .font(.caption).foregroundStyle(.secondary)
+                        } else {
+                            Text("Long day \(Fmt.mi(l.miles)) mi, \(Fmt.n0(l.gainFt)) ft").font(.caption).foregroundStyle(.secondary)
+                        }
                     }
                     if let a = actuals[w.start] {
                         Text("Done \(Fmt.mi(a.miles)) mi, \(Fmt.n0(a.gainFt)) ft\(w.start == current ? " so far" : "")")

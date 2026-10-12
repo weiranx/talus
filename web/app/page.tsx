@@ -12,18 +12,23 @@ import ReadinessScore from "@/components/ReadinessScore";
 import Sparkline from "@/components/Sparkline";
 import ZoneBar from "@/components/ZoneBar";
 import SetupList from "@/components/onboarding/SetupList";
-import { engine, EngineError } from "@/lib/api";
+import { engine, engineFailed, EngineError } from "@/lib/api";
 import { dayLabel, LEDGER_LABEL, ledgerBadge, ledgerDecimals, ledgerNum, ledgerUnit, mi, n0, stateLabel } from "@/lib/format";
 import { LEDGERS, type Onboarding, type Today } from "@/lib/types";
 
 export const dynamic = "force-dynamic";
+
+const signedPct = (v: number) => {
+  const p = Math.round(v * 100);
+  return p === 0 ? "0%" : `${p > 0 ? "+" : "−"}${Math.abs(p)}%`;
+};
 
 export default async function TodayPage() {
   // Both at once: setup status decides whether Today shows at all, and Today is the slow one.
   const [obRes, tRes] = await Promise.allSettled([engine<Onboarding>("/api/onboarding"), engine<Today>("/api/today")]);
   if (obRes.status === "rejected") {
     const e = obRes.reason;
-    return <EngineDown message={e instanceof EngineError ? e.message : "Could not reach the engine."} />;
+    return <EngineDown message={engineFailed(e)} />;
   }
   const ob = obRes.value;
   // A new account goes through setup first; it resumes at the first unfinished step.
@@ -31,7 +36,7 @@ export default async function TodayPage() {
   if (tRes.status === "rejected") {
     const e = tRes.reason;
     if (e instanceof EngineError && e.status === 409) return <SetupList ob={ob} empty />;
-    return <EngineDown message={e instanceof EngineError ? e.message : "Could not reach the engine."} />;
+    return <EngineDown message={engineFailed(e)} />;
   }
   const t = tRes.value;
 
@@ -101,7 +106,7 @@ export default async function TodayPage() {
           const limiter = t.readiness.legs.limiter === name && t.readiness.legs.state !== "fresh";
           const nd = ledgerDecimals(name), unit = ledgerUnit(name);
           return (
-            <section key={name} className="card" style={{ flex: "1 1 220px", gap: 10, outline: limiter ? `2px solid var(--${name})` : undefined }}>
+            <section key={name} className={`card ledger-card${limiter ? " limiter" : ""}`} style={{ flex: "1 1 220px", gap: 10, ["--accent" as string]: `var(--${name})` }}>
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
                 <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
                   <span className="swatch" style={{ background: `var(--${name})` }} />
@@ -110,9 +115,18 @@ export default async function TodayPage() {
                 <Pill tone={badge.tone}>{badge.text}</Pill>
               </div>
               <div>
-                <div className="big">
-                  <Explain path={`ledger/${name}/vs_normal`}>{d.vs_normal_text.replace(/^./, (c) => c.toUpperCase())}</Explain>
-                </div>
+                {d.vs_normal == null ? (
+                  <div className="big">
+                    <Explain path={`ledger/${name}/vs_normal`}>{d.vs_normal_text.replace(/^./, (c) => c.toUpperCase())}</Explain>
+                  </div>
+                ) : (
+                  <div style={{ display: "flex", alignItems: "baseline", gap: 8, flexWrap: "wrap", marginBottom: 4 }}>
+                    <span className="mono" style={{ fontSize: 30, fontWeight: 600, letterSpacing: "-0.03em", lineHeight: 1.1 }}>
+                      <Explain path={`ledger/${name}/vs_normal`}>{signedPct(d.vs_normal)}</Explain>
+                    </span>
+                    <span className="muted">vs your normal</span>
+                  </div>
+                )}
                 <div className="muted">
                   Last 7 days <span className="mono" style={{ color: "var(--ink)" }}><Explain path={`ledger/${name}/fatigue`}>{ledgerNum(d.fatigue, nd) + unit}</Explain></span> a day. Your normal{" "}
                   <span className="mono" style={{ color: "var(--ink)" }}><Explain path={`ledger/${name}/fitness`}>{ledgerNum(d.fitness, nd) + unit}</Explain></span>.
@@ -136,7 +150,7 @@ export default async function TodayPage() {
             <div className="muted">No activities yet this week.</div>
           ) : (
             <div className="table-wrap">
-              <table style={{ minWidth: 440 }}>
+              <table className="linked" style={{ minWidth: 440 }}>
                 <thead>
                   <tr>
                     <th scope="col">Day</th>

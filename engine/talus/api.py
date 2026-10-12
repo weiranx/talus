@@ -142,22 +142,40 @@ def _display_minutes(m: dict, zm: dict | None) -> dict | None:
     return None
 
 
-def _activities(store: Store, since: date | None = None) -> list[dict]:
+# Each scored activity's summary, parsed, with its time in each display zone. Every page reads the
+# activity list, often several times per request, so the parse is kept per summary and zone floors.
+_summaries: OrderedDict[tuple, tuple[dict, dict | None]] = OrderedDict()
+_summaries_guard = threading.Lock()
+SUMMARIES_KEEP = 5000
+
+
+def _summary(text: str, zm: dict | None) -> tuple[dict, dict | None]:
+    key = (text, None if zm is None else (zm["zones"], zm["custom"], tuple(zm["floors"])))
+    with _summaries_guard:
+        hit = _summaries.get(key)
+        if hit is not None:
+            _summaries.move_to_end(key)
+            return hit
+    m = json.loads(text)
+    hit = (m, _display_minutes(m, zm))
+    with _summaries_guard:
+        _summaries[key] = hit
+        while len(_summaries) > SUMMARIES_KEEP:
+            _summaries.popitem(last=False)
+    return hit
+
+
+def _activities(store: Store, since: date | None = None, limit: int | None = None) -> list[dict]:
     zm = _zone_model(store)
     out = []
-    for row in store.activities():
-        if not row["summary"] or not row["start_time"]:
-            continue
-        day = date.fromisoformat(row["start_time"][:10])
-        if since and day < since:
-            continue
-        m = json.loads(row["summary"])
-        out.append({"id": row["id"], "day": day.isoformat(), "start_time": row["start_time"],
+    for row in store.scored_activities(since and since.isoformat(), limit):
+        m, hr_zone_minutes = _summary(row["summary"], zm)
+        out.append({"id": row["id"], "day": row["start_time"][:10], "start_time": row["start_time"],
                     "name": row["name"], "sport": row["sport"], "source": row["source"],
                     "device_name": row["device_name"], **{k: m[k] for k in (
                         "distance_mi", "gain_ft", "loss_ft", "effort_mi", "moving_time_s", "elapsed_time_s",
                         "cardio_load", "climb_load", "descent_load", "cardio_estimated", "zone_minutes",
-                        "hike_share", "notes")}, "hr_zone_minutes": _display_minutes(m, zm),
+                        "hike_share", "notes")}, "hr_zone_minutes": hr_zone_minutes,
                     "longest_descent_ft": m.get("longest_descent_ft"),
                     "minutes_above_8000ft": m.get("minutes_above_8000ft")})
     return out
@@ -315,7 +333,7 @@ def _projection(store: Store, day: date) -> dict:
 
 @app.get("/api/activities")
 def activities(limit: int = 50) -> list[dict]:
-    return _activities(get_store())[:limit]
+    return _activities(get_store(), limit=limit)
 
 
 # Recently read activity files. Reading a FIT file takes about a second, and an activity page

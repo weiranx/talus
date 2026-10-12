@@ -3,6 +3,7 @@ import ScoreTrend from "@/components/ScoreTrend";
 import type { ReadinessScore as Score } from "@/lib/types";
 
 const TONE = { go: "good", modify: "warn", rest: "bad" } as const;
+const RING = { go: "var(--good-ink)", modify: "var(--climb)", rest: "var(--bad-ink)" } as const;
 const lower = (name: string) => (name === "HRV" ? name : name === "Resting HR" ? "resting HR" : name.toLowerCase());
 const list = (names: string[]) => (names.length < 2 ? names.join("") : `${names.slice(0, -1).join(", ")} and ${names.at(-1)}`);
 
@@ -14,8 +15,12 @@ export default function ReadinessScore({ s }: { s: Score }) {
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
       <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
-        <div className="mono" style={{ fontSize: 44, fontWeight: 600, lineHeight: 1 }} aria-label={`Readiness score ${s.score} of 100`}>
-          {s.score}
+        <div className="score-ring" style={{ ["--ring" as string]: RING[s.call], ["--pct" as string]: s.score }} aria-label={`Readiness score ${s.score} of 100`}>
+          <svg viewBox="0 0 80 80" aria-hidden>
+            <circle cx="40" cy="40" r="34" pathLength={100} className="score-ring-track" />
+            <circle cx="40" cy="40" r="34" pathLength={100} className="score-ring-fill" />
+          </svg>
+          <span className="mono">{s.score}</span>
         </div>
         <div style={{ display: "flex", flexDirection: "column", gap: 4, alignItems: "flex-start" }}>
           <Pill tone={TONE[s.call]}>{s.label}</Pill>

@@ -37,6 +37,7 @@ final class WatchLink: NSObject {
     private var sendChar: CBCharacteristic?
     private var recvChar: CBCharacteristic?
     private var gfdiHandle: Int?
+    private var registerAttempts = 0
     private var decoder = GarminWire.CobsDecoder()
     private var writeQueue: [Data] = []
     private var writing = false
@@ -75,6 +76,7 @@ final class WatchLink: NSObject {
         if c.state != .poweredOn {
             try await withCheckedThrowingContinuation { poweredWaiter = $0; checkPower(c) }
         }
+        registerAttempts = 0
         return try await withCheckedThrowingContinuation { cont in
             connectWaiter = cont
             arm(30, "connecting")
@@ -240,7 +242,13 @@ final class WatchLink: NSObject {
             rawWrite(GarminWire.register(service: GarminWire.gfdiService, reliable: 0))
         case .registered(let svc, let status, let h, let reliable):
             guard status == 0 else {
-                failAll(LinkError.refused("The watch refused Talus's request (service \(svc), status \(status)). Try again."))
+                if svc == GarminWire.gfdiService, registerAttempts < 2 {
+                    retryRegister(status)
+                    return
+                }
+                failAll(LinkError.refused(svc == GarminWire.gfdiService
+                    ? "The watch wouldn't open its sync service (status \(status)). Restart the watch, let Garmin Connect reconnect, then try again."
+                    : "The watch refused Talus's request (service \(svc), status \(status)). Try again."))
                 return
             }
             event("Watch opened service 0x\(String(svc, radix: 16)) on handle \(h)\(reliable != 0 ? " (reliable)" : "")")
@@ -250,6 +258,20 @@ final class WatchLink: NSObject {
             if svc == GarminWire.fileService { transferClosed() }
         case .other:
             break
+        }
+    }
+
+    /// The watch refused the sync service, which it does while an earlier registration is still
+    /// open. Close Talus's handles and ask again on the same channel after a pause; switching to
+    /// another channel made the watch drop the whole link.
+    private func retryRegister(_ status: Int) {
+        registerAttempts += 1
+        event("The watch refused the sync service (status \(status)), trying again (\(registerAttempts) of 2)")
+        keepAlive()
+        Task { [weak self] in
+            try? await Task.sleep(for: .seconds(3 * Double(self?.registerAttempts ?? 1)))
+            guard let self, self.peripheral != nil, self.connectWaiter != nil else { return }
+            self.rawWrite(GarminWire.closeAll())
         }
     }
 
@@ -469,7 +491,7 @@ extension WatchLink: @MainActor CBCentralManagerDelegate, @MainActor CBPeriphera
 
     func peripheral(_ p: CBPeripheral, didUpdateValueFor ch: CBCharacteristic, error: Error?) {
         let v = ch.value
-        guard let v, !v.isEmpty else { return }
+        guard ch == recvChar, let v, !v.isEmpty else { return } // another app's channel on a shared link
         received(v)
     }
 }

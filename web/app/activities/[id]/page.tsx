@@ -4,7 +4,7 @@ import CoachRead, { CoachReadPending } from "@/components/CoachRead";
 import ActivityView from "@/components/ActivityView";
 import EngineDown from "@/components/EngineDown";
 import Explain from "@/components/Explain";
-import { engine, EngineError } from "@/lib/api";
+import { engine, engineFailed } from "@/lib/api";
 import { dayLabel, duration, LEDGER_LABEL, mi, n0, pct } from "@/lib/format";
 import { LEDGERS, type ActivityDetail } from "@/lib/types";
 
@@ -18,12 +18,12 @@ export default async function ActivityPage({ params }: { params: Promise<{ id: s
   try {
     a = await engine<ActivityDetail>(`/api/activities/${encodeURIComponent(id)}`);
   } catch (e) {
-    return <EngineDown message={e instanceof EngineError ? e.message : "Could not reach the engine."} />;
+    return <EngineDown message={engineFailed(e)} />;
   }
   const stats: [string, ReactNode][] = [
-    ["Distance", `${mi(a.distance_mi)} mi`],
-    ["Gain", `${n0(a.gain_ft)} ft`],
-    ["Descent", `${n0(a.loss_ft)} ft`],
+    ["Distance", <>{mi(a.distance_mi)}<span className="unit">mi</span></>],
+    ["Gain", <>{n0(a.gain_ft)}<span className="unit">ft</span></>],
+    ["Descent", <>{n0(a.loss_ft)}<span className="unit">ft</span></>],
     ["Time", duration(a.moving_time_s, true)],
     ["Effort miles", <Explain key="e" path={`activity/${a.id}/effort_mi`}>{mi(a.effort_mi)}</Explain>],
     ["Hike share", pct(a.hike_share)],

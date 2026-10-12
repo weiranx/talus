@@ -20,8 +20,8 @@ export default function AccountMenu() {
     window.location.replace("/login");
   }
   return (
-    <div className="side-note">
-      <div style={{ overflowWrap: "anywhere" }}>{email}</div>
+    <div className="side-note account-menu">
+      <div className="account-email" style={{ overflowWrap: "anywhere" }}>{email}</div>
       <button className="link-btn" onClick={signOut}>Sign out</button>
     </div>
   );

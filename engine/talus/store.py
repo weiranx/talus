@@ -319,6 +319,14 @@ class Store:
             sql += f" LIMIT {int(limit)}"
         return self.db.execute(sql).fetchall()
 
+    def scored_activities(self, since: str | None = None, limit: int | None = None) -> list[sqlite3.Row]:
+        """Scored activities with a start time, newest first, from `since` (an ISO day) on."""
+        sql = """SELECT a.*, s.summary FROM activity a JOIN activity_score s ON s.activity_id = a.id
+                 WHERE a.start_time IS NOT NULL AND a.start_time >= ? ORDER BY a.start_time DESC"""
+        if limit:
+            sql += f" LIMIT {int(limit)}"
+        return self.db.execute(sql, (since or "",)).fetchall()
+
     def raw(self, row: sqlite3.Row) -> RawFile:
         return RawFile((self.dir / row["raw_path"]).read_bytes(), row["raw_fmt"])
 

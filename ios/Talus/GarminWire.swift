@@ -8,8 +8,9 @@ enum GarminWire {
     static func mlUUID(_ n: Int) -> String { String(format: "6A4E%04X-667B-11E3-949A-0800200C9A66", n) }
     static let mlService = mlUUID(0x2800)
     static let garminCompany = 0x0087
-    /// Gadgetbridge's ML client id; ML management messages are scoped to it.
-    static let clientID: UInt64 = 2
+    /// Gadgetbridge's ML client id; ML management messages are scoped to it. A retry after the
+    /// watch refuses a registration moves to the next id, so a stale registration can't block it.
+    static var clientID: UInt64 = 2
     static let gfdiService = 0x0001
     static let fileService = 0x2018
     static let garminEpoch = Date(timeIntervalSince1970: 631_065_600)

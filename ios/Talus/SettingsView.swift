@@ -116,7 +116,7 @@ private struct SyncMethodCard: View {
             }
             .pickerStyle(.segmented)
             .onChange(of: method) { old, new in Task { await save(new, before: old) } }
-            Text(method == "watch" ? "Sync straight from your watch over Bluetooth, here or in Chrome on a computer." :
+            Text(method == "watch" ? "Sync activities straight from your watch over Bluetooth, here or in Chrome on Windows or Android." :
                     "Talus pulls new activities and overnight data from intervals.icu.")
                 .font(.caption).foregroundStyle(.secondary)
             if let message { FormMessage(ok: false, text: message) }

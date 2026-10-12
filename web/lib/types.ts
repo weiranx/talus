@@ -271,7 +271,11 @@ export interface Settings {
     upload: { last_import: LastImport | null; max_mb: number };
     // Posted by the Talus iOS app to /api/import/healthkit.
     healthkit: { last_sync: { at: string; workouts_added: number; workouts_skipped: number; wellness_days: number } | null };
+    // Files the web or iOS app pulled straight off a Garmin watch over Bluetooth.
+    watch: { last_sync: string | null };
   };
+  // How new activities arrive. File upload works with either.
+  sync_method: "intervals" | "watch";
   coach: {
     enabled: boolean;
     key_set: boolean;

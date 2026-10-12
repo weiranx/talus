@@ -145,3 +145,24 @@ def test_a_partial_copy_keeps_what_is_stored(tmp_path):
     import_paths(store, [("S.fit", f)], log=lambda *_: None)
     assert store.wellness(date(2026, 10, 5), date(2026, 10, 5))[date(2026, 10, 5)] == {
         "hrv": 55, "resting_hr": 49, "sleep_s": 24000.0, "sleep_score": 70.0}
+
+
+def test_sync_method_and_watch_file_keys(tmp_path, monkeypatch):
+    from tests.conftest import sign_in
+
+    monkeypatch.setenv("TALUS_DATA_DIR", str(tmp_path / "data"))
+    main(["thresholds", "--resting", "50", "--max", "190", "--ant", "170"])
+    client = sign_in()
+    assert client.get("/api/settings").json()["sync_method"] == "intervals"
+    assert client.put("/api/settings/sync-method", json={"method": "watch"}).status_code == 200
+    assert client.put("/api/settings/sync-method", json={"method": "strava"}).status_code == 422
+    assert client.get("/api/settings").json()["sync_method"] == "watch"
+
+    assert client.get("/api/import/watch").json() == {"files": [], "last_sync": None}
+    hrv = hrv_fit(utc(2026, 10, 5, 13, 31), 61)
+    r = client.post("/api/import?name=hrv.fit&watch_file=68-1-1791000000", content=hrv).json()
+    assert r["wellness_days"] == 1
+    client.post("/api/import?name=bad.fit&watch_file=4-9-1", content=b"not a file")  # unreadable: not kept
+    w = client.get("/api/import/watch").json()
+    assert w["files"] == ["68-1-1791000000"] and w["last_sync"]
+    assert client.get("/api/settings").json()["sources"]["watch"]["last_sync"] == w["last_sync"]

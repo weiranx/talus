@@ -19,6 +19,7 @@ from contextvars import ContextVar
 from dataclasses import asdict
 from datetime import date, datetime, timedelta
 from http.cookies import SimpleCookie
+from typing import Literal
 
 import httpx
 import numpy as np
@@ -1255,6 +1256,7 @@ def get_settings() -> dict:
             "last_sync": saved.get("last_sync"),
         },
         "sources": _sources(saved),
+        "sync_method": saved.get("sync_method", "intervals"),
         "coach": {
             "enabled": cfg["coach_enabled"],
             "key_set": bool(os.environ.get("ANTHROPIC_API_KEY")),
@@ -1377,6 +1379,18 @@ def put_readiness(body: ReadinessIn) -> dict:
     return {"ok": True}
 
 
+class SyncMethodIn(BaseModel):
+    method: Literal["intervals", "watch"]
+
+
+@app.put("/api/settings/sync-method")
+def put_sync_method(body: SyncMethodIn) -> dict:
+    """How new activities arrive: intervals.icu's API, or straight off a Garmin watch over
+    Bluetooth from the web (Chrome) or iOS app. File upload works either way."""
+    get_store().save_settings({"sync_method": body.method})
+    return {"ok": True}
+
+
 def _intervals_credential() -> dict | None:
     return cli.credential_for(get_accounts(), _account.get())
 
@@ -1422,6 +1436,7 @@ def _sources(saved: dict) -> dict:
                    "last_sync": saved.get("last_sync_garmin")},
         "upload": {"last_import": saved.get("last_import"), "max_mb": MAX_UPLOAD_MB},
         "healthkit": {"last_sync": saved.get("last_sync_healthkit")},
+        "watch": {"last_sync": saved.get("last_sync_watch")},
     }
 
 
@@ -1727,10 +1742,14 @@ MAX_UPLOAD_MB = int(os.environ.get("TALUS_MAX_UPLOAD_MB", "2048"))
 
 
 @app.post("/api/import")
-async def import_file(request: Request, background: BackgroundTasks, name: str = "upload") -> dict:
+async def import_file(request: Request, background: BackgroundTasks, name: str = "upload",
+                      watch_file: str | None = None) -> dict:
     """Upload one file as the request body: a FIT, GPX or TCX file (gzipped or not), a zip of
     them, or the Health app's export.zip. Streamed to disk, since an Apple Health export can run
-    to gigabytes, and deleted once read."""
+    to gigabytes, and deleted once read.
+
+    watch_file is set when the web or iOS app pulled the file off a Garmin watch over Bluetooth:
+    its key (type, file number and time) is remembered so the next sync skips it."""
     store = get_store()
     tmp_dir = store.dir / "uploads"
     tmp_dir.mkdir(parents=True, exist_ok=True)
@@ -1757,9 +1776,28 @@ async def import_file(request: Request, background: BackgroundTasks, name: str =
             return store.settings()["last_import"] | {"log": lines}
     finally:
         tmp.unlink(missing_ok=True)
+    if watch_file and not result.get("error") and not result.get("failed"):
+        remember_watch_file(store, watch_file)
     background.add_task(warm_coach, result.pop("added_ids"))
     background.add_task(start_inferring, store.dir)
     return result | {"log": lines}
+
+
+WATCH_KEYS_KEPT = 2000
+
+
+def remember_watch_file(store: Store, key: str) -> None:
+    saved = store.settings()
+    keys = [k for k in saved.get("watch_files", []) if k != key] + [key]
+    store.save_settings({"watch_files": keys[-WATCH_KEYS_KEPT:],
+                         "last_sync_watch": datetime.now().isoformat(timespec="seconds")})
+
+
+@app.get("/api/import/watch")
+def watch_files() -> dict:
+    """Files already pulled off the watch, so the apps download only what is new."""
+    saved = get_store().settings()
+    return {"files": saved.get("watch_files", []), "last_sync": saved.get("last_sync_watch")}
 
 
 # The analysis is written right after a sync only for recent activities: a first sync of a

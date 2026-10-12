@@ -340,3 +340,46 @@ def test_load_read_runs_on_the_cheap_model_and_reads_weeks_and_room(tmp_path, mo
     assert call["model"] == coach.BRIEF_MODEL and "Mode: load read." in call["messages"][0]["content"]
     packet = json.loads(call["messages"][0]["content"].split("Data:\n", 1)[1])
     assert len(packet["weeks"]) == 8 and "room" in packet["next_7_days"] and packet["athlete_note"] == "More vert."
+
+
+def test_chat_proposes_actions_that_run_only_when_confirmed(tmp_path, monkeypatch):
+    client = _demo(tmp_path, monkeypatch)
+    day = date.today()
+    mine = client.post("/api/schedule", json={"day": (day + timedelta(days=2)).isoformat(), "kind": "easy",
+                                              "miles": 5, "gain_ft": 500}).json()["id"]
+    later = (day + timedelta(days=3)).isoformat()
+    actions = [
+        {"kind": "schedule_run", "day": later, "run_kind": "intervals", "miles": 6, "gain_ft": 300, "minutes": 55,
+         "run_id": None, "note": None},
+        {"kind": "move_run", "day": (day + timedelta(days=4)).isoformat(), "run_kind": None, "miles": None,
+         "gain_ft": None, "minutes": None, "run_id": mine, "note": None},
+        {"kind": "delete_run", "day": None, "run_kind": None, "miles": None, "gain_ft": None, "minutes": None,
+         "run_id": 9999, "note": None},  # not theirs: dropped
+    ]
+    fake = FakeClient({"answer": "I'll add a 6 mi intervals run and move your easy day.", "used": [], "actions": actions})
+    monkeypatch.setattr(api, "coach_client", lambda: fake)
+    r = client.post("/api/coach/chat", json={"question": "Add a track session and move my easy run"}).json()
+    sent = json.loads(fake.calls[0]["messages"][0]["content"].split("Data:\n", 1)[1])
+    assert sent["scheduled_runs"][0]["run_id"] == mine and "can_sync" in sent
+    cards = r["messages"][-1]["actions"]
+    assert [c["kind"] for c in cards] == ["schedule_run", "move_run"] and all(c["status"] == "proposed" for c in cards)
+    assert cards[0]["summary"].startswith("Add Intervals (6.0 mi, 300 ft up, 55 min) on ")
+    # Nothing ran yet.
+    assert len(api.get_store().planned_runs(day)) == 1
+    done = client.post(f"/api/coach/actions/{cards[0]['id']}/confirm").json()
+    assert done["status"] == "done" and [r.kind for r in api.get_store().planned_runs(day)] == ["easy", "intervals"]
+    # A second tap does nothing more.
+    assert client.post(f"/api/coach/actions/{cards[0]['id']}/confirm").json()["status"] == "done"
+    assert len(api.get_store().planned_runs(day)) == 2
+    assert client.post(f"/api/coach/actions/{cards[1]['id']}/dismiss").json()["status"] == "dismissed"
+    assert api.get_store().planned_runs(day)[0].day == day + timedelta(days=2)
+    msgs = client.get("/api/coach/chat").json()["messages"]
+    assert [c["status"] for c in msgs[-1]["actions"]] == ["done", "dismissed"]
+
+
+def test_action_numbers_may_be_quoted_but_not_invented_elsewhere():
+    reply = {"answer": "Added 6 mi with 300 ft up; your normal is 361.", "used": [],
+             "actions": [{"kind": "schedule_run", "day": "2026-10-15", "run_kind": "easy", "miles": 6, "gain_ft": 300,
+                          "minutes": None, "run_id": None, "note": None}]}
+    assert coach.check(reply, PACKET, "chat") == []
+    assert coach.check(reply | {"answer": "Added 83 mi."}, PACKET, "chat") == ["These numbers are not in the data: 83."]

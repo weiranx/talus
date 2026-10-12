@@ -11,7 +11,7 @@ const SUGGESTIONS = [
   "How have my miles and vert trended lately?",
   "What should I focus on this week?",
   "Am I doing enough easy running?",
-  "How did my last long run go?",
+  "Schedule a hill session for this week",
 ];
 
 // A chat with the coach about anything in your training, not only the plan. It shares one

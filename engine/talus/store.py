@@ -144,6 +144,17 @@ CREATE TABLE IF NOT EXISTS chat (
     source TEXT,
     log_id INTEGER
 );
+CREATE TABLE IF NOT EXISTS coach_action (
+    id INTEGER PRIMARY KEY,
+    chat_id INTEGER,
+    created_at TEXT NOT NULL,
+    kind TEXT NOT NULL,
+    payload TEXT NOT NULL,
+    summary TEXT NOT NULL,
+    status TEXT NOT NULL,  -- proposed, running, done, dismissed, failed
+    result TEXT,
+    done_at TEXT
+);
 CREATE TABLE IF NOT EXISTS activity_infer (
     activity_id INTEGER PRIMARY KEY,
     version TEXT NOT NULL,
@@ -585,6 +596,38 @@ class Store:
     @_writes
     def clear_chat(self) -> None:
         self.db.execute("DELETE FROM chat")
+        self.db.execute("DELETE FROM coach_action WHERE status = 'proposed'")
+
+    # Actions the coach proposed in chat. Each runs only when the athlete confirms it; the row is
+    # the log of what was proposed, and what came of it.
+    @_writes
+    def add_action(self, chat_id: int, kind: str, payload: dict, summary: str) -> int:
+        cur = self.db.execute("INSERT INTO coach_action (chat_id, created_at, kind, payload, summary, status)"
+                              " VALUES (?, ?, ?, ?, ?, 'proposed')",
+                              (chat_id, datetime.now().isoformat(timespec="seconds"), kind, json.dumps(payload), summary))
+        return cur.lastrowid
+
+    def action(self, action_id: int) -> dict | None:
+        r = self.db.execute("SELECT * FROM coach_action WHERE id = ?", (action_id,)).fetchone()
+        return None if r is None else dict(r) | {"payload": json.loads(r["payload"])}
+
+    def actions_for(self, chat_ids: list[int]) -> list[dict]:
+        if not chat_ids:
+            return []
+        rows = self.db.execute(f"SELECT * FROM coach_action WHERE chat_id IN ({','.join('?' * len(chat_ids))}) ORDER BY id",
+                               chat_ids).fetchall()
+        return [dict(r) | {"payload": json.loads(r["payload"])} for r in rows]
+
+    @_writes
+    def claim_action(self, action_id: int, status: str = "running") -> bool:
+        """Take a proposed action off the table once: a second tap on the same card does nothing."""
+        return self.db.execute("UPDATE coach_action SET status = ?, done_at = ? WHERE id = ? AND status = 'proposed'",
+                               (status, datetime.now().isoformat(timespec="seconds"), action_id)).rowcount == 1
+
+    @_writes
+    def finish_action(self, action_id: int, status: str, result: str) -> None:
+        self.db.execute("UPDATE coach_action SET status = ?, result = ?, done_at = ? WHERE id = ?",
+                        (status, result, datetime.now().isoformat(timespec="seconds"), action_id))
 
     # Scheduled runs the athlete set on the calendar
     def planned_runs(self, since: date | None = None, until: date | None = None) -> list[PlannedRun]:

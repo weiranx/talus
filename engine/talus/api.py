@@ -1455,7 +1455,7 @@ class ChatIn(BaseModel):
 
 @app.get("/api/coach/chat")
 def get_chat() -> dict:
-    return {"messages": _chat_costs(get_store().chat())}
+    return {"messages": _chat_costs(_with_actions(get_store().chat()))}
 
 
 @app.delete("/api/coach/chat")
@@ -1492,11 +1492,186 @@ def post_chat(body: ChatIn) -> dict:
     packet = coach.chat_packet(question, history, t, plan_ctx, now if plan_ctx else None, sessions,
                                [a for a in acts if a["day"] >= (day - timedelta(days=13)).isoformat()], day, acts)
     _noted(store, packet)
+    packet |= _action_context(store, day)
     store.add_chat("athlete", question)
-    out = _coach(store, "chat", "chat", packet, {"answer": coach.CHAT_FALLBACK, "used": []}, False)
+    out = _coach(store, "chat", "chat", packet, {"answer": coach.CHAT_FALLBACK, "used": [], "actions": []}, False)
     answer = CHAT_UNAVAILABLE.get(out["fallback_reason"] or "", out["reply"]["answer"])
-    store.add_chat("coach", answer, out["source"], out["log_id"])
-    return {"messages": _chat_costs(store.chat()), "source": out["source"], "fallback_reason": out["fallback_reason"]}
+    chat_id = store.add_chat("coach", answer, out["source"], out["log_id"])
+    if out["source"] == "coach":
+        for raw in (out["reply"].get("actions") or [])[:coach.MAX_ACTIONS]:
+            if (p := _proposal(store, raw, day)) is not None:
+                store.add_action(chat_id, *p)
+    return {"messages": _chat_costs(_with_actions(store.chat())), "source": out["source"],
+            "fallback_reason": out["fallback_reason"]}
+
+
+# Actions the coach can take from chat. The coach proposes; the engine checks each proposal
+# against the athlete's data and turns it into a card; nothing runs until the athlete confirms it.
+
+def _action_context(store: Store, day: date) -> dict:
+    """What the coach needs to propose actions: the athlete's own scheduled runs (with the ids it
+    may move or delete), the suggested heart-rate thresholds when ready, and whether a sync can
+    run from here."""
+    runs = [{"run_id": r.id, "day": r.day.isoformat(), "kind": r.kind, "distance_mi": round(r.miles, 1),
+             "gain_ft": round(r.gain_ft), "minutes": None if r.minutes is None else round(r.minutes)}
+            for r in store.planned_runs(day, day + timedelta(days=28))]
+    inf = _suggested_thresholds(store)
+    return {"scheduled_runs": runs, "suggested_thresholds": inf,
+            "can_sync": store.settings().get("sync_method", "intervals") == "intervals"
+                        and _intervals_credential() is not None}
+
+
+def _suggested_thresholds(store: Store) -> dict | None:
+    """talus infer's AeT, AnT and max when all three are ready and rise in order from resting."""
+    th = store.thresholds()
+    try:
+        inf = _inferred_thresholds(store)
+    except Exception:
+        return None
+    if th is None or not inf or inf.get("status") != "ready" or not all(k in inf for k in ("aet", "ant", "max")):
+        return None
+    v = {k: round(inf[k]["value"]) for k in ("aet", "ant", "max")}
+    if not th.resting < v["aet"] < v["ant"] <= v["max"]:
+        return None
+    return v | {"current": {"aet": round(th.aet), "ant": round(th.ant), "max": round(th.max)}}
+
+
+def _day_text(d: date) -> str:
+    return f"{d:%a}, {d:%b} {d.day}"
+
+
+def _run_text(kind: str, miles: float, gain: float, minutes: float | None) -> str:
+    size = [f"{miles:.1f} mi"] if miles else []
+    if gain:
+        size.append(f"{gain:,.0f} ft up")
+    if minutes:
+        size.append(f"{minutes:.0f} min")
+    return f"{schedule.KINDS.get(kind, 'Run')}" + (f" ({', '.join(size)})" if size else "")
+
+
+def _proposal(store: Store, raw: dict, day: date) -> tuple[str, dict, str] | None:
+    """A proposed action as (kind, payload, summary), or None when it doesn't check out."""
+    kind = raw.get("kind")
+
+    def when(v) -> date | None:
+        try:
+            d = date.fromisoformat(v or "")
+        except ValueError:
+            return None
+        return d if day <= d <= day + timedelta(days=schedule.MAX_AHEAD_DAYS) else None
+
+    def own(run_id) -> schedule.PlannedRun | None:
+        return next((r for r in store.planned_runs(day) if r.id == run_id), None)
+
+    if kind == "schedule_run":
+        d, rk = when(raw.get("day")), raw.get("run_kind")
+        miles, gain, minutes = raw.get("miles") or 0, raw.get("gain_ft") or 0, raw.get("minutes")
+        if d is None or rk not in schedule.KINDS or not (0 <= miles <= 100 and 0 <= gain <= 30000):
+            return None
+        if not miles and not minutes or minutes is not None and not 0 < minutes <= 2880:
+            return None
+        payload = {"day": d.isoformat(), "kind": rk, "miles": round(miles, 1), "gain_ft": round(gain),
+                   "minutes": None if minutes is None else round(minutes)}
+        return kind, payload, f"Add {_run_text(rk, miles, gain, minutes)} on {_day_text(d)}"
+    if kind in ("move_run", "delete_run"):
+        r = own(raw.get("run_id"))
+        if r is None:
+            return None
+        what = f"your {_run_text(r.kind, r.miles, r.gain_ft, r.minutes)} on {_day_text(r.day)}"
+        if kind == "delete_run":
+            return kind, {"run_id": r.id}, f"Remove {what}"
+        d = when(raw.get("day"))
+        if d is None or d == r.day:
+            return None
+        return kind, {"run_id": r.id, "day": d.isoformat()}, f"Move {what} to {_day_text(d)}"
+    if kind == "set_note":
+        note = (raw.get("note") or "").strip()
+        if not note or len(note) > coach.NOTE_MAX:
+            return None
+        return kind, {"note": note}, f"Update your training goals to: \u201c{note}\u201d"
+    if kind == "sync":
+        if store.settings().get("sync_method", "intervals") != "intervals" or _intervals_credential() is None:
+            return None
+        return kind, {}, "Sync new activities from intervals.icu"
+    if kind == "apply_thresholds":
+        v = _suggested_thresholds(store)
+        if v is None:
+            return None
+        c = v["current"]
+        return kind, {k: v[k] for k in ("aet", "ant", "max")}, (
+            f"Set heart-rate thresholds from your runs: AeT {c['aet']} to {v['aet']}, AnT {c['ant']} to {v['ant']}, "
+            f"max {c['max']} to {v['max']} bpm (rescores every activity)")
+    return None
+
+
+def _with_actions(messages: list[dict]) -> list[dict]:
+    """Each coach message with the action cards it proposed."""
+    by_chat: dict[int, list[dict]] = {}
+    for a in get_store().actions_for([m["id"] for m in messages if m["role"] == "coach"]):
+        by_chat.setdefault(a["chat_id"], []).append(
+            {k: a[k] for k in ("id", "kind", "summary", "status", "result")})
+    for m in messages:
+        m["actions"] = by_chat.get(m["id"], [])
+    return messages
+
+
+@app.post("/api/coach/actions/{action_id}/confirm")
+def confirm_action(action_id: int, background: BackgroundTasks) -> dict:
+    store = get_store()
+    a = store.action(action_id)
+    if a is None:
+        raise HTTPException(404, "No such action.")
+    if not store.claim_action(action_id):
+        return {"id": action_id, "status": a["status"], "result": a["result"]}
+    p = a["payload"]
+    try:
+        if a["kind"] == "schedule_run":
+            store.save_planned_run(schedule.PlannedRun(date.fromisoformat(p["day"]), p["kind"], p["miles"],
+                                                       p["gain_ft"], p["gain_ft"], p["minutes"]))
+            result = "Added to your calendar."
+        elif a["kind"] in ("move_run", "delete_run"):
+            r = next((r for r in store.planned_runs() if r.id == p["run_id"]), None)
+            if r is None:
+                raise ValueError("That run is no longer on your calendar.")
+            if a["kind"] == "delete_run":
+                store.delete_planned_run(r.id)
+                result = "Removed from your calendar."
+            else:
+                r.day = date.fromisoformat(p["day"])
+                store.save_planned_run(r)
+                result = f"Moved to {_day_text(r.day)}."
+        elif a["kind"] == "set_note":
+            store.save_settings({"coach_note": p["note"]})
+            result = "Training goals updated."
+        elif a["kind"] == "sync":
+            out = sync_now(SyncIn(), background)
+            if out.get("error"):
+                raise ValueError("The sync failed. Try Sync now under Settings.")
+            result = f"Synced: {out.get('saved', 0)} new {'activity' if out.get('saved') == 1 else 'activities'}."
+        elif a["kind"] == "apply_thresholds":
+            th = store.thresholds()
+            put_thresholds(ThresholdsIn(resting=th.resting, aet=p["aet"], ant=p["ant"], max=p["max"], sex=th.sex,
+                                        threshold_pace_s_per_mi=th.threshold_pace_s_per_mi))
+            result = "Thresholds updated and every activity rescored."
+        else:
+            raise ValueError("Unknown action.")
+    except Exception as e:  # a card never stays stuck on "running"
+        msg = e.detail if isinstance(e, HTTPException) else str(e) if isinstance(e, ValueError) else "That didn't work. Try again."
+        store.finish_action(action_id, "failed", msg)
+        return {"id": action_id, "status": "failed", "result": msg}
+    store.finish_action(action_id, "done", result)
+    return {"id": action_id, "status": "done", "result": result}
+
+
+@app.post("/api/coach/actions/{action_id}/dismiss")
+def dismiss_action(action_id: int) -> dict:
+    store = get_store()
+    if store.action(action_id) is None:
+        raise HTTPException(404, "No such action.")
+    if store.claim_action(action_id, "dismissed"):
+        store.finish_action(action_id, "dismissed", "Dismissed.")
+    a = store.action(action_id)
+    return {"id": action_id, "status": a["status"], "result": a["result"]}
 
 
 # Settings. Keys stay in .env: the engine reports whether each one is set, never its value.

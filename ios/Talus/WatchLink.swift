@@ -37,10 +37,6 @@ final class WatchLink: NSObject {
     private var sendChar: CBCharacteristic?
     private var recvChar: CBCharacteristic?
     private var gfdiHandle: Int?
-    /// The ML characteristic pairs the watch offers (receive, send). Garmin Connect may hold the
-    /// first while Talus shares its link, so a refused registration retries on the next pair.
-    private var pairs: [(CBCharacteristic, CBCharacteristic)] = []
-    private var pairIndex = 0
     private var registerAttempts = 0
     private var decoder = GarminWire.CobsDecoder()
     private var writeQueue: [Data] = []
@@ -81,7 +77,6 @@ final class WatchLink: NSObject {
             try await withCheckedThrowingContinuation { poweredWaiter = $0; checkPower(c) }
         }
         registerAttempts = 0
-        GarminWire.clientID = 2
         return try await withCheckedThrowingContinuation { cont in
             connectWaiter = cont
             arm(30, "connecting")
@@ -247,11 +242,13 @@ final class WatchLink: NSObject {
             rawWrite(GarminWire.register(service: GarminWire.gfdiService, reliable: 0))
         case .registered(let svc, let status, let h, let reliable):
             guard status == 0 else {
-                if svc == GarminWire.gfdiService, registerAttempts < 3 {
+                if svc == GarminWire.gfdiService, registerAttempts < 2 {
                     retryRegister(status)
                     return
                 }
-                failAll(LinkError.refused("The watch refused Talus's request (service \(svc), status \(status)). Try again."))
+                failAll(LinkError.refused(svc == GarminWire.gfdiService
+                    ? "The watch wouldn't open its sync service (status \(status)). Restart the watch, let Garmin Connect reconnect, then try again."
+                    : "The watch refused Talus's request (service \(svc), status \(status)). Try again."))
                 return
             }
             event("Watch opened service 0x\(String(svc, radix: 16)) on handle \(h)\(reliable != 0 ? " (reliable)" : "")")
@@ -264,33 +261,18 @@ final class WatchLink: NSObject {
         }
     }
 
-    /// The watch refused the sync service. Try again on the next characteristic pair (if any) with
-    /// a fresh client id, after a short wait in case Garmin Connect is mid-sync.
+    /// The watch refused the sync service, which it does while an earlier registration is still
+    /// open. Close Talus's handles and ask again on the same channel after a pause; switching to
+    /// another channel made the watch drop the whole link.
     private func retryRegister(_ status: Int) {
         registerAttempts += 1
-        GarminWire.clientID = 2 + UInt64(registerAttempts)
-        event("The watch refused the sync service (status \(status)), trying again (\(registerAttempts) of 3)")
+        event("The watch refused the sync service (status \(status)), trying again (\(registerAttempts) of 2)")
         keepAlive()
         Task { [weak self] in
-            try? await Task.sleep(for: .seconds(Double(self?.registerAttempts ?? 1)))
-            guard let self, let p = self.peripheral, self.connectWaiter != nil else { return }
-            if self.pairs.count > 1 {
-                if let old = self.recvChar { p.setNotifyValue(false, for: old) }
-                self.pairIndex = (self.pairIndex + 1) % self.pairs.count
-                self.usePair(p)
-            } else {
-                self.rawWrite(GarminWire.closeAll())
-            }
+            try? await Task.sleep(for: .seconds(3 * Double(self?.registerAttempts ?? 1)))
+            guard let self, self.peripheral != nil, self.connectWaiter != nil else { return }
+            self.rawWrite(GarminWire.closeAll())
         }
-    }
-
-    private func usePair(_ p: CBPeripheral) {
-        let (rc, wc) = pairs[pairIndex]
-        recvChar = rc; sendChar = wc
-        decoder = GarminWire.CobsDecoder()
-        gfdiHandle = nil; writeQueue = []; writing = false
-        event("Using channel \(rc.uuid.uuidString.prefix(8))")
-        p.setNotifyValue(true, for: rc)
     }
 
     private func gfdi(_ frame: Data) {
@@ -484,20 +466,20 @@ extension WatchLink: @MainActor CBCentralManagerDelegate, @MainActor CBPeriphera
 
     func peripheral(_ p: CBPeripheral, didDiscoverCharacteristicsFor s: CBService, error: Error?) {
         let chars = s.characteristics ?? []
-        pairs = (0x2810...0x2814).compactMap { i in
+        for i in 0x2810...0x2814 {
             let r = CBUUID(string: GarminWire.mlUUID(i)), w = CBUUID(string: GarminWire.mlUUID(i + 0x10))
-            guard let rc = chars.first(where: { $0.uuid == r }), let wc = chars.first(where: { $0.uuid == w }) else { return nil }
-            return (rc, wc)
+            if let rc = chars.first(where: { $0.uuid == r }), let wc = chars.first(where: { $0.uuid == w }) {
+                recvChar = rc; sendChar = wc
+                p.setNotifyValue(true, for: rc)
+                return
+            }
         }
-        guard !pairs.isEmpty else { failAll(LinkError.noGarminService); return }
-        pairIndex = 0
-        usePair(p)
+        failAll(LinkError.noGarminService)
     }
 
     func peripheral(_ p: CBPeripheral, didUpdateNotificationStateFor ch: CBCharacteristic, error: Error?) {
         let why = error?.localizedDescription
         if let why { failAll(LinkError.disconnected(why)); return }
-        guard ch == recvChar, ch.isNotifying else { return } // a pair Talus just let go of
         event("Opening Garmin's sync service")
         rawWrite(GarminWire.closeAll())
     }

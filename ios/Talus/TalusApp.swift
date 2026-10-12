@@ -8,6 +8,10 @@ struct TalusApp: App {
     @StateObject private var watch = WatchSync()
     @AppStorage("appearance") private var appearance = "system"
 
+    #if DEBUG
+    private static var ranLaunchTest = false
+    #endif
+
     var body: some Scene {
         WindowGroup {
             RootView()
@@ -21,6 +25,9 @@ struct TalusApp: App {
                 // `-TalusWatchDryRun N` (launch argument): pull N files off the watch on launch and
                 // print each step, without the engine. For testing from Xcode or devicectl --console.
                 .task {
+                    // The view can reappear (after a Bluetooth drop, say); test the watch once per launch.
+                    guard !Self.ranLaunchTest else { return }
+                    Self.ranLaunchTest = true
                     let n = UserDefaults.standard.integer(forKey: "TalusWatchDryRun")
                     if n > 0 { await watch.dryRun(limit: n) }
                     if UserDefaults.standard.bool(forKey: "TalusWatchProbe") { await watch.probe() }

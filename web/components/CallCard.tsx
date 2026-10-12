@@ -11,7 +11,7 @@ export default function CallCard({ call, note, logId, feedback, planned, pending
   call: Call; note: string; logId?: number | null; feedback?: number | null; planned?: boolean; pending?: boolean; cost?: Cost | null;
 }) {
   return (
-    <section className="card dark" style={{ padding: "22px 24px 18px" }}>
+    <section className="card dark call-card" style={{ padding: "22px 24px 18px" }}>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
         <h2 className="label">Today&apos;s call</h2>
         <Pill tone={CALL_TONE[call.call]}>{CALL_TEXT[call.call]}</Pill>

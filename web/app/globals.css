@@ -45,7 +45,9 @@
   --highlight: #f0b25a;
   --map-icon: none;
   color-scheme: light;
-  --mono: var(--font-mono), ui-monospace, monospace;
+  --mono: var(--font-sans), system-ui, sans-serif;
+  --code: var(--font-mono), ui-monospace, monospace;
+  --card-shadow: 0 1px 2px rgba(21, 33, 29, 0.05), 0 4px 16px rgba(21, 33, 29, 0.04);
 }
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) {
@@ -90,6 +92,8 @@
     --skel-hi: #33403b;
     --hover-bg: rgba(228, 236, 232, 0.06);
     --shadow: rgba(0, 0, 0, 0.5);
+  --card-shadow: none;
+    --card-shadow: none;
     --highlight: #f0b25a;
     --map-icon: invert(0.9);
     color-scheme: dark;
@@ -137,6 +141,7 @@
   --skel-hi: #33403b;
   --hover-bg: rgba(228, 236, 232, 0.06);
   --shadow: rgba(0, 0, 0, 0.5);
+  --card-shadow: none;
   --highlight: #f0b25a;
   --map-icon: invert(0.9);
   color-scheme: dark;
@@ -169,19 +174,19 @@ button { font-family: inherit; }
 
 .page-head { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: flex-end; gap: 8px; }
 .eyebrow { font-size: 13px; font-weight: 500; color: var(--muted); }
-.title { font-size: 30px; font-weight: 700; letter-spacing: -0.02em; }
+.title { font-size: 32px; font-weight: 700; letter-spacing: -0.025em; line-height: 1.15; }
 .row { display: flex; flex-wrap: wrap; gap: 16px; }
-.card { background: var(--surface); border-radius: 16px; padding: 18px 20px; display: flex; flex-direction: column; gap: 12px; min-width: 0; }
+.card { background: var(--surface); border: 1px solid var(--line); box-shadow: var(--card-shadow); border-radius: 18px; padding: 20px 22px; display: flex; flex-direction: column; gap: 12px; min-width: 0; }
 .card.dark { background: var(--feature); color: var(--on-feature); }
-.label { font-size: 12px; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); }
+.label { font-size: 11.5px; font-weight: 700; letter-spacing: 0.09em; text-transform: uppercase; color: var(--muted); }
 .dark .label, .dark .muted { color: var(--feature-muted); }
 .muted { color: var(--muted); font-size: 13px; }
-.mono { font-family: var(--mono); }
+.mono { font-family: var(--mono); font-variant-numeric: tabular-nums; font-feature-settings: "tnum"; }
 .divider { height: 1px; background: var(--line); }
 .swatch { width: 12px; height: 12px; border-radius: 3px; flex-shrink: 0; }
 .big { font-size: 20px; font-weight: 600; letter-spacing: -0.01em; }
 
-.pill { font-size: 12px; font-weight: 600; padding: 4px 10px; border-radius: 999px; white-space: nowrap; }
+.pill { font-size: 12px; font-weight: 600; padding: 4px 10px; border-radius: 999px; white-space: nowrap; box-shadow: inset 0 0 0 1px color-mix(in srgb, currentColor 14%, transparent); }
 .pill.good { background: var(--good-bg); color: var(--good-ink); }
 .pill.warn { background: var(--warn-bg); color: var(--warn-ink); }
 .pill.bad { background: var(--bad-bg); color: var(--bad-ink); }
@@ -190,12 +195,16 @@ button { font-family: inherit; }
 .btn { min-height: 44px; padding: 0 20px; border-radius: 12px; border: 0; background: var(--strong); color: var(--on-strong); font-size: 15px; font-weight: 600; cursor: pointer; }
 .btn.light { background: var(--field); color: var(--ink); }
 .btn:disabled { opacity: 0.5; cursor: default; }
+.btn { transition: transform 0.12s ease, box-shadow 0.12s ease, background-color 0.12s ease; }
+.btn:not(:disabled):hover { box-shadow: 0 2px 10px var(--shadow); }
+.btn:not(:disabled):active { transform: translateY(1px); }
+.btn.light:not(:disabled):hover { background: var(--hover-bg); box-shadow: none; }
 
 .table-wrap { overflow-x: auto; }
 table { width: 100%; border-collapse: collapse; font-size: 14px; }
 th { text-align: left; font-size: 12px; font-weight: 500; color: var(--muted); padding: 0 8px 6px 0; white-space: nowrap; }
 td { padding: 9px 8px 9px 0; border-top: 1px solid var(--line); white-space: nowrap; }
-th.num, td.num { text-align: right; font-family: var(--mono); }
+th.num, td.num { text-align: right; font-family: var(--mono); font-variant-numeric: tabular-nums; }
 th.num { font-family: inherit; }
 td a { text-decoration: none; font-weight: 500; }
 td a:hover { text-decoration: underline; }
@@ -211,10 +220,12 @@ tr.hl td { background: var(--row-hl); }
 .seg-tabs a[aria-current="true"] { background: var(--raised); font-weight: 600; }
 
 .stat-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 12px; }
-.stat .v { font-size: 22px; font-weight: 600; font-family: var(--mono); letter-spacing: -0.02em; }
+.stat .v { font-size: 24px; font-weight: 700; font-family: var(--mono); font-variant-numeric: tabular-nums; letter-spacing: -0.02em; }
 
 .scale { display: flex; gap: 6px; flex-wrap: wrap; }
 .scale button { min-width: 44px; min-height: 44px; border-radius: 10px; border: 1px solid var(--line); background: var(--field); font-size: 15px; font-weight: 600; cursor: pointer; color: var(--ink); }
+.scale button { transition: border-color 0.12s ease, background-color 0.12s ease; }
+.scale button:hover { border-color: var(--line-strong); }
 .scale button[aria-pressed="true"] { background: var(--strong); color: var(--on-strong); border-color: var(--strong); }
 
 .btn.outline { border: 1px solid var(--line); }
@@ -231,7 +242,7 @@ a.btn { display: inline-flex; align-items: center; text-decoration: none; }
 .kv { display: grid; grid-template-columns: max-content 1fr; gap: 8px 16px; margin: 0; }
 .kv dt { color: var(--muted); font-size: 13px; padding-top: 1px; }
 .kv dd { margin: 0; min-width: 0; overflow-wrap: anywhere; }
-code { font-family: var(--mono); font-size: 13px; background: var(--bg); padding: 1px 5px; border-radius: 4px; }
+code { font-family: var(--code); font-size: 13px; background: var(--bg); padding: 1px 5px; border-radius: 4px; }
 .zone-list { display: flex; flex-direction: column; border-top: 1px solid var(--line); }
 .zone-row { display: flex; align-items: center; gap: 10px; padding: 9px 0; border-bottom: 1px solid var(--line); }
 .zone-start input { width: 72px; min-height: 40px; border: 1px solid var(--line); border-radius: 10px; padding: 0 10px; font: inherit; font-family: var(--mono); text-align: right; color: var(--ink); background: var(--field); }
@@ -248,7 +259,7 @@ code { font-family: var(--mono); font-size: 13px; background: var(--bg); padding
 .error-text { color: var(--bad-ink); font-size: 13px; }
 
 .tip { background: var(--raised); color: var(--ink); border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; font-size: 12px; box-shadow: 0 4px 12px var(--shadow); }
-.empty { background: var(--surface); border-radius: 16px; padding: 24px; }
+.empty { background: var(--surface); border: 1px solid var(--line); box-shadow: var(--card-shadow); border-radius: 18px; padding: 24px; }
 .empty code { background: var(--bg); padding: 2px 6px; border-radius: 4px; }
 .map { height: 360px; border-radius: 12px; overflow: hidden; background: var(--bg); }
 
@@ -362,3 +373,24 @@ code { font-family: var(--mono); font-size: 13px; background: var(--bg); padding
   .act-table { display: none; }
   .act-list { display: flex; flex-direction: column; }
 }
+
+/* Today's call: the feature card, with a faint ridge line behind the text. */
+.call-card { position: relative; overflow: hidden; border: 0;
+  background: radial-gradient(120% 140% at 100% 0%, color-mix(in srgb, var(--climb) 22%, transparent) 0%, transparent 55%), var(--feature); }
+.call-card::after { content: ""; position: absolute; right: -10px; bottom: -6px; width: 260px; height: 90px; pointer-events: none; opacity: 0.09;
+  background: var(--on-feature); -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 260 90'%3E%3Cpath d='M0 90 L52 38 L78 58 L124 8 L160 44 L184 28 L260 90Z'/%3E%3C/svg%3E") no-repeat bottom right / contain;
+  mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 260 90'%3E%3Cpath d='M0 90 L52 38 L78 58 L124 8 L160 44 L184 28 L260 90Z'/%3E%3C/svg%3E") no-repeat bottom right / contain; }
+.call-card > * { position: relative; z-index: 1; }
+
+/* Ledger cards carry their color along the top edge; the one limiting the legs gets a full ring. */
+.ledger-card { position: relative; overflow: hidden; }
+.ledger-card::before { content: ""; position: absolute; inset: 0 0 auto; height: 3px; background: var(--accent); }
+.ledger-card.limiter { box-shadow: 0 0 0 2px var(--accent), var(--card-shadow); border-color: transparent; }
+
+/* Readiness ring: the score as a share of a circle, in the call's color. */
+.score-ring { position: relative; width: 84px; height: 84px; flex-shrink: 0; display: grid; place-items: center; }
+.score-ring svg { position: absolute; inset: 0; transform: rotate(-90deg); }
+.score-ring circle { fill: none; stroke-width: 7; }
+.score-ring-track { stroke: var(--line); }
+.score-ring-fill { stroke: var(--ring); stroke-linecap: round; stroke-dasharray: calc(var(--pct) * 1) 100; }
+.score-ring .mono { font-size: 28px; font-weight: 700; letter-spacing: -0.03em; }

@@ -45,6 +45,7 @@ FITNESS_ONLY = ("This verdict covers fitness only. Weather, snow, route-finding 
 DEFAULT_PACE = 15.0  # min per effort mile, until there are enough foot days to learn it
 FADE_FROM_H = 3.0
 FADE_PER_H = 0.02  # 2% slower for every hour past three
+FADE_MAX = 0.20  # at most 20% slower: past about 13 h the pace holds (hundreds would otherwise read 50% slower)
 TIME_RANGE = (0.85, 1.10)
 
 # Plan shape
@@ -204,7 +205,7 @@ def pace(acts: list[dict], day: date) -> dict:
 
 def estimate_time(effort_mi: float, min_per_effort_mi: float) -> dict:
     base = effort_mi * min_per_effort_mi / 60
-    mid = base * (1 + FADE_PER_H * max(0.0, base - FADE_FROM_H))
+    mid = base * (1 + min(FADE_MAX, FADE_PER_H * max(0.0, base - FADE_FROM_H)))
     return {"low_h": mid * TIME_RANGE[0], "mid_h": mid, "high_h": mid * TIME_RANGE[1]}
 
 

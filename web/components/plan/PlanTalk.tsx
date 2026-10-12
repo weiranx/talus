@@ -10,7 +10,7 @@ type Picks = Record<string, string | string[]>;
 
 const PLACEHOLDER: Record<string, string> = {
   objective: "Baldy 50k on Jan 2, 31 mi, 8,000 ft",
-  draft: "Tell me what to change",
+  draft: "Ask a question, or tell me what to change",
   stuck: "Or tell me what to change",
 };
 

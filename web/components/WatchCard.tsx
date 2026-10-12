@@ -53,7 +53,8 @@ export default function WatchCard({ lastSync }: { lastSync: string | null }) {
       if (todo.length) say(true, `Pulled ${todo.length} ${todo.length === 1 ? "file" : "files"}: ${added} new ${added === 1 ? "activity" : "activities"}.`);
     } catch (e) {
       const msg = (e as Error).message;
-      say(false, (e as Error).name === "NotFoundError" ? "No watch chosen." : msg);
+      say(false, (e as Error).name === "NotFoundError"
+        ? "No watch chosen. If it wasn't in the list, your phone is holding its connection: turn Bluetooth off in the phone's Settings (not Control Center) and try again." : msg);
     } finally {
       session.disconnect();
       setProgress(null);

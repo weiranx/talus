@@ -128,6 +128,79 @@ final class WatchSync: ObservableObject {
             note("Dry run stopped: \(error.localizedDescription)")
         }
     }
+
+    /// Pulls the newest file of every kind except activities, saves it under Documents/watch-probe
+    /// and prints which FIT messages it holds, to find where a watch keeps sleep and HRV.
+    func probe(skipping skip: Set<String> = ["FIT_TYPE_4"]) async {
+        let link = WatchLink()
+        link.onEvent = { [weak self] in self?.note($0) }
+        defer { link.disconnect() }
+        let dir = URL.documentsDirectory.appending(path: "watch-probe")
+        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        do {
+            _ = try await link.connect()
+            let files = try await link.listFiles()
+            let newest = Dictionary(grouping: files.filter { $0.size > 0 && !skip.contains($0.kind) }, by: \.kind)
+                .compactMap { $0.value.max { $0.timestamp < $1.timestamp } }
+                .sorted { $0.size < $1.size }
+            note("Probing \(newest.count) kinds")
+            for f in newest {
+                do {
+                    let z = try await link.download(f) { _ in }
+                    let data = (try? GarminWire.inflate(z, expectedSize: f.size)) ?? z
+                    try? data.write(to: dir.appending(path: f.fileName))
+                    let msgs = GarminWire.isFit(data) ? Self.fitMessages(data).map { "\($0.key):\($0.value)" }.joined(separator: " ") : "not FIT"
+                    note("PROBE \(f.kind) \(f.date.map { $0.formatted(.iso8601) } ?? "-") \(data.count)B msgs[\(msgs)]")
+                } catch let e as WatchLink.LinkError {
+                    switch e {
+                    case .refused, .timeout: note("PROBE \(f.kind) \(f.size)B failed: \(e.localizedDescription)"); continue
+                    default: throw e
+                    }
+                }
+            }
+            note("Probe done")
+        } catch {
+            note("Probe stopped: \(error.localizedDescription)")
+        }
+    }
+
+    /// Global FIT message numbers in a file and how many data records each has.
+    static func fitMessages(_ d: Data) -> [Int: Int] {
+        let b = [UInt8](d)
+        guard b.count > 14 else { return [:] }
+        let headerSize = Int(b[0])
+        let end = min(b.count, headerSize + (Int(b[4]) | Int(b[5]) << 8 | Int(b[6]) << 16 | Int(b[7]) << 24))
+        var p = headerSize
+        var defs: [Int: (global: Int, size: Int)] = [:]
+        var counts: [Int: Int] = [:]
+        while p < end {
+            let h = Int(b[p]); p += 1
+            if h & 0x80 != 0 { // compressed timestamp data message
+                guard let def = defs[(h >> 5) & 0x03] else { break }
+                counts[def.global, default: 0] += 1; p += def.size
+            } else if h & 0x40 != 0 { // definition
+                guard p + 5 <= end else { break }
+                let big = b[p + 1] == 1
+                let global = big ? Int(b[p + 2]) << 8 | Int(b[p + 3]) : Int(b[p + 2]) | Int(b[p + 3]) << 8
+                let n = Int(b[p + 4]); p += 5
+                guard p + n * 3 <= end else { break }
+                var size = 0
+                for i in 0..<n { size += Int(b[p + i * 3 + 1]) }
+                p += n * 3
+                if h & 0x20 != 0, p < end {
+                    let nd = Int(b[p]); p += 1
+                    guard p + nd * 3 <= end else { break }
+                    for i in 0..<nd { size += Int(b[p + i * 3 + 1]) }
+                    p += nd * 3
+                }
+                defs[h & 0x0F] = (global, size)
+            } else {
+                guard let def = defs[h & 0x0F] else { break }
+                counts[def.global, default: 0] += 1; p += def.size
+            }
+        }
+        return counts
+    }
     #endif
 
     /// Same rule as the web app: health files whenever not yet imported; activities not yet

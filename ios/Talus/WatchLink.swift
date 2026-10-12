@@ -298,7 +298,10 @@ final class WatchLink: NSObject {
         }
         protoChunks[id] = nil
         sendGfdi(GarminWire.ack(type))
-        guard let msg = GarminWire.fileSyncMessage(buf, names: &names) else { return }
+        guard let msg = GarminWire.fileSyncMessage(buf, names: &names) else {
+            event("Protobuf \(type) outside FileSync: Smart fields \(Proto.decode(buf).map(\.0))")
+            return
+        }
         switch msg {
         case .list(let files, let cursor):
             listed += files
@@ -307,6 +310,7 @@ final class WatchLink: NSObject {
             watchdog?.cancel()
             listWaiter?.resume(returning: listed); listWaiter = nil
         case .fileResponse(let status, let handle):
+            event("File response: status \(status), handle \(handle)\(awaitingFileResponse ? "" : " (repeat, ignored)")")
             // The watch repeats this every ~5 s while a transfer runs; reopening restarts it empty.
             guard awaitingFileResponse, pendingFileHandle == nil else { return }
             awaitingFileResponse = false
@@ -320,8 +324,8 @@ final class WatchLink: NSObject {
             rawWrite(GarminWire.register(service: GarminWire.fileService, reliable: 2))
         case .transferStatusRequest:
             sendProtobuf(GarminWire.transferStatusResponse(), type: GarminWire.Msg.protobufResponse.rawValue, requestId: id)
-        case .other:
-            break
+        case .other(let fields):
+            event("FileSync message with fields \(fields)")
         }
     }
 

@@ -23,6 +23,19 @@ struct TalusApp: App {
                 .task {
                     let n = UserDefaults.standard.integer(forKey: "TalusWatchDryRun")
                     if n > 0 { await watch.dryRun(limit: n) }
+                    if UserDefaults.standard.bool(forKey: "TalusWatchProbe") { await watch.probe() }
+                    // `-TalusServer URL -TalusTestEmail E -TalusTestPassword P -TalusWatchSync 1`: sign in
+                    // to a test engine and run the real watch sync, uploads included.
+                    let d = UserDefaults.standard
+                    if d.bool(forKey: "TalusWatchSync") {
+                        if let server = d.string(forKey: "TalusServer") { api.server = server }
+                        if let email = d.string(forKey: "TalusTestEmail"), let pw = d.string(forKey: "TalusTestPassword") {
+                            do { try await api.signIn(email: email, password: pw, create: false) } catch { print("[watch] sign-in failed: \(error.localizedDescription)") }
+                            await session.check(api)
+                        }
+                        await watch.sync(api)
+                        print("[watch] RESULT \(watch.result.map { "\($0.ok ? "ok" : "failed"): \($0.text)" } ?? "none")")
+                    }
                 }
                 #endif
         }

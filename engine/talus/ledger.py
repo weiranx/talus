@@ -173,6 +173,18 @@ FLAG_TEXT = {
 }
 
 
+def week_room(fitness: float, fatigue: float, days: int = FATIGUE_DAYS) -> dict[str, float] | None:
+    """How much load the next `days` can hold, spread evenly: `hold` keeps your normal where it
+    is, `limit` is the most before the last 7 days run RAMP_RATIO above your normal. With even
+    days the ratio moves steadily toward its end value, so checking the last day is enough."""
+    if fitness <= 0:
+        return None
+    a = (1 - 1 / FATIGUE_DAYS) ** days  # what's left of today's fatigue after `days`
+    b = (1 - 1 / FITNESS_DAYS) ** days
+    per_day = (RAMP_RATIO * fitness * b - fatigue * a) / ((1 - a) - RAMP_RATIO * (1 - b))
+    return {"hold": fitness * days, "limit": max(0.0, per_day) * days}
+
+
 def describe_vs_normal(value: float | None) -> str:
     if value is None:
         return "no history yet"

@@ -145,3 +145,17 @@ def test_a_young_span_is_not_seeded_yet():
     assert not ledger.seeded(young)
     assert not ledger.seeded(days({100: {"cardio": 50}}, 141))
     assert ledger.seeded(days({100: {"cardio": 50}}, 142))
+
+
+def test_week_room_limit_lands_exactly_on_the_ramp_line():
+    for fitness, fatigue in ((100, 100), (100, 70), (100, 140)):
+        room = ledger.week_room(fitness, fatigue)
+        assert room["hold"] == fitness * 7
+        fit, fat = float(fitness), float(fatigue)
+        for _ in range(7):
+            fit += (room["limit"] / 7 - fit) / ledger.FITNESS_DAYS
+            fat += (room["limit"] / 7 - fat) / ledger.FATIGUE_DAYS
+        assert fat / fit == pytest.approx(ledger.RAMP_RATIO)
+    # Already far over: even resting all week stays over, so there's no room.
+    assert ledger.week_room(100, 400)["limit"] == 0
+    assert ledger.week_room(0, 10) is None

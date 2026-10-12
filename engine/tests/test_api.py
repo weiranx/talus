@@ -63,6 +63,12 @@ def test_api_end_to_end(tmp_path, monkeypatch):
     # Last week through today's weekday, for comparing the week in progress.
     assert load["last_week_to_date"]["activities"] == date.today().weekday() + 1
     assert load["biggest_days"][0]["gain_ft"] > 2500
+    nxt = load["next_week"]
+    assert (date.fromisoformat(nxt["end"]) - date.fromisoformat(nxt["start"])).days == 6
+    assert set(nxt["room"]) == {"cardio", "distance", "climb", "descent"}
+    climb = nxt["room"]["climb"]
+    assert climb["unit"] == "gain_ft" and 0 < climb["hold"] < climb["limit"]
+    assert nxt["scheduled"]["runs"] == 0 and nxt["scheduled"]["miles"] == 0
     assert abs(load["thresholds"]["aerobic_gap"] - 22 / 172) < 1e-9
 
     acts = client.get("/api/activities").json()

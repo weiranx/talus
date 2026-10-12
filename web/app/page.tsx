@@ -13,15 +13,10 @@ import Sparkline from "@/components/Sparkline";
 import ZoneBar from "@/components/ZoneBar";
 import SetupList from "@/components/onboarding/SetupList";
 import { engine, engineFailed, EngineError } from "@/lib/api";
-import { dayLabel, LEDGER_LABEL, ledgerBadge, ledgerDecimals, ledgerNum, ledgerUnit, mi, n0, stateLabel } from "@/lib/format";
+import { dayLabel, LEDGER_LABEL, ledgerBadge, ledgerDecimals, ledgerNum, ledgerUnit, mi, n0, stateLabel, signedPct } from "@/lib/format";
 import { LEDGERS, type Onboarding, type Today } from "@/lib/types";
 
 export const dynamic = "force-dynamic";
-
-const signedPct = (v: number) => {
-  const p = Math.round(v * 100);
-  return p === 0 ? "0%" : `${p > 0 ? "+" : "−"}${Math.abs(p)}%`;
-};
 
 export default async function TodayPage() {
   // Both at once: setup status decides whether Today shows at all, and Today is the slow one.

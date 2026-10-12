@@ -116,6 +116,16 @@ export interface LoadData {
   thresholds: Thresholds | null;
   history: { since: string | null; gap: { from: string; to: string } | null };
   projection: Projection;
+  next_week: NextWeek;
+}
+
+// The next 7 days: what's scheduled, and per ledger the total that holds your normal and the most
+// before ramping too fast, spread evenly, in hours, miles or feet. Ledgers still building have no room.
+export interface NextWeek {
+  start: string;
+  end: string;
+  scheduled: { runs: number; miles: number; gain_ft: number; loss_ft: number; hours: number | null };
+  room: Partial<Record<Ledger, { unit: "hours" | "miles" | "gain_ft" | "loss_ft"; hold: number; limit: number }>>;
 }
 
 /** Everything done in one Monday week, or part of one. */

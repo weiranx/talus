@@ -35,8 +35,8 @@ export default function WatchCard({ lastSync }: { lastSync: string | null }) {
       const files = await session.list();
       // Activities from the last two weeks, or from two days before the last sync if that is
       // earlier. Files already imported are skipped by key, so an interrupted sync resumes.
-      const window = Date.now() - FIRST_SYNC_DAYS * 86400e3;
-      const since = new Date(state.last_sync ? Math.min(window, new Date(state.last_sync).getTime() - 2 * 86400e3) : window);
+      const twoWeeks = Date.now() - FIRST_SYNC_DAYS * 86400e3;
+      const since = new Date(state.last_sync ? Math.min(twoWeeks, new Date(state.last_sync).getTime() - 2 * 86400e3) : twoWeeks);
       const todo = pick(files, new Set(state.files), since);
       if (!todo.length) say(true, `${files.length} files on the watch, nothing new.`);
       let added = 0;

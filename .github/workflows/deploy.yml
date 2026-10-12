@@ -35,10 +35,10 @@ jobs:
           install -m 700 -d ~/.ssh
           printf '%s\n' "$SSH_KEY" > ~/.ssh/deploy_key && chmod 600 ~/.ssh/deploy_key
           printf '%s\n' "$KNOWN_HOSTS" > ~/.ssh/known_hosts
-          git archive --format=tar HEAD engine web deploy \
+          git archive --format=tar HEAD engine deploy \
             | ssh -i ~/.ssh/deploy_key -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes "root@$HOST" "deploy $GITHUB_SHA"
-      - name: Check the site
-        run: curl -fsS -o /dev/null -w "%{http_code}\n" https://talus.weiranxiong.com/login
+      - name: Check the engine
+        run: curl -fsS -o /dev/null -w "%{http_code}\n" https://talus.weiranxiong.com/api/auth/status
   web-cloudflare:
     # The web app on Cloudflare Workers, after the droplet so pages never call an older engine.
     # Skipped until the CLOUDFLARE_API_TOKEN and CLOUDFLARE_ACCOUNT_ID secrets exist.

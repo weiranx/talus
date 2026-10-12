@@ -7,6 +7,6 @@ set -euo pipefail
 HOST="${TALUS_HOST:-digitalocean-vps}"
 cd "$(git rev-parse --show-toplevel)"
 REV="$(git rev-parse HEAD)"
-[ -z "$(git status --porcelain -- engine web deploy)" ] || echo "note: uncommitted changes are not deployed, only ${REV:0:7}"
+[ -z "$(git status --porcelain -- engine deploy)" ] || echo "note: uncommitted changes are not deployed, only ${REV:0:7}"
 echo "Deploying ${REV:0:7} to $HOST"
-git archive --format=tar HEAD engine web deploy | ssh "$HOST" talus-deploy "$REV"
+git archive --format=tar HEAD engine deploy | ssh "$HOST" talus-deploy "$REV"

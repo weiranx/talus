@@ -93,7 +93,42 @@ final class WatchSync: ObservableObject {
         return try api.decode(data, as: LastImport.self)
     }
 
-    private func note(_ s: String) { log.append(s) }
+    private func note(_ s: String) {
+        log.append(s)
+        #if DEBUG
+        print("[watch] \(s)")
+        #endif
+    }
+
+    #if DEBUG
+    /// Connects, lists and downloads up to `limit` of the files a first sync would pick, checking each
+    /// inflates to a FIT file. Uploads nothing and needs no engine.
+    func dryRun(limit: Int) async {
+        let link = WatchLink()
+        link.onEvent = { [weak self] in self?.note($0) }
+        defer { link.disconnect() }
+        let start = Date.now
+        do {
+            let info = try await link.connect()
+            note("Connected to \(info.name) \(info.model) (software \(info.softwareText), product \(info.product))\(link.sharedLink ? ", sharing the phone's existing link" : ", found by scanning") in \(Int(Date.now.timeIntervalSince(start)))s")
+            let files = try await link.listFiles()
+            let kinds = Dictionary(grouping: files, by: \.kind).map { "\($0.key)×\($0.value.count)" }.sorted()
+            note("Listed \(files.count) files: \(kinds.joined(separator: ", "))")
+            let todo = Array(Self.select(files, imported: [], lastSync: nil).prefix(limit))
+            note("First sync would pick \(Self.select(files, imported: [], lastSync: nil).count); trying \(todo.count)")
+            for f in todo {
+                let t = Date.now
+                let z = try await link.download(f) { _ in }
+                let fit = try GarminWire.inflate(z, expectedSize: f.size)
+                let secs = max(Date.now.timeIntervalSince(t), 0.001)
+                note("\(f.fileName): \(z.count) B compressed -> \(fit.count) B (listed \(f.size)), FIT=\(GarminWire.isFit(fit)), \(Int(secs))s, \(Int(Double(z.count) / secs / 1024)) KB/s")
+            }
+            note("Dry run done")
+        } catch {
+            note("Dry run stopped: \(error.localizedDescription)")
+        }
+    }
+    #endif
 
     /// Same rule as the web app: health files whenever not yet imported; activities not yet
     /// imported and newer than two days before the last sync (the last two weeks on the first).

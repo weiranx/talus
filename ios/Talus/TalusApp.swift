@@ -17,6 +17,14 @@ struct TalusApp: App {
                 .environmentObject(watch)
                 .tint(Color(hex: 0x15211D, dark: 0xE4EAE7))
                 .preferredColorScheme(appearance == "light" ? .light : appearance == "dark" ? .dark : nil)
+                #if DEBUG
+                // `-TalusWatchDryRun N` (launch argument): pull N files off the watch on launch and
+                // print each step, without the engine. For testing from Xcode or devicectl --console.
+                .task {
+                    let n = UserDefaults.standard.integer(forKey: "TalusWatchDryRun")
+                    if n > 0 { await watch.dryRun(limit: n) }
+                }
+                #endif
         }
     }
 }

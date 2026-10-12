@@ -243,6 +243,7 @@ final class WatchLink: NSObject {
                 failAll(LinkError.refused("The watch refused Talus's request (service \(svc), status \(status)). Try again."))
                 return
             }
+            event("Watch opened service 0x\(String(svc, radix: 16)) on handle \(h)\(reliable != 0 ? " (reliable)" : "")")
             if svc == GarminWire.gfdiService { gfdiHandle = h; keepAlive() }
             if svc == GarminWire.fileService { transferOpened(handle: h, reliable: reliable) }
         case .closed(let svc, _):

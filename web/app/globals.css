@@ -374,6 +374,18 @@ code { font-family: var(--code); font-size: 13px; background: var(--bg); padding
   .act-list { display: flex; flex-direction: column; }
 }
 
+/* Load: weekly stats, newest week first, each number over a bar and its change from the week before. */
+.wk-tiles { padding-bottom: 4px; }
+.wk-table th[scope="row"] { font-weight: 600; white-space: nowrap; }
+.wk-table td, .wk-table th[scope="row"] { vertical-align: top; }
+.wk-table tfoot th, .wk-table tfoot td { border-top: 1px solid var(--line-strong); }
+.wk-v { font-family: var(--mono); font-variant-numeric: tabular-nums; }
+.wk-bar { height: 3px; border-radius: 2px; margin: 3px 0 0 auto; width: calc(var(--w) * 100%); background: var(--c); opacity: 0.85; }
+.wk-delta { font-size: 11.5px; color: var(--muted); white-space: nowrap; padding-top: 2px; }
+@media (max-width: 640px) {
+  .wk-x { display: none; }
+}
+
 /* Today's call: the feature card, with a faint ridge line behind the text. */
 .call-card { position: relative; overflow: hidden; border: 0;
   background: radial-gradient(120% 140% at 100% 0%, color-mix(in srgb, var(--climb) 22%, transparent) 0%, transparent 55%), var(--feature); }

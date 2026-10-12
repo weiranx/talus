@@ -2,6 +2,7 @@ import type { Metadata, Viewport } from "next";
 import { DM_Mono, Figtree } from "next/font/google";
 import AccountMenu from "@/components/AccountMenu";
 import Nav from "@/components/Nav";
+import { STALE_RELOAD_SCRIPT } from "@/lib/stale";
 import { THEME_SCRIPT } from "@/lib/theme";
 import "./globals.css";
 
@@ -22,6 +23,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
     <html lang="en" className={`${sans.variable} ${mono.variable}`} suppressHydrationWarning>
       <head>
         <script dangerouslySetInnerHTML={{ __html: THEME_SCRIPT }} />
+        <script dangerouslySetInnerHTML={{ __html: STALE_RELOAD_SCRIPT }} />
       </head>
       <body>
         <div className="shell">

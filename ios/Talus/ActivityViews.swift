@@ -12,11 +12,13 @@ struct ActivitiesView: View {
                     if acts.isEmpty {
                         Text("No activities yet. Sync from intervals.icu or Apple Health in Settings.").foregroundStyle(.secondary)
                     }
-                    ForEach(months(acts), id: \.0) { month, items in
-                        Section(month) {
-                            ForEach(items) { a in
+                    ForEach(ActivityWeek.group(acts)) { w in
+                        Section {
+                            ForEach(w.acts) { a in
                                 NavigationLink(value: a.id) { ActivityListRow(a: a) }
                             }
+                        } header: {
+                            WeekHeader(w: w)
                         }
                     }
                 }
@@ -26,14 +28,53 @@ struct ActivitiesView: View {
             .navigationTitle("Activity")
         }
     }
+}
 
-    private func months(_ acts: [ActivitySummary]) -> [(String, [ActivitySummary])] {
-        var out: [(String, [ActivitySummary])] = []
+/// A Monday-to-Sunday week of activities with its distance and vert, as the web's Activities page groups them.
+struct ActivityWeek: Identifiable {
+    let start: String
+    var acts: [ActivitySummary] = []
+    var miles = 0.0, gain = 0.0, loss = 0.0
+    var id: String { start }
+
+    /// Monday of the activity's week, as an ISO date.
+    static func weekOf(_ day: String) -> String {
+        guard let d = Fmt.date(day) else { return day }
+        let cal = Calendar(identifier: .gregorian)
+        let back = (cal.component(.weekday, from: d) + 5) % 7
+        let monday = cal.date(byAdding: .day, value: -back, to: d) ?? d
+        let c = cal.dateComponents([.year, .month, .day], from: monday)
+        return String(format: "%04d-%02d-%02d", c.year ?? 0, c.month ?? 0, c.day ?? 0)
+    }
+
+    /// Newest week first, newest activity first within a week.
+    static func group(_ acts: [ActivitySummary]) -> [ActivityWeek] {
+        var weeks: [ActivityWeek] = []
         for a in acts.sorted(by: { $0.startTime > $1.startTime }) {
-            let m = Fmt.day(a.day, .dateTime.month(.wide).year())
-            if out.last?.0 == m { out[out.count - 1].1.append(a) } else { out.append((m, [a])) }
+            let start = weekOf(a.day)
+            if weeks.last?.start != start { weeks.append(ActivityWeek(start: start)) }
+            weeks[weeks.count - 1].acts.append(a)
+            weeks[weeks.count - 1].miles += a.distanceMi
+            weeks[weeks.count - 1].gain += a.gainFt
+            weeks[weeks.count - 1].loss += a.lossFt
         }
-        return out
+        return weeks
+    }
+}
+
+private struct WeekHeader: View {
+    let w: ActivityWeek
+
+    var body: some View {
+        let title = "Week of " + Fmt.day(w.start, .dateTime.month(.abbreviated).day())
+        let totals = Fmt.distVert(mi: w.miles, gain: w.gain, loss: w.loss)
+        VStack(alignment: .leading, spacing: 2) {
+            Text(title)
+            Text(totals).monospacedDigit().foregroundStyle(.primary)
+        }
+        .font(.footnote.weight(.semibold))
+        .textCase(nil)
+        .accessibilityElement(children: .combine)
     }
 }
 

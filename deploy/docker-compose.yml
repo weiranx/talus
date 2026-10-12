@@ -1,6 +1,5 @@
-# Talus on a single host. nginx on the host proxies https://talus.weiranxiong.com to 127.0.0.1:3020.
-# The engine has no public port; the web app reaches it as http://engine:8000, and nginx sends
-# /api/* to 127.0.0.1:3021 directly (the web app itself runs on Cloudflare Workers, see README).
+# The Talus engine on the droplet. nginx on the host sends https://talus.weiranxiong.com/api/* to
+# 127.0.0.1:3021; the pages are served by the Cloudflare Worker in web/ (see README).
 name: talus
 services:
   engine:
@@ -21,12 +20,3 @@ services:
       interval: 30s
       timeout: 5s
       retries: 3
-  web:
-    build: { context: .., dockerfile: deploy/web.Dockerfile }
-    image: talus-web
-    environment:
-      TZ: ${TALUS_TZ:-America/Los_Angeles}
-    ports:
-      - "127.0.0.1:${TALUS_WEB_PORT:-3020}:3000"
-    depends_on: [engine]
-    restart: unless-stopped

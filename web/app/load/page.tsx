@@ -4,6 +4,7 @@ import IntensityChart from "@/components/IntensityChart";
 import LedgerChart from "@/components/LedgerChart";
 import LinkPending from "@/components/LinkPending";
 import Pill from "@/components/Pill";
+import WeeklyStats from "@/components/WeeklyStats";
 import { engine, engineFailed } from "@/lib/api";
 import { chartDay, dayLabel, duration, LEDGER_LABEL, LEDGER_UNIT, ledgerBadge, ledgerDecimals, ledgerNum, ledgerUnit, mi, n0, pct, zoneColors, zoneKeys } from "@/lib/format";
 import { LEDGERS, type LoadData } from "@/lib/types";
@@ -44,6 +45,8 @@ export default async function LoadPage({ searchParams }: { searchParams: Promise
           ))}
         </nav>
       </header>
+
+      <WeeklyStats weekly={data.weekly} lastToDate={data.last_week_to_date} />
 
       {LEDGERS.map((name) => {
         const l = data.ledgers[name];

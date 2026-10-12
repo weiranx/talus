@@ -51,6 +51,17 @@ def test_api_end_to_end(tmp_path, monkeypatch):
     load = client.get("/api/load?days=42").json()
     assert len(load["ledgers"]["climb"]["series"]) == 41
     assert len(load["intensity_by_week"]) == 8
+    weekly = load["weekly"]
+    assert [w["start"] for w in weekly] == [w["start"] for w in load["intensity_by_week"]]
+    assert weekly[-1]["days"] == date.today().weekday() + 1 and weekly[-2]["days"] == 7
+    acts = client.get("/api/activities?limit=100").json()
+    last = weekly[-2]
+    in_last = [a for a in acts if last["start"] <= a["day"] < weekly[-1]["start"]]
+    assert last["activities"] == len(in_last) == 7  # one run a day
+    assert abs(last["gain_ft"] - sum(a["gain_ft"] for a in in_last)) < 1
+    assert abs(last["distance_mi"] - sum(a["distance_mi"] for a in in_last)) < 0.01
+    # Last week through today's weekday, for comparing the week in progress.
+    assert load["last_week_to_date"]["activities"] == date.today().weekday() + 1
     assert load["biggest_days"][0]["gain_ft"] > 2500
     assert abs(load["thresholds"]["aerobic_gap"] - 22 / 172) < 1e-9
 
@@ -213,3 +224,21 @@ def test_an_existing_database_switches_to_wal(tmp_path):
     assert store.db.execute("PRAGMA journal_mode").fetchone()[0] == "wal"
     assert store.settings() == {"a": 1}
     assert store.ledgers() == []
+
+
+def test_activity_detail_is_kept_on_disk_until_its_inputs_change(tmp_path, monkeypatch):
+    """The scored page is read once per file, thresholds and zones; a restart reads it from disk."""
+    _import_runs(tmp_path, monkeypatch, n=4)
+    monkeypatch.setattr(api, "warm_details", lambda *a, **k: None)  # no background reads here
+    client = sign_in()
+    aid = client.get("/api/activities").json()[-1]["id"]
+    first = client.get(f"/api/activities/{aid}").json()
+    calls = []
+    real = api._score_detail
+    monkeypatch.setattr(api, "_score_detail", lambda *a: calls.append(1) or real(*a))
+    api._details.clear()  # as after a restart
+    assert client.get(f"/api/activities/{aid}").json() == first
+    assert calls == []
+    cli.main(["thresholds", "--resting", "45", "--aet", "130", "--ant", "172", "--max", "190"])
+    changed = client.get(f"/api/activities/{aid}").json()
+    assert calls == [1] and changed["zone_minutes"] != first["zone_minutes"]

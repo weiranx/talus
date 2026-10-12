@@ -27,7 +27,7 @@ from fastapi import BackgroundTasks, FastAPI, HTTPException, Request, Response
 from fastapi.responses import JSONResponse, RedirectResponse, StreamingResponse
 from pydantic import BaseModel, ConfigDict, Field
 
-from . import admin, cli, coach, explain, google_auth, interview, intervals_auth, ledger, readiness_score, wellness, zones
+from . import MODEL_VERSION, admin, cli, coach, explain, google_auth, interview, intervals_auth, ledger, readiness_score, wellness, zones
 from . import plan as planner
 from . import schedule
 from . import settings as app_settings
@@ -226,6 +226,7 @@ def today() -> dict:
     overnight = wellness.evaluate(nights, day, need)
     ready = readiness(now, checkin, overnight)
     week_start = day - timedelta(days=day.weekday())
+    warm_details(store)  # the activities Today links to open already scored
     week = sorted(_activities(store, week_start), key=lambda a: a["start_time"])
     last_28 = _activities(store, day - timedelta(days=27))
     zm = _zone_model(store)
@@ -333,7 +334,9 @@ def _projection(store: Store, day: date) -> dict:
 
 @app.get("/api/activities")
 def activities(limit: int = 50) -> list[dict]:
-    return _activities(get_store(), limit=limit)
+    store = get_store()
+    warm_details(store)
+    return _activities(store, limit=limit)
 
 
 # Recently read activity files. Reading a FIT file takes about a second, and an activity page
@@ -365,28 +368,75 @@ def _streams(store: Store, row):
     return streams
 
 
-@app.get("/api/activities/{activity_id}")
-def activity(activity_id: int) -> dict:
-    store = get_store()
-    row = store.activity(activity_id)
-    th = store.thresholds()
-    if row is None or th is None:
-        raise HTTPException(404, "No such activity, or thresholds not set")
+# What an activity page shows from its file: scoring, segments and the drawn streams. Reading a
+# FIT file and scoring it takes about a second on the server, so the result is kept on disk next
+# to the account's data (and the last few in memory), keyed on everything it depends on: the file,
+# thresholds, zone floors and the scoring model. Loads against the athlete's usual day are cheap
+# and change daily, so they are worked out on every request.
+_details: OrderedDict[tuple, dict] = OrderedDict()
+_details_guard = threading.Lock()
+DETAILS_KEEP = 32
+# One reader per activity: the page and the coach's read ask for it at the same moment, and the
+# second waits for the first instead of reading the file again.
+_detail_locks: dict[tuple, threading.Lock] = {}
+
+
+def _detail_key(store: Store, row, th: Thresholds, zm: dict) -> str:
+    st = (store.dir / row["raw_path"]).stat()
+    return json.dumps({"file": [row["raw_path"], st.st_mtime_ns, st.st_size, row["raw_fmt"], row["sport"]],
+                       "th": asdict(th), "zones": [zm["zones"], zm["floors"]], "model": MODEL_VERSION,
+                       "points": MAX_POINTS}, sort_keys=True)
+
+
+def _detail_core(store: Store, row, th: Thresholds, zm: dict) -> dict:
+    try:
+        key = _detail_key(store, row, th, zm)
+    except OSError as e:
+        raise HTTPException(422, f"Could not read this activity's file ({type(e).__name__}: {e}).") from e
+    mem_key = (str(store.dir), row["id"], key)
+    with _details_guard:
+        hit = _details.get(mem_key)
+        if hit is not None:
+            _details.move_to_end(mem_key)
+            return hit
+    with _details_guard:
+        lock = _detail_locks.setdefault(mem_key[:2], threading.Lock())
+    with lock:
+        return _detail_core_locked(store, row, th, zm, key, mem_key)
+
+
+def _detail_core_locked(store: Store, row, th: Thresholds, zm: dict, key: str, mem_key: tuple) -> dict:
+    with _details_guard:
+        hit = _details.get(mem_key)
+    if hit is not None:
+        return hit
+    path = store.dir / "cache" / f"activity-{row['id']}.json"
+    try:
+        saved = json.loads(path.read_text())
+        if saved.get("key") == key:
+            hit = saved["detail"]
+    except (OSError, ValueError, KeyError):
+        pass
+    if hit is None:
+        hit = _score_detail(store, row, th, zm)
+        try:
+            path.parent.mkdir(exist_ok=True)
+            tmp = path.with_suffix(f".{threading.get_ident()}.tmp")
+            tmp.write_text(json.dumps({"key": key, "detail": hit}))
+            tmp.replace(path)
+        except (OSError, TypeError):
+            pass  # a read-only or full disk only costs the next view a re-read
+    with _details_guard:
+        _details[mem_key] = hit
+        while len(_details) > DETAILS_KEEP:
+            _details.popitem(last=False)
+    return hit
+
+
+def _score_detail(store: Store, row, th: Thresholds, zm: dict) -> dict:
     streams = _streams(store, row)
     result = score(streams, th)
-    day = date.fromisoformat(row["start_time"][:10])
-    before = {d.ledger: d.fitness for d in store.ledgers(day - timedelta(days=1))
-              if d.day == day - timedelta(days=1)}
-    six_weeks = [a for a in _activities(store, day - timedelta(days=42)) if a["day"] <= day.isoformat()]
-
-    def usual(name: str, value: float | None) -> dict:
-        others = [a[ledger.ACTIVITY_KEY[name]] or 0 for a in six_weeks if a["id"] != activity_id]
-        return {"load": value,
-                "times_usual_day": None if value is None else ledger.times_usual_day(value, before.get(name, 0.0)),
-                "six_week_high": value is not None and bool(others) and value > max(others)}
-
     hr = streams.heart_rate
-    zm = zones.model(th, store.settings().get("hr_zones"))
     split = None if hr is None else np.where(hr < th.aet, 1, np.where(hr <= th.ant, 2, 3))
     zone = None if hr is None else zones.indices(hr, zm["floors"])
     step = max(1, len(streams.time) // MAX_POINTS)
@@ -409,8 +459,7 @@ def activity(activity_id: int) -> dict:
                          "zone_minutes": z, "hr_zone_minutes": hz, "climb_load": seg.climb_load,
                          "descent_load": seg.descent_load})
     return {
-        "id": activity_id, "name": row["name"], "day": day.isoformat(), "start_time": row["start_time"],
-        "source": row["source"], "device_name": row["device_name"], "sport": streams.sport,
+        "sport": streams.sport,
         "distance_mi": result.distance_mi, "gain_ft": result.gain_ft, "loss_ft": result.loss_ft,
         "effort_mi": result.effort_mi, "moving_time_s": result.moving_time_s,
         "elapsed_time_s": result.elapsed_time_s, "hike_share": result.hike_share,
@@ -420,13 +469,74 @@ def activity(activity_id: int) -> dict:
         "loss_by_band_ft": result.loss_by_band_ft, "longest_climb_ft": result.longest_climb_ft,
         "longest_descent_ft": result.longest_descent_ft, "minutes_above_8000ft": result.minutes_above_8000ft,
         "cardio_estimated": result.cardio_estimated, "notes": result.notes,
-        "loads": {name: usual(name, getattr(result, key)) for name, key in ledger.ACTIVITY_KEY.items()},
+        "load_values": {name: getattr(result, key) for name, key in ledger.ACTIVITY_KEY.items()},
         "segments": segments,
         "streams": {"time_s": pick(streams.time, nd=0), "distance_mi": pick(streams.distance, mi, 3),
                     "altitude_ft": pick(streams.altitude, ft, 0), "heart_rate": pick(hr, nd=0),
                     "zone": None if zone is None else [int(v) for v in zone[idx]],
                     "lat": pick(streams.lat, nd=6), "lon": pick(streams.lon, nd=6)},
     }
+
+
+# Folders whose newest activities are being read ahead, by a background thread each.
+_warming: set[str] = set()
+_warming_guard = threading.Lock()
+WARM_DETAILS = 10
+
+
+def warm_details(store: Store, ids: list[int] | None = None) -> None:
+    """Read the newest activities' files (or `ids`) ahead in the background, so opening one finds
+    it already scored. Each is read once; later warms find it on disk and skip it."""
+    key = str(store.dir)
+    th = store.thresholds()
+    if th is None:
+        return
+    zm = zones.model(th, store.settings().get("hr_zones"))
+    rows = [store.activity(i) for i in ids] if ids is not None else store.scored_activities(limit=WARM_DETAILS)
+    rows = [r for r in rows if r is not None][:WARM_DETAILS]
+
+    def run() -> None:
+        try:
+            for row in rows:
+                try:
+                    _detail_core(store, row, th, zm)
+                except Exception:  # an unreadable file: its page says why when opened
+                    pass
+        finally:
+            with _warming_guard:
+                _warming.discard(key)
+
+    with _warming_guard:
+        if key in _warming:
+            return
+        _warming.add(key)
+    threading.Thread(target=run, name=f"warm {key}", daemon=True).start()
+
+
+@app.get("/api/activities/{activity_id}")
+def activity(activity_id: int) -> dict:
+    store = get_store()
+    row = store.activity(activity_id)
+    th = store.thresholds()
+    if row is None or th is None:
+        raise HTTPException(404, "No such activity, or thresholds not set")
+    zm = zones.model(th, store.settings().get("hr_zones"))
+    core = dict(_detail_core(store, row, th, zm))
+    load_values = core.pop("load_values")
+    day = date.fromisoformat(row["start_time"][:10])
+    before = {d.ledger: d.fitness for d in store.ledgers(day - timedelta(days=1))
+              if d.day == day - timedelta(days=1)}
+    six_weeks = [a for a in _activities(store, day - timedelta(days=42)) if a["day"] <= day.isoformat()]
+
+    def usual(name: str, value: float | None) -> dict:
+        others = [a[ledger.ACTIVITY_KEY[name]] or 0 for a in six_weeks if a["id"] != activity_id]
+        return {"load": value,
+                "times_usual_day": None if value is None else ledger.times_usual_day(value, before.get(name, 0.0)),
+                "six_week_high": value is not None and bool(others) and value > max(others)}
+
+    return {"id": activity_id, "name": row["name"], "day": day.isoformat(), "start_time": row["start_time"],
+            "source": row["source"], "device_name": row["device_name"], **core,
+            "loads": {name: usual(name, load_values[name]) for name in ledger.ACTIVITY_KEY}}
 
 
 def _coach_settings(store: Store) -> dict:
@@ -1826,6 +1936,7 @@ WARM_ANALYSIS_DAYS = 14
 def warm_coach(activity_ids: list[int]) -> list[str]:
     """Write today's brief and each new recent activity's read right after a sync, so the pages
     open with them ready. Replies are cached as usual, so opening a page doesn't pay again."""
+    warm_details(get_store())
     try:
         b = coach_brief()
     except HTTPException as e:

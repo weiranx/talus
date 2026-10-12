@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { Suspense, type ReactNode } from "react";
-import CoachRead, { CoachReadPending } from "@/components/CoachRead";
+import CoachRead, { coachRead, CoachReadPending } from "@/components/CoachRead";
 import ActivityView from "@/components/ActivityView";
 import EngineDown from "@/components/EngineDown";
 import Explain from "@/components/Explain";
@@ -14,6 +14,7 @@ const BANDS: [string, string][] = [["<8", "Under 8%"], ["8-20", "8 to 20%"], [">
 
 export default async function ActivityPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
+  const read = coachRead(id);
   let a: ActivityDetail;
   try {
     a = await engine<ActivityDetail>(`/api/activities/${encodeURIComponent(id)}`);
@@ -79,7 +80,7 @@ export default async function ActivityPage({ params }: { params: Promise<{ id: s
       </section>
 
       <Suspense fallback={<CoachReadPending />}>
-        <CoachRead id={id} />
+        <CoachRead reply={read} />
       </Suspense>
 
       <ActivityView a={a} />

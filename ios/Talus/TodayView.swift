@@ -140,7 +140,7 @@ struct CoachCallCard: View {
                 Text(note).font(.caption).foregroundStyle(.white.opacity(0.6))
             }
             if let cost = coach?.cost {
-                Text(cost.text).font(.caption2.monospaced()).foregroundStyle(.white.opacity(0.5))
+                Text(cost.text).font(.caption2.monospacedDigit()).foregroundStyle(.white.opacity(0.5))
             }
             if let id = coach?.logId {
                 CoachFeedback(logId: id, initial: coach?.feedback, dark: true)
@@ -148,7 +148,8 @@ struct CoachCallCard: View {
         }
         .padding(18)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Color(hex: 0x15211D, dark: 0x22302B), in: RoundedRectangle(cornerRadius: 16))
+        .background { CallCardBackground() }
+        .clipShape(RoundedRectangle(cornerRadius: Card<EmptyView>.radius))
         .task {
             coach = try? await api.get("/api/coach/brief", as: CoachReply.self)
             waiting = false
@@ -167,6 +168,32 @@ struct CoachCallCard: View {
         case "cap": return "Rule-based call. This month's AI coach budget is used up."
         case "rejected": return "Rule-based call. The coach quoted numbers that aren't in your data, so its reply was dropped."
         default: return "Rule-based call. The AI coach could not answer this time."
+        }
+    }
+}
+
+/// The feature card's surface: a warm glow from the top right and a faint ridge line behind the text.
+struct CallCardBackground: View {
+    var body: some View {
+        ZStack(alignment: .bottomTrailing) {
+            Color(hex: 0x15211D, dark: 0x22302B)
+            RadialGradient(colors: [Ledger.color("climb").opacity(0.22), .clear],
+                           center: .topTrailing, startRadius: 0, endRadius: 320)
+            Ridge().fill(.white.opacity(0.09)).frame(width: 260, height: 90).offset(x: 10, y: 6)
+        }
+        .accessibilityHidden(true)
+    }
+
+    private struct Ridge: Shape {
+        nonisolated func path(in r: CGRect) -> Path {
+            let pts: [(CGFloat, CGFloat)] = [(0, 90), (52, 38), (78, 58), (124, 8), (160, 44), (184, 28), (260, 90)]
+            var p = Path()
+            for (i, (x, y)) in pts.enumerated() {
+                let pt = CGPoint(x: r.minX + x / 260 * r.width, y: r.minY + y / 90 * r.height)
+                if i == 0 { p.move(to: pt) } else { p.addLine(to: pt) }
+            }
+            p.closeSubpath()
+            return p
         }
     }
 }
@@ -280,6 +307,15 @@ struct ScoreView: View {
         }
     }
 
+    /// The ring's color: the call's, with modify in the climb orange as on the web.
+    private static func ring(_ call: String) -> Color {
+        switch call {
+        case "go": Tone.good.ink
+        case "modify": Ledger.color("climb")
+        default: Tone.bad.ink
+        }
+    }
+
     private static func lower(_ name: String) -> String {
         name == "HRV" ? name : name == "Resting HR" ? "resting HR" : name.lowercased()
     }
@@ -289,8 +325,17 @@ struct ScoreView: View {
         let missing = s.items.filter { !$0.used }.map { Self.lower($0.name) }
         VStack(alignment: .leading, spacing: 10) {
             HStack(alignment: .center, spacing: 12) {
-                Text("\(s.score)").font(.system(size: 44, weight: .semibold)).monospacedDigit()
-                    .accessibilityLabel("Readiness score \(s.score) of 100")
+                ZStack {
+                    Circle().stroke(Color.primary.opacity(0.1), lineWidth: 7)
+                    Circle().trim(from: 0, to: CGFloat(min(max(s.score, 0), 100)) / 100)
+                        .stroke(Self.ring(s.call), style: StrokeStyle(lineWidth: 7, lineCap: .round))
+                        .rotationEffect(.degrees(-90))
+                    Text("\(s.score)").font(.system(size: 28, weight: .bold)).monospacedDigit()
+                }
+                .frame(width: 76, height: 76)
+                .padding(4)
+                .accessibilityElement(children: .ignore)
+                .accessibilityLabel("Readiness score \(s.score) of 100")
                 VStack(alignment: .leading, spacing: 4) {
                     Pill(text: s.label, tone: Self.tone(s.call))
                     Text("of 100").font(.subheadline).foregroundStyle(.secondary)
@@ -322,7 +367,8 @@ struct ScoreView: View {
                 Chart {
                     ForEach(s.trend, id: \.day) { p in
                         BarMark(x: .value("Day", Fmt.date(p.day) ?? .now, unit: .day), y: .value("Score", max(p.score, 3)))
-                            .foregroundStyle(Self.tone(p.call).ink)
+                            .foregroundStyle(Self.tone(p.call).ink.opacity(p.day == s.trend.last?.day ? 1 : 0.55))
+                            .cornerRadius(3)
                     }
                     RuleMark(y: .value("Go", 67)).foregroundStyle(Color.secondary.opacity(0.4))
                         .lineStyle(StrokeStyle(lineWidth: 1, dash: [3, 3]))
@@ -373,31 +419,45 @@ struct TodayLedgerCard: View {
 
     var body: some View {
         let (badge, tone) = Ledger.badge(vsNormal: d.vsNormal, flags: d.flags, building: d.building)
-        Card {
+        let color = Ledger.color(name)
+        let lo = d.spark.flatMap { [$0.fitness, $0.fatigue] }.min() ?? 0
+        Card(accent: color) {
             HStack {
                 Circle().fill(Ledger.color(name)).frame(width: 10, height: 10)
                 Text(Ledger.label(name)).font(.headline)
                 Spacer()
                 Pill(text: badge, tone: tone)
             }
-            Text(Fmt.capitalized(d.vsNormalText)).font(.title2.weight(.semibold))
+            if let v = d.vsNormal {
+                HStack(alignment: .firstTextBaseline, spacing: 8) {
+                    Text(Fmt.signedPct(v)).font(.system(size: 30, weight: .semibold)).monospacedDigit().tracking(-0.5)
+                    Text("vs your normal").font(.subheadline).foregroundStyle(.secondary)
+                }
+                .accessibilityElement(children: .combine)
+                .accessibilityLabel(Fmt.capitalized(d.vsNormalText))
+            } else {
+                Text(Fmt.capitalized(d.vsNormalText)).font(.title2.weight(.semibold))
+            }
             (Text("Last 7 days ") + Text(Ledger.value(name, d.fatigue)).monospacedDigit().foregroundStyle(.primary)
                 + Text(" a day. Your normal ") + Text(Ledger.value(name, d.fitness)).monospacedDigit().foregroundStyle(.primary) + Text("."))
                 .font(.subheadline).foregroundStyle(.secondary)
             Chart(d.spark, id: \.day) { p in
+                AreaMark(x: .value("Day", Fmt.date(p.day) ?? .now), yStart: .value("Base", lo), yEnd: .value("Normal", p.fitness))
+                    .foregroundStyle(LinearGradient(colors: [color.opacity(0.22), color.opacity(0)], startPoint: .top, endPoint: .bottom))
                 LineMark(x: .value("Day", Fmt.date(p.day) ?? .now), y: .value("Normal", p.fitness), series: .value("s", "Normal"))
-                    .foregroundStyle(Ledger.color(name))
+                    .foregroundStyle(color)
+                    .lineStyle(StrokeStyle(lineWidth: 2.5))
                 LineMark(x: .value("Day", Fmt.date(p.day) ?? .now), y: .value("Last 7 days", p.fatigue), series: .value("s", "7d"))
-                    .foregroundStyle(Ledger.color(name).opacity(0.6))
-                    .lineStyle(StrokeStyle(lineWidth: 1.5, dash: [4, 3]))
+                    .foregroundStyle(color.opacity(0.7))
+                    .lineStyle(StrokeStyle(lineWidth: 1.5, dash: [3, 3]))
             }
             .chartXAxis(.hidden)
             .chartYAxis(.hidden)
             .chartYScale(domain: .automatic(includesZero: false))
-            .frame(height: 54)
+            .frame(height: 64)
             .accessibilityLabel("\(Ledger.label(name)) over 6 weeks: solid line your normal, dashed line your last 7 days")
         }
-        .overlay(RoundedRectangle(cornerRadius: 14).stroke(limiter ? Ledger.color(name) : .clear, lineWidth: 2))
+        .overlay(RoundedRectangle(cornerRadius: Card<EmptyView>.radius).stroke(limiter ? color : .clear, lineWidth: 2))
     }
 }
 

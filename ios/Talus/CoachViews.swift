@@ -63,7 +63,7 @@ struct CoachFooter: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
             Text(PlanText.coachNote(source, reason, what)).font(.caption).foregroundStyle(.secondary)
-            if let cost { Text(cost.text).font(.caption2.monospaced()).foregroundStyle(.secondary) }
+            if let cost { Text(cost.text).font(.caption2.monospacedDigit()).foregroundStyle(.secondary) }
             if let logId { CoachFeedback(logId: logId, initial: feedback) }
         }
     }

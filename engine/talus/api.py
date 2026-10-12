@@ -6,6 +6,7 @@ miles and all vert is feet.
 
 from __future__ import annotations
 
+import hashlib
 import io
 import json
 import os
@@ -438,7 +439,12 @@ def _detail_key(store: Store, row, th: Thresholds, zm: dict) -> str:
                        "points": MAX_POINTS}, sort_keys=True)
 
 
-def _detail_core(store: Store, row, th: Thresholds, zm: dict) -> dict:
+def _detail_path(store: Store, row, key: str):
+    """Named for its key, so whether an activity is ready is one stat, without reading it."""
+    return store.dir / "cache" / f"activity-{row['id']}-{hashlib.sha1(key.encode()).hexdigest()[:16]}.json"
+
+
+def _detail_core(store: Store, row, th: Thresholds, zm: dict, remember: bool = True) -> dict:
     try:
         key = _detail_key(store, row, th, zm)
     except OSError as e:
@@ -449,37 +455,33 @@ def _detail_core(store: Store, row, th: Thresholds, zm: dict) -> dict:
         if hit is not None:
             _details.move_to_end(mem_key)
             return hit
-    with _details_guard:
         lock = _detail_locks.setdefault(mem_key[:2], threading.Lock())
     with lock:
-        return _detail_core_locked(store, row, th, zm, key, mem_key)
+        hit = _detail_from_disk_or_file(store, row, th, zm, key)
+    if remember:
+        with _details_guard:
+            _details[mem_key] = hit
+            while len(_details) > DETAILS_KEEP:
+                _details.popitem(last=False)
+    return hit
 
 
-def _detail_core_locked(store: Store, row, th: Thresholds, zm: dict, key: str, mem_key: tuple) -> dict:
-    with _details_guard:
-        hit = _details.get(mem_key)
-    if hit is not None:
-        return hit
-    path = store.dir / "cache" / f"activity-{row['id']}.json"
+def _detail_from_disk_or_file(store: Store, row, th: Thresholds, zm: dict, key: str) -> dict:
+    path = _detail_path(store, row, key)
     try:
-        saved = json.loads(path.read_text())
-        if saved.get("key") == key:
-            hit = saved["detail"]
-    except (OSError, ValueError, KeyError):
+        return json.loads(path.read_text())
+    except (OSError, ValueError):
         pass
-    if hit is None:
-        hit = _score_detail(store, row, th, zm)
-        try:
-            path.parent.mkdir(exist_ok=True)
-            tmp = path.with_suffix(f".{threading.get_ident()}.tmp")
-            tmp.write_text(json.dumps({"key": key, "detail": hit}))
-            tmp.replace(path)
-        except (OSError, TypeError):
-            pass  # a read-only or full disk only costs the next view a re-read
-    with _details_guard:
-        _details[mem_key] = hit
-        while len(_details) > DETAILS_KEEP:
-            _details.popitem(last=False)
+    hit = _score_detail(store, row, th, zm)
+    try:
+        path.parent.mkdir(exist_ok=True)
+        for old in path.parent.glob(f"activity-{row['id']}-*.json"):  # from older thresholds or zones
+            old.unlink(missing_ok=True)
+        tmp = path.with_suffix(f".{threading.get_ident()}.tmp")
+        tmp.write_text(json.dumps(hit))
+        tmp.replace(path)
+    except (OSError, TypeError):
+        pass  # a read-only or full disk only costs the next view a re-read
     return hit
 
 
@@ -528,38 +530,57 @@ def _score_detail(store: Store, row, th: Thresholds, zm: dict) -> dict:
     }
 
 
-# Folders whose newest activities are being read ahead, by a background thread each.
+# Folders whose activities are being read ahead, by a background thread each.
 _warming: set[str] = set()
 _warming_guard = threading.Lock()
-WARM_DETAILS = 10
+_warmed_at: dict[str, float] = {}  # when each folder last finished with nothing left to read
+REWARM_S = 300
 
 
-def warm_details(store: Store, ids: list[int] | None = None) -> None:
-    """Read the newest activities' files (or `ids`) ahead in the background, so opening one finds
-    it already scored. Each is read once; later warms find it on disk and skip it."""
-    key = str(store.dir)
-    th = store.thresholds()
-    if th is None:
-        return
-    zm = zones.model(th, store.settings().get("hr_zones"))
-    rows = [store.activity(i) for i in ids] if ids is not None else store.scored_activities(limit=WARM_DETAILS)
-    rows = [r for r in rows if r is not None][:WARM_DETAILS]
+def warm_details(store: Store, force: bool = False) -> None:
+    """Read every activity's file ahead, newest first, in a low-priority background thread, so
+    opening any activity finds it already scored. Each is read once and kept on disk; later warms
+    only check that each one's file is there. New activities synced meanwhile are picked up by
+    another pass. Page loads re-check every few minutes; a sync (`force`) re-checks at once."""
+    folder = store.dir
+    key = str(folder)
+    with _warming_guard:
+        if key in _warming or (not force and time.monotonic() - _warmed_at.get(key, -REWARM_S) < REWARM_S):
+            return
+        _warming.add(key)
 
     def run() -> None:
         try:
-            for row in rows:
-                try:
-                    _detail_core(store, row, th, zm)
-                except Exception:  # an unreadable file: its page says why when opened
-                    pass
+            try:  # the server's requests come first
+                os.setpriority(os.PRIO_PROCESS, threading.get_native_id(), 19)
+            except (AttributeError, OSError):
+                pass
+            st = Store(folder)
+            while True:
+                th = st.thresholds()
+                if th is None:
+                    return
+                zm = zones.model(th, st.settings().get("hr_zones"))
+                read = 0
+                for row in st.scored_activities():
+                    started = time.monotonic()
+                    try:
+                        path = _detail_path(st, row, _detail_key(st, row, th, zm))
+                        if path.exists():
+                            continue
+                        _detail_core(st, row, th, zm, remember=False)
+                        read += path.exists()  # a disk that won't keep it ends the warm
+                    except Exception:  # an unreadable file: its page says why when opened
+                        pass
+                    # Rest as long as the read took: at most half the CPU, so pages stay quick.
+                    time.sleep(max(0.05, time.monotonic() - started))
+                if not read:
+                    _warmed_at[key] = time.monotonic()
+                    return
         finally:
             with _warming_guard:
                 _warming.discard(key)
 
-    with _warming_guard:
-        if key in _warming:
-            return
-        _warming.add(key)
     threading.Thread(target=run, name=f"warm {key}", daemon=True).start()
 
 
@@ -1988,7 +2009,7 @@ WARM_ANALYSIS_DAYS = 14
 def warm_coach(activity_ids: list[int]) -> list[str]:
     """Write today's brief and each new recent activity's read right after a sync, so the pages
     open with them ready. Replies are cached as usual, so opening a page doesn't pay again."""
-    warm_details(get_store())
+    warm_details(get_store(), force=True)
     try:
         b = coach_brief()
     except HTTPException as e:

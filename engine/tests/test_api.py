@@ -241,7 +241,11 @@ def test_activity_detail_is_kept_on_disk_until_its_inputs_change(tmp_path, monke
     first = client.get(f"/api/activities/{aid}").json()
     calls = []
     real = api._score_detail
-    monkeypatch.setattr(api, "_score_detail", lambda *a: calls.append(1) or real(*a))
+
+    def mine(st, row):  # another test's background warm may still be reading its own activities
+        return row["id"] == aid and str(tmp_path) in str(st.dir)
+    monkeypatch.setattr(api, "_score_detail",
+                        lambda st, row, *a: (mine(st, row) and calls.append(1)) or real(st, row, *a))
     api._details.clear()  # as after a restart
     assert client.get(f"/api/activities/{aid}").json() == first
     assert calls == []

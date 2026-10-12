@@ -321,3 +321,22 @@ def test_training_note_is_drafted_saved_and_read_by_every_coach_answer(tmp_path,
     client.post("/api/coach/chat", json={"question": "More vert?"})
     assert all(f'"athlete_note": "{note}"' in c["messages"][0]["content"] for c in fake.calls)
     assert client.put("/api/coach/note", json={"note": "x" * (coach.NOTE_MAX + 1)}).status_code == 422
+
+
+def test_load_read_runs_on_the_cheap_model_and_reads_weeks_and_room(tmp_path, monkeypatch):
+    client = _demo(tmp_path, monkeypatch)
+    monkeypatch.setattr(api, "coach_client", lambda: None)
+    r = client.get("/api/coach/load").json()
+    assert r["source"] == "rules" and set(r["reply"]) == set(coach.LOAD_FIELDS)
+    assert " mi with " in r["reply"]["last_week"]
+    reply = {k: "Steady." for k in coach.LOAD_FIELDS}
+    fake = FakeClient(reply)
+    monkeypatch.setattr(api, "coach_client", lambda: fake)
+    client.put("/api/coach/note", json={"note": "More vert."})
+    first = client.get("/api/coach/load").json()
+    again = client.get("/api/coach/load").json()
+    assert first["source"] == "coach" and again["log_id"] == first["log_id"] and len(fake.calls) == 1
+    call = fake.calls[0]
+    assert call["model"] == coach.BRIEF_MODEL and "Mode: load read." in call["messages"][0]["content"]
+    packet = json.loads(call["messages"][0]["content"].split("Data:\n", 1)[1])
+    assert len(packet["weeks"]) == 8 and "room" in packet["next_7_days"] and packet["athlete_note"] == "More vert."

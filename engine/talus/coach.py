@@ -18,7 +18,7 @@ from dataclasses import dataclass, field
 from datetime import date, timedelta
 from typing import Any, Protocol
 
-PROMPT_VERSION = "coach-v0.7"
+PROMPT_VERSION = "coach-v0.8"
 # The daily brief is short and mostly explains the engine's call, so it runs on Haiku; the
 # workout analysis has more to read and judge, so it stays on Opus. Both can be changed in
 # Settings, and TALUS_COACH_MODEL overrides both defaults.
@@ -94,6 +94,12 @@ Plan: you get an objective (a race or mountain day with a date), the athlete's r
 - verdict: two or three sentences: which dimensions are ready, close or a gap now, and how they project. Readiness covers fitness only.
 - limiter: one or two sentences on the dimension furthest behind and what in the plan closes it, such as the long days or the peak weeks.
 - plan: three or four sentences on the plan's shape: build weeks, recovery weeks, the peak and the taper, and any week the engine held back for a load limit or a time limit. If reachable is false, say plainly that the objective can't be reached inside the limits and name the options given. If changes are listed, say what changed and why.
+
+Load read: you get the four loads, weekly totals, the run of training days, the 28-day intensity split, readiness, overnight signals and "next_7_days": what is scheduled and, per load, "room" ("hold" keeps the athlete's normal, "limit" is the most before ramping too fast; hours for cardio, miles for distance, feet for climb and descent). Answer four questions, one or two sentences each, distance and vert together:
+- last_week: how the last complete week went against the weeks before it.
+- trend: where volume, vert and intensity are heading over the weeks.
+- watch: the load, flag or overnight signal most worth watching and why, or say nothing stands out.
+- next: what the next seven days should hold, from the room, what is scheduled and the athlete_note. Name amounts only from the data.
 
 Weekly review: you get last week against its plan targets, the flags it raised and any reason to replan.
 - week: two or three sentences on how the week went against its targets, naming miles and feet together, time below AeT and any flag.
@@ -222,6 +228,63 @@ def rules_note(packet: dict) -> dict:
     return {"note": " ".join(lines)}
 
 
+LOAD_FIELDS = ("last_week", "trend", "watch", "next")
+
+
+def load_packet(today: dict, acts: list[dict], next_week: dict) -> dict:
+    """Context for the Load page's read, built from the /api/today payload, the athlete's
+    activities and the Load page's next-7-days block."""
+    day = date.fromisoformat(today["date"])
+    sched = next_week["scheduled"]
+    return {
+        "date": today["date"],
+        "readiness": {k: {"state": today["readiness"][k]["state"], "reason": today["readiness"][k]["reason"]}
+                      for k in ("engine", "legs")},
+        "overnight": _overnight(today.get("wellness")),
+        "ledgers": {name: _ledger(d, name) for name, d in today["ledgers"].items()},
+        "weeks": weekly_history(acts, day, 8),
+        "rest": rest_pattern(acts, day),
+        "intensity_28d_pct": _intensity(today),
+        "next_7_days": {"start": next_week["start"], "end": next_week["end"],
+                        "scheduled": {"runs": sched["runs"], "distance_mi": _r(sched["miles"], 1),
+                                      "gain_ft": _r(sched["gain_ft"]), "loss_ft": _r(sched["loss_ft"]),
+                                      "hours": _r(sched["hours"], 1)},
+                        "room": {name: {"unit": r["unit"], "hold": _r(r["hold"], 1 if r["unit"] in ("hours", "miles") else 0),
+                                        "limit": _r(r["limit"], 1 if r["unit"] in ("hours", "miles") else 0)}
+                                 for name, r in next_week["room"].items()}},
+    }
+
+
+def rules_load(packet: dict) -> dict:
+    """The Load read from engine numbers alone."""
+    weeks = [w for w in packet["weeks"] if w["complete"]]
+    last = weeks[-1] if weeks else None
+    last_week = ("No complete week yet." if last is None else
+                 f"{last['distance_mi']} mi with {last['gain_ft']:,} ft up and {last['loss_ft']:,} ft down"
+                 f" in {last['hours']} h.")
+    led = packet["ledgers"]
+    moving = {k: v["vs_normal_pct"] for k, v in led.items() if v["vs_normal_pct"] is not None}
+    if moving:
+        up = max(moving, key=lambda k: moving[k])
+        trend = f"{up.capitalize()} is furthest above its normal: {moving[up]}%." if moving[up] > 0 else \
+            "Every load sits at or under its normal."
+    else:
+        trend = "Your normal is still building."
+    flagged = [f"{k.capitalize()}: {f[0].lower()}{f[1:]}" for k, v in led.items() for f in v["flags"] if f]
+    watch = ("; ".join(flagged) + ".") if flagged else "Nothing stands out."
+    room = packet["next_7_days"]["room"]
+    if "distance" in room and "climb" in room:
+        nxt = (f"Holding your normal over the next 7 days is about {room['distance']['hold']} mi and "
+               f"{room['climb']['hold']:,} ft up; ramping starts past {room['distance']['limit']} mi or "
+               f"{room['climb']['limit']:,} ft up.")
+    else:
+        nxt = "Not enough history yet to size the next 7 days."
+    return {"last_week": last_week, "trend": trend, "watch": watch, "next": nxt}
+
+
+# Reads that run on the brief's cheaper model: short, once a day.
+CHEAP_MODES = {"load"}
+
 MODES = {
     # Short reply, so low effort keeps it quick; analysis gets more thought.
     "brief": {"label": "daily brief", "schema": BRIEF_SCHEMA, "effort": "low", "max_tokens": 6000},
@@ -234,6 +297,7 @@ MODES = {
                "prompt": INTAKE_PROMPT, "fields_only": True},
     "edit": {"label": "plan change", "schema": EDIT_SCHEMA, "effort": "low", "max_tokens": 2000,
              "prompt": EDIT_PROMPT, "fields_only": True},
+    "load": {"label": "load read", "schema": _schema(LOAD_FIELDS), "effort": "low", "max_tokens": 6000},
     # Drafting the athlete's training note from a few answers and their history.
     "note": {"label": "training note", "schema": _schema(NOTE_FIELDS), "effort": "low", "max_tokens": 4000,
              "prompt": NOTE_PROMPT},

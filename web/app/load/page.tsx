@@ -1,8 +1,10 @@
 import Link from "next/link";
+import { Suspense } from "react";
 import EngineDown from "@/components/EngineDown";
 import IntensityChart from "@/components/IntensityChart";
 import LedgerChart from "@/components/LedgerChart";
 import LinkPending from "@/components/LinkPending";
+import LoadRead, { loadRead, LoadReadPending } from "@/components/LoadRead";
 import NextWeek from "@/components/NextWeek";
 import Pill from "@/components/Pill";
 import WeeklyStats from "@/components/WeeklyStats";
@@ -17,6 +19,7 @@ const RANGES = { "6w": { days: 42, label: "6 wk" }, "6m": { days: 182, label: "6
 export default async function LoadPage({ searchParams }: { searchParams: Promise<{ range?: string }> }) {
   const { range: r } = await searchParams;
   const range = (r && r in RANGES ? r : "6m") as keyof typeof RANGES;
+  const read = loadRead();
   let data: LoadData;
   try {
     data = await engine<LoadData>(`/api/load?days=${RANGES[range].days}`);
@@ -49,6 +52,10 @@ export default async function LoadPage({ searchParams }: { searchParams: Promise
           ))}
         </nav>
       </header>
+
+      <Suspense fallback={<LoadReadPending />}>
+        <LoadRead reply={read} />
+      </Suspense>
 
       <NextWeek data={data.next_week} />
 

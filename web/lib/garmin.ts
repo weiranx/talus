@@ -242,15 +242,20 @@ export class WatchSession {
 
   async connect(): Promise<void> {
     const bt = (navigator as any).bluetooth;
-    this.onProgress({ phase: "Choose your watch in the browser's list" });
+    this.onProgress({ phase: "Choose your watch in the browser's list. It may show as an unnamed or unknown device." });
+    // The watch advertises only Garmin's manufacturer data, with no name or services, and
+    // Chrome's filters don't match that, so the list shows every device.
     this.device = await bt.requestDevice({
-      filters: [{ manufacturerData: [{ companyIdentifier: GARMIN_COMPANY }] }, { services: [ML_SERVICE] }],
+      acceptAllDevices: true,
       optionalServices: [ML_SERVICE],
+      optionalManufacturerData: [GARMIN_COMPANY],
     });
     this.device.addEventListener("gattserverdisconnected", () => this.fail(new Error("The watch disconnected.")));
     this.onProgress({ phase: "Connecting" });
     const server = await this.device.gatt.connect();
-    const svc = await server.getPrimaryService(ML_SERVICE);
+    const svc = await server.getPrimaryService(ML_SERVICE).catch(() => {
+      throw new Error("That device isn't a Garmin watch. Try again and pick the watch.");
+    });
     this.recv = await svc.getCharacteristic(ml(0x2810));
     this.send = await svc.getCharacteristic(ml(0x2820));
     this.recv.addEventListener("characteristicvaluechanged", (e: any) => {

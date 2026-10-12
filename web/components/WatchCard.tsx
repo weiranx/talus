@@ -53,7 +53,9 @@ export default function WatchCard({ lastSync }: { lastSync: string | null }) {
       if (todo.length) say(true, `Pulled ${todo.length} ${todo.length === 1 ? "file" : "files"}: ${added} new ${added === 1 ? "activity" : "activities"}.`);
     } catch (e) {
       const msg = (e as Error).message;
-      say(false, (e as Error).name === "NotFoundError"
+      // Chrome on a Mac refuses to connect to Garmin watches; Windows, Android and the iPhone app work.
+      if (/unsupported device/i.test(msg)) say(false, "This browser can't connect to the watch (Chrome on a Mac refuses it). Sync from the Talus iPhone app instead, or Chrome on Windows or Android.");
+      else say(false, (e as Error).name === "NotFoundError"
         ? "No watch chosen. If it wasn't in the list, your phone is holding its connection: turn Bluetooth off in the phone's Settings (not Control Center) and try again." : msg);
     } finally {
       session.disconnect();
@@ -75,8 +77,9 @@ export default function WatchCard({ lastSync }: { lastSync: string | null }) {
       </div>
       <div className="muted">
         Pulls activities, sleep, HRV and resting heart rate straight off your watch over Bluetooth, without Garmin&apos;s
-        servers. Nothing on the watch is changed or deleted. Your watch stays hidden while it&apos;s connected to your
-        phone, so turn off Bluetooth on the phone first, and keep the watch close. Overnight files only stay on the
+        servers. Nothing on the watch is changed or deleted. The Talus iPhone app syncs alongside Garmin Connect. In a
+        browser (Chrome or Edge on Windows or Android; Chrome on a Mac can&apos;t connect), turn off Bluetooth in your
+        phone&apos;s Settings first, since the watch stays hidden while the phone holds it, and keep the watch close. Overnight files only stay on the
         watch until Garmin Connect syncs them, so sync here first for sleep and HRV.
       </div>
       {supported ? (

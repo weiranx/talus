@@ -12,6 +12,12 @@ enum Fmt {
 
     static func pct(_ v: Double) -> String { "\(Int((v * 100).rounded()))%" }
 
+    /// +14%, −8% or 0%: a ledger against your normal, as the web's Today cards lead with it.
+    static func signedPct(_ v: Double) -> String {
+        let p = Int((v * 100).rounded())
+        return p == 0 ? "0%" : "\(p > 0 ? "+" : "−")\(abs(p))%"
+    }
+
     static func duration(_ seconds: Double) -> String {
         let s = Int(seconds.rounded())
         return String(format: "%d:%02d", s / 3600, (s % 3600) / 60)
@@ -149,14 +155,29 @@ struct Pill: View {
     }
 }
 
+/// A surface with a hairline border and, in light mode, a soft shadow. `accent` draws a stripe
+/// along the top edge in that color, the way the web's ledger cards do.
 struct Card<Content: View>: View {
+    var accent: Color? = nil
     @ViewBuilder var content: Content
+    @Environment(\.colorScheme) private var scheme
+
+    static var radius: CGFloat { 16 }
 
     var body: some View {
+        let shape = RoundedRectangle(cornerRadius: Self.radius)
         VStack(alignment: .leading, spacing: 10) { content }
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(16)
-            .background(Color(uiColor: .secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 14))
+            .padding(.top, accent == nil ? 0 : 2)
+            .background(Color(uiColor: .secondarySystemGroupedBackground), in: shape)
+            .overlay(alignment: .top) {
+                if let accent { accent.frame(height: 3) }
+            }
+            .clipShape(shape)
+            .overlay(shape.strokeBorder(Color.primary.opacity(scheme == .dark ? 0.1 : 0.07), lineWidth: 1))
+            .shadow(color: .black.opacity(scheme == .dark ? 0 : 0.05), radius: 1, y: 1)
+            .shadow(color: .black.opacity(scheme == .dark ? 0 : 0.04), radius: 8, y: 4)
     }
 }
 

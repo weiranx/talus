@@ -415,7 +415,7 @@ private struct DraftCard: View {
                 .font(.subheadline).foregroundStyle(.secondary)
             PlanActions(draftId: draft.id, reload: reload)
         }
-        .overlay(RoundedRectangle(cornerRadius: 14).stroke(Color.primary, lineWidth: 2))
+        .overlay(RoundedRectangle(cornerRadius: Card<EmptyView>.radius).stroke(Color.primary, lineWidth: 2))
     }
 
     static func brief(_ w: WeekBrief) -> String {
@@ -844,7 +844,7 @@ private struct ChatCard: View {
                 Text(m.text)
                 if !mine, m.source == "coach", let id = m.logId {
                     Text("AI coach, numbers checked").font(.caption2).foregroundStyle(.secondary)
-                    if let cost = m.cost { Text(cost.text).font(.caption2.monospaced()).foregroundStyle(.secondary) }
+                    if let cost = m.cost { Text(cost.text).font(.caption2.monospacedDigit()).foregroundStyle(.secondary) }
                     CoachFeedback(logId: id, initial: nil)
                 }
             }

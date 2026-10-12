@@ -542,3 +542,57 @@ def test_match_prefers_the_same_type():
     from talus import schedule
     schedule.match(items, acts)
     assert items[0]["activity"]["id"] == 2 and items[1]["activity"]["id"] == 1
+
+
+def test_race_types_from_the_objective():
+    assert planner.race_type(3.1, 100) == "road" and planner.race_type(26.2, 1200) == "road"
+    assert planner.race_type(13.1, 3000) == "mountain"  # a hilly half is a mountain day
+    assert planner.race_type(31, 7000) == "mountain"
+    assert planner.race_type(100, 22000) == "hundred" and planner.race_type(240, 30000) == "multiday"
+    assert planner.week_kinds(20, 2)[-3:] == ["taper", "taper", "race"]
+    assert planner.week_kinds(6, 2)[-3:] == ["build", "taper", "race"]  # too short for two
+
+
+def test_road_plans_cap_the_long_run_add_quality_and_drop_vert():
+    acts = _acts(miles=(6, 16), gain=(600, 3500))
+    hist = _history(acts)
+    c = planner.Constraints(days=[1, 2, 3, 5, 6], weekend_min=480)
+    marathon = _obj(16, name="City Marathon", distance_mi=26.2, gain_ft=800, loss_ft=800, longest_descent_ft=None,
+                    high_point_ft=None)
+    p = planner.build(marathon, acts, hist, c, TODAY)
+    assert p["race_type"] == "road" and not p["back_to_back"]
+    builds = [w for w in p["weeks"] if w["focus"] in ("build", "peak")][1:]
+    assert max(w["long"]["miles"] for w in builds) <= 20.5  # a marathon long run tops out near 20 mi
+    assert all(w["workout"] == "race_pace" for w in builds)
+    assert max(w["gain_ft"] for w in builds) < 2000  # trail vert steps down
+    assert [w["focus"] for w in p["weeks"]][-3:] == ["taper", "taper", "race"]
+    five = planner.build(_obj(10, name="Turkey Trot", distance_mi=3.1, gain_ft=100, loss_ft=100,
+                              longest_descent_ft=None, high_point_ft=None), acts, hist, c, TODAY)
+    assert {w["workout"] for w in five["weeks"] if w["focus"] in ("build", "peak")} == {"track"}
+    assert five["peak"]["miles"] >= five["baseline"]["miles"]  # a road plan keeps its miles
+    s = {"kind": "long", "miles": 18, "gain_ft": 200, "loss_ft": 200, "minutes": 160, "race": "road", "focus": "peak"}
+    t = planner.session_text(s, 150)
+    assert t["title"] == "Long run" and "goal race pace" in t["how"] and "hike" not in t["how"]
+    assert "5 mi steady at your goal race pace" in planner.session_text(
+        {"kind": "race_pace", "miles": 9, "gain_ft": 100, "loss_ft": 100, "minutes": 80}, 150)["how"]
+
+
+def test_hundred_plans_train_with_smaller_pairs_nights_and_a_longer_taper():
+    acts = _acts(miles=(6, 16), gain=(600, 3500))
+    hist = _history(acts)
+    c = planner.Constraints(days=[1, 2, 3, 5, 6], weekend_min=480)
+    hundred = _obj(26, name="Canyons 100M", distance_mi=100, gain_ft=22000, loss_ft=22000, longest_descent_ft=None,
+                   high_point_ft=None)
+    p = planner.build(hundred, acts, hist, c, TODAY)
+    assert p["race_type"] == "hundred" and p["back_to_back"]
+    assert [w["focus"] for w in p["weeks"]][-3:] == ["taper", "taper", "race"]
+    assert p["peak"]["miles"] < 90 and p["peak"]["gain_ft"] < 22000  # not a week near the race's size
+    nights = [w for w in p["weeks"] if w["night"]]
+    assert nights and all(any("in the dark" in n for n in w["notes"]) for w in nights)
+    rules = {d["key"]: d["rule"] for d in p["projected"]["dims"]}
+    assert rules["big_day"] == 0.35 and rules["climbing_volume"] == 0.56 and rules["descent_durability"] == 0.75
+    assert p["projected"]["verdict"] != "gap"
+    s = {"kind": "long", "miles": 25, "gain_ft": 5000, "loss_ft": 5000, "minutes": 400, "race": "multiday",
+         "night": True}
+    how = planner.session_text(s, 150)["how"]
+    assert "250 kcal an hour" in how and "in the dark" in how and "sleep stop" in how

@@ -14,7 +14,7 @@ export const STATUS_TONE: Record<DimStatus, "good" | "warn" | "bad" | "neutral">
 
 export const KIND_COLOR: Record<SessionKind, string> = {
   long: "var(--climb)", long2: "var(--climb)", hills: "var(--descent)", easy: "var(--cardio)", rest: "var(--line)",
-  track: "var(--target)", tempo: "var(--target)", hill_repeats: "var(--descent)",
+  track: "var(--target)", tempo: "var(--target)", hill_repeats: "var(--descent)", race_pace: "var(--target)",
   objective: "var(--ink)", done: "var(--z1)",
 };
 
@@ -27,7 +27,7 @@ export function dimValue(d: Dim, v: number | null): string {
 }
 
 export const WORKOUT_TEXT: Record<Workout, string> = {
-  none: "None", track: "Track intervals", tempo: "Tempo", hill_repeats: "Hill repeats",
+  none: "Default", track: "Track intervals", tempo: "Tempo", hill_repeats: "Hill repeats", race_pace: "Race pace",
 };
 
 export function hours(h: number): string {
@@ -61,3 +61,10 @@ export function cover(w: WeekProgress): { share: Record<"miles" | "gain_ft" | "l
   const state = vals.some((v) => v > 1.15) ? "over" : vals.every((v) => v >= 0.9) ? "covered" : vals.some((v) => v < 0.7) ? "short" : "close";
   return { share, state };
 }
+
+// What each race type's plan does differently, for the plan page.
+export const RACE_TYPE_TEXT: Record<string, string> = {
+  road: " A road plan: a long run sized to the race, less vert, a weekly quality session and a taper.",
+  hundred: " A 100-mile plan: long days well short of the race that practice power-hiking, race food and, every third build week, the dark; then a two-week taper.",
+  multiday: " A multi-day plan: long days well short of the race that practice power-hiking, race food and, every third build week, the dark with a short sleep stop; then a two-week taper.",
+};

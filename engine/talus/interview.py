@@ -401,7 +401,7 @@ def rules_edits(text: str) -> list[dict]:
     return edits
 
 
-SPEED_WORDS = r"(?:track|intervals?|speed ?work|speed|repeats|reps|tempo|threshold|workouts?|quality)"
+SPEED_WORDS = r"(?:track|intervals?|speed ?work|speed|repeats|reps|tempo|threshold|workouts?|quality|(?:race|goal|marathon) pace)"
 
 
 def rules_workout(t: str) -> str | None:
@@ -412,6 +412,8 @@ def rules_workout(t: str) -> str | None:
         return "none"
     if re.search(r"hill (?:repeats|reps|intervals|sprints)|uphill (?:repeats|intervals)", t):
         return "hill_repeats"
+    if re.search(r"(?:race|goal|marathon) pace", t):
+        return "race_pace"
     if re.search(r"tempo|threshold", t):
         return "tempo"
     return "track"
@@ -548,6 +550,19 @@ def draft_summary(plan: dict, name: str, long_day: int, a: dict) -> str:
                      f"with {_ft(two['gain_ft'])} ft up on the {_weekday(two['day'])} next to it.")
     elif big:
         lines.append(f"Your biggest long day is {_mi(big['miles'])} mi with {_ft(big['gain_ft'])} ft up, on a {DAY_NAMES[long_day]}.")
+    rtype = plan.get("race_type")
+    tapers = sum(w["focus"] == "taper" for w in plan["weeks"])
+    taper = "a one-week taper" if tapers == 1 else f"a {tapers}-week taper" if tapers else ""
+    speed = next((w["workout"] for w in plan["weeks"] if w.get("workout")), None)
+    if rtype == "road":
+        lines.append("It's a road plan: easy miles with less vert than a trail build"
+                     + (f", one {WORKOUTS[speed].lower()} session a week" if speed in WORKOUTS else "")
+                     + (f" and {taper}" if taper else "") + ".")
+    elif rtype in ("hundred", "multiday"):
+        lines.append(f"For a {'multi-day' if rtype == 'multiday' else '100-mile'} race the long days stay well short "
+                     "of the race: they practice power-hiking, eating from the first hour, and, every third build week, "
+                     "moving in the dark" + (" with a short sleep stop" if rtype == "multiday" else "")
+                     + (f". Then {taper}." if taper else "."))
     if not plan["reachable"]:
         opts = plan.get("options") or {}
         lines.append("It can't get you all the way there by this date inside the load limits, and it won't loosen them."

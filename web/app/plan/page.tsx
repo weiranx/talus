@@ -19,7 +19,7 @@ import ThisWeek from "@/components/plan/ThisWeek";
 import WeeksTable from "@/components/plan/WeeksTable";
 import { engine, engineFailed } from "@/lib/api";
 import { dayLabel, mi, n0 } from "@/lib/format";
-import { FOCUS_TEXT } from "@/lib/plan";
+import { FOCUS_TEXT, RACE_TYPE_TEXT } from "@/lib/plan";
 import type { ChatMessage, Plan, PlanPage, Schedule, Talk } from "@/lib/types";
 
 export const dynamic = "force-dynamic";
@@ -208,6 +208,7 @@ export default async function PlanPageView({ searchParams }: { searchParams: Pro
           <div className="muted" style={{ fontSize: 14 }}>
             Peak {mi(p.accepted.peak.miles)} mi and {n0(p.accepted.peak.gain_ft)} ft up a week. Lighter weeks are recovery and taper; this week is outlined.
             {p.accepted.back_to_back ? " Long weekends are back-to-back long days, so no single day has to carry the whole distance." : ""}
+            {RACE_TYPE_TEXT[p.accepted.race_type ?? ""] ?? ""}
           </div>
           <RoadChart weeks={p.accepted.weeks} current={weekStart(p.date)} actuals={p.actuals} />
         </section>

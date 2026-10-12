@@ -1031,7 +1031,7 @@ class ConstraintsIn(BaseModel):
     long_day: int = Field(ge=0, le=6)
     notes: str = Field(default="", max_length=500)
     back_to_back: bool | None = None  # left out: keep the current setting
-    workout: str | None = Field(default=None, pattern="^(none|track|tempo|hill_repeats)$")  # left out: keep
+    workout: str | None = Field(default=None, pattern="^(none|track|tempo|hill_repeats|race_pace)$")  # left out: keep
 
 
 @app.put("/api/plan/constraints")

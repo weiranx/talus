@@ -372,7 +372,7 @@ export interface Objective {
   days_to_go: number;
 }
 
-export type Workout = "none" | "track" | "tempo" | "hill_repeats";
+export type Workout = "none" | "track" | "tempo" | "hill_repeats" | "race_pace";
 
 export interface Constraints {
   days: number[]; weekday_min: number; weekend_min: number; long_day: number; notes: string;
@@ -427,12 +427,13 @@ export interface Plan {
   projected: ReadinessEval & { capacity: Record<string, number> };
   reachable: boolean;
   back_to_back?: boolean;
+  race_type?: "mountain" | "road" | "hundred" | "multiday";
   options: { smaller: { factor: number; distance_mi: number; gain_ft: number; loss_ft: number } | null; later: string | null };
   now: ReadinessEval;
   changes: { start: string; before: WeekBrief | null; after: WeekBrief }[];
 }
 
-export type SessionKind = "long" | "long2" | "hills" | "easy" | "track" | "tempo" | "hill_repeats" | "rest" | "objective" | "done";
+export type SessionKind = "long" | "long2" | "hills" | "easy" | "track" | "tempo" | "hill_repeats" | "race_pace" | "rest" | "objective" | "done";
 
 export interface PlanSession {
   day: string;

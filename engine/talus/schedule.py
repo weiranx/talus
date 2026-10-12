@@ -21,7 +21,7 @@ KINDS = {
     "easy": "Easy run", "long": "Long run", "hills": "Hills", "tempo": "Tempo", "intervals": "Intervals",
     "hike": "Hike", "race": "Race", "other": "Run",
 }
-PLAN_KIND = {"long": "long", "long2": "long", "track": "intervals", "tempo": "tempo", "hill_repeats": "hills", "hills": "hills", "easy": "easy", "objective": "race"}
+PLAN_KIND = {"long": "long", "long2": "long", "track": "intervals", "tempo": "tempo", "hill_repeats": "hills", "race_pace": "tempo", "hills": "hills", "easy": "easy", "objective": "race"}
 MAX_AHEAD_DAYS = 366
 PROJECT_DAYS = 42  # the Load page draws scheduled runs this far ahead at most
 

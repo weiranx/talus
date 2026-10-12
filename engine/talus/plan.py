@@ -66,10 +66,67 @@ B2B_MIN = 0.33
 B2B_SPLIT = 0.60  # the first day's share of the pair
 PAIR_SHARE = {"miles": 0.55, "gain_ft": 0.6, "loss_ft": 0.6}  # the pair's share of the week
 # Speed work, one session a week in build, peak and taper weeks when the athlete asks for it.
-WORKOUTS = {"track": "Track intervals", "tempo": "Tempo", "hill_repeats": "Hill repeats"}
-WORKOUT_VERT = {"track": 0.0, "tempo": 0.5, "hill_repeats": 2.0}  # the day's vert weight; easy is 1
+WORKOUTS = {"track": "Track intervals", "tempo": "Tempo", "hill_repeats": "Hill repeats", "race_pace": "Race pace"}
+WORKOUT_VERT = {"track": 0.0, "tempo": 0.5, "hill_repeats": 2.0, "race_pace": 0.3}  # the day's vert weight; easy is 1
 WORKOUT_CARDIO = 1.2  # a speed session's cardio load per hour, against an easy hour
 HOLD_ABOVE = 1.25
+# Race types. The objective's shape picks how the plan trains: a flat race up to a marathon is a
+# road race, 90 mi and up a hundred, 150 mi and up a multi-day race, and the rest mountain days.
+ROAD_MAX_MI = 27.0
+ROAD_FT_PER_MI = 60.0
+HUNDRED_MI = 90.0
+MULTIDAY_MI = 150.0
+RACE_TYPES = {"mountain": "Mountain day", "road": "Road race", "hundred": "100-mile race",
+              "multiday": "Multi-day race"}
+# Hundreds and multi-day races can't be trained with a long day near their size: the long pair
+# is a smaller share of the race, and weekly vert a smaller share of its total. Readiness rules
+# for big-day size, time on feet and vert volume scale with them.
+LONG_TARGET_BY_TYPE = {"hundred": 0.36, "multiday": 0.20}
+VOLUME_TARGET_BY_TYPE = {"hundred": 0.60, "multiday": 0.35}
+# Road races: the long run by race distance (5k, 10k, half, marathon), interpolated between,
+# carrying a third of the week's miles; the week's quality session defaults by distance.
+ROAD_LONG_MI = ((3.1, 7.0), (6.2, 9.0), (13.1, 13.0), (26.2, 20.0))
+ROAD_LONG_SHARE = 0.33
+NIGHT_EVERY = 3  # hundreds and multi-day races: a night long day every third build week
+# Taper weeks before the race week, with each one's share of the build level.
+TAPERS = {1: (0.70,), 2: (0.80, 0.60)}
+
+
+def race_type(distance_mi: float, gain_ft: float) -> str:
+    if distance_mi >= MULTIDAY_MI:
+        return "multiday"
+    if distance_mi >= HUNDRED_MI:
+        return "hundred"
+    if distance_mi <= ROAD_MAX_MI and gain_ft <= ROAD_FT_PER_MI * distance_mi:
+        return "road"
+    return "mountain"
+
+
+def road_long_mi(distance_mi: float) -> float:
+    pts = ROAD_LONG_MI
+    if distance_mi <= pts[0][0]:
+        return pts[0][1]
+    for (d0, l0), (d1, l1) in zip(pts, pts[1:]):
+        if distance_mi <= d1:
+            return l0 + (l1 - l0) * (distance_mi - d0) / (d1 - d0)
+    return pts[-1][1]
+
+
+def road_workout(distance_mi: float) -> str:
+    """The default quality session for a road race: track for a 5k or 10k, tempo for a half,
+    race-pace miles for a marathon."""
+    return "track" if distance_mi <= 6.5 else "tempo" if distance_mi <= 13.5 else "race_pace"
+
+
+def taper_weeks(rtype: str, distance_mi: float) -> int:
+    return 2 if rtype in ("hundred", "multiday") or (rtype == "road" and distance_mi > 20) else 1
+
+
+def rule_scale(rtype: str) -> dict:
+    """How much each readiness rule shrinks for a race type: 1 for all but hundreds and multi-day."""
+    big = LONG_TARGET_BY_TYPE.get(rtype, LONG_TARGET) / LONG_TARGET
+    vol = VOLUME_TARGET_BY_TYPE.get(rtype, VOLUME_TARGET) / VOLUME_TARGET
+    return {"big_day": big, "time_on_feet": big, "climbing_volume": vol, "descent_volume": vol}
 ADJUST_RANGE = (0.5, 1.2)  # an asked-for week change scales its targets within these
 CUT_STEP = 0.90  # a week over a ledger limit is cut 10% at a time
 MIN_CUT = 0.30
@@ -155,6 +212,7 @@ def demand(obj: Objective, p: dict) -> dict:
     effort = effort_miles(obj.distance_mi, obj.gain_ft)
     t = estimate_time(effort, p["min_per_effort_mi"])
     return {"distance_mi": obj.distance_mi, "gain_ft": obj.gain_ft, "loss_ft": obj.loss_ft, "effort_mi": effort,
+            "race_type": race_type(obj.distance_mi, obj.gain_ft),
             "longest_climb_ft": obj.longest_climb_ft, "longest_descent_ft": obj.longest_descent_ft,
             "high_point_ft": obj.high_point_ft, "time": t | {"pace_learned": p["learned"]},
             "dims": {"big_day": effort, "time_on_feet": t["mid_h"], "climbing_volume": obj.gain_ft,
@@ -206,7 +264,10 @@ PAIR_LABEL = {"big_day": "Largest single day or back-to-back pair, last 8 weeks"
 def evaluate(dem: dict, cap: dict, pairs: bool = False) -> dict:
     """Each dimension reads ready, close or gap; the limiter is the furthest behind its rule."""
     dims = []
+    scale = rule_scale(dem.get("race_type", "mountain"))
     for key, name, dem_text, cap_text, rule, unit in DIMENSIONS:
+        if rule is not None:
+            rule = round(rule * scale.get(key, 1.0), 2)
         if pairs:
             cap_text = PAIR_LABEL.get(key, cap_text)
         need, have = dem["dims"].get(key), cap.get(key)
@@ -265,11 +326,12 @@ def rates(acts: list[dict], today: date) -> dict:
             "descent_per_ft": sum(a["descent_load"] for a in recent) / loss if loss > 500 else 0.9}
 
 
-def week_kinds(n: int) -> list[str]:
+def week_kinds(n: int, tapers: int = 1) -> list[str]:
     """Build, recovery, taper and race weeks for a plan of n weeks, the last holding the objective.
     Recovery weeks are counted back from the taper, so the four weeks before it are all build:
-    those are the weeks objective readiness reads."""
-    tail = ["taper", "race"] if n >= 6 else ["race"]
+    those are the weeks objective readiness reads. A plan too short for `tapers` taper weeks
+    gets one, and one under 6 weeks none."""
+    tail = (["taper"] * tapers + ["race"] if n >= 5 + tapers else ["taper", "race"] if n >= 6 else ["race"])
     m = n - len(tail)
     kinds = ["recovery" if (m - 1 - i) % RECOVERY_EVERY == 0 and m - 1 - i > 0 and i > 0 else "build"
              for i in range(m)]
@@ -338,10 +400,12 @@ def _workout_day(workout: str | None, others: list[date], hills: date | None, pa
 
 
 def sessions_for_week(target: dict, week_start: date, first_day: date, c: Constraints,
-                      pace_min: float, b2b: bool = False, workout: str | None = None) -> tuple[list[dict], list[str]]:
+                      pace_min: float, b2b: bool = False, workout: str | None = None,
+                      road_long: float | None = None) -> tuple[list[dict], list[str]]:
     """Split a week's miles, gain and loss into seven days: a long day (with `b2b`, a pair of
     long days back to back), one hill day, at most one speed session (`workout`) and easy days,
-    each held to that day's time limit. Days before `first_day` and days the athlete can't train are rest. Returns the days and a
+    each held to that day's time limit. For a road race (`road_long`, the longest long run in
+    miles) the long run takes a third of the week and never runs past that. Days before `first_day` and days the athlete can't train are rest. Returns the days and a
     note for each day a time limit cut."""
     days = [week_start + timedelta(days=i) for i in range(7)]
     avail = [d for d in days if d.weekday() in c.days and d >= first_day]
@@ -357,7 +421,7 @@ def sessions_for_week(target: dict, week_start: date, first_day: date, c: Constr
              if len(others) >= 2 else None)
     speed = _workout_day(workout, others, hills, pair)
     weights: dict[date, dict[str, float]] = {}
-    share = PAIR_SHARE if second else LONG_SHARE
+    share = PAIR_SHARE if second else LONG_SHARE | ({"miles": ROAD_LONG_SHARE} if road_long else {})
     long_share = {k: (1.0 if not others else max(share[k], len(pair) / len(avail))) if long_day else 0.0
                   for k in DIMS}
     if long_day:
@@ -373,6 +437,8 @@ def sessions_for_week(target: dict, week_start: date, first_day: date, c: Constr
                       "loss_ft": (1 - long_share["loss_ft"]) * vert[d] / (sum(vert.values()) or 1)}
     # Fill days in proportion to their weights; a day over its time limit is held there and
     # what it couldn't take moves to the days that still have room.
+    # A road long run grows past its race distance's size only as its share of a bigger week.
+    most_long = max(road_long or 0.0, share["miles"] * target["miles"])
     alloc = {d: {k: 0.0 for k in DIMS} for d in weights}
     left = {k: target[k] for k in DIMS}
     open_days = set(weights)
@@ -388,8 +454,10 @@ def sessions_for_week(target: dict, week_start: date, first_day: date, c: Constr
         left = dict.fromkeys(DIMS, 0.0)
         for d in list(open_days):
             minutes = effort_miles(alloc[d]["miles"], alloc[d]["gain_ft"]) * pace_min
-            if minutes > c.cap(d):
-                cut = c.cap(d) / minutes
+            cut = c.cap(d) / minutes if minutes > c.cap(d) else 1.0
+            if road_long and d == long_day and alloc[d]["miles"] > most_long:
+                cut = min(cut, most_long / alloc[d]["miles"])
+            if cut < 1.0:
                 for k in DIMS:
                     left[k] += alloc[d][k] * (1 - cut)
                     alloc[d][k] *= cut
@@ -454,23 +522,36 @@ def build(obj: Objective, acts: list[dict], history: list[LedgerDay], c: Constra
     r = rates(acts, today)
     week0 = today - timedelta(days=today.weekday())
     n = (obj.day - week0).days // 7 + 1
-    kinds = week_kinds(n)
+    rtype = dem["race_type"]
+    kinds = week_kinds(n, taper_weeks(rtype, obj.distance_mi))
     pairs = b2b_sized(dem)
     b2b = pairs and c.back_to_back
+    lt = LONG_TARGET_BY_TYPE.get(rtype, LONG_TARGET)
+    volume = VOLUME_TARGET_BY_TYPE.get(rtype, VOLUME_TARGET)
+    long_target = {"miles": obj.distance_mi * lt, "gain_ft": obj.gain_ft * lt, "loss_ft": obj.loss_ft * lt}
+    share = LONG_SHARE
+    if rtype == "road":
+        # A road long run is set by the race distance, and runs a third of the week's miles.
+        f = road_long_mi(obj.distance_mi) / obj.distance_mi
+        long_target = {k: v * f / lt for k, v in long_target.items()}
+        share = LONG_SHARE | {"miles": ROAD_LONG_SHARE}
     # With back-to-back days the pair, not one day, carries the long-day target: big enough that
     # its readiness credit reaches the same size.
-    long_target = {"miles": obj.distance_mi * LONG_TARGET, "gain_ft": obj.gain_ft * LONG_TARGET,
-                   "loss_ft": obj.loss_ft * LONG_TARGET}
-    share = LONG_SHARE
     if b2b:
         long_target = {k: v / B2B_CREDIT for k, v in long_target.items()}
         share = PAIR_SHARE
     need = {"miles": long_target["miles"] / share["miles"],
-            "gain_ft": max(obj.gain_ft * VOLUME_TARGET, long_target["gain_ft"] / share["gain_ft"]),
-            "loss_ft": max(obj.loss_ft * VOLUME_TARGET, long_target["loss_ft"] / share["loss_ft"])}
+            "gain_ft": max(obj.gain_ft * volume, long_target["gain_ft"] / share["gain_ft"]),
+            "loss_ft": max(obj.loss_ft * volume, long_target["loss_ft"] / share["loss_ft"])}
+    default_speed = road_workout(obj.distance_mi) if rtype == "road" else None
+    tapers = [i for i, k in enumerate(kinds) if k == "taper"]
+    builds = 0
     # Build to what the objective needs. Already past it, hold no more than HOLD_ABOVE of it:
     # more volume than the day calls for only makes the long day oversized.
     peak = {k: max(need[k], min(base[k], need[k] * HOLD_ABOVE)) for k in DIMS}
+    road_long = road_long_mi(obj.distance_mi) if rtype == "road" else None
+    if road_long:
+        peak["miles"] = max(need["miles"], base["miles"])  # more miles never hurt a road race; only vert steps down
     done = [a for a in acts if week0.isoformat() <= a["day"] <= today.isoformat() and is_foot(a["sport"])]
     done_today = any(a["day"] == today.isoformat() for a in done)
     done_sum = {"miles": sum(a["distance_mi"] for a in done), "gain_ft": sum(a["gain_ft"] for a in done),
@@ -488,9 +569,11 @@ def build(obj: Objective, acts: list[dict], history: list[LedgerDay], c: Constra
         if kind == "build" and i > 0:
             want = {k: peak[k] if level[k] >= peak[k] else min(peak[k], max(level[k], 1.0) * BUILD_RATE)
                     for k in DIMS}
+        elif kind == "taper":
+            f = TAPERS[len(tapers)][tapers.index(i)] if len(tapers) in TAPERS else TAPER
+            want = {k: level[k] * f for k in DIMS}
         else:
-            want = {k: level[k] * {"build": 1.0, "recovery": RECOVERY, "taper": TAPER, "race": RACE_WEEK}[kind]
-                    for k in DIMS}
+            want = {k: level[k] * {"build": 1.0, "recovery": RECOVERY, "race": RACE_WEEK}[kind] for k in DIMS}
         first = first_planned if i == 0 else start
         planned = {k: max(0.0, want[k] - done_sum[k]) for k in DIMS} if i == 0 else dict(want)
         asked = [a for a in c.adjust if a["week"] == start.isoformat()]
@@ -500,9 +583,9 @@ def build(obj: Objective, acts: list[dict], history: list[LedgerDay], c: Constra
                 if ("miles" if k == "miles" else "vert") in a.get("dims", []):
                     planned[k] *= f
         race = _in_week(obj.day, start)
-        speed = c.workout if c.workout in WORKOUTS and kind in ("build", "taper") else None
+        speed = (c.workout if c.workout in WORKOUTS else default_speed) if kind in ("build", "taper") else None
         sessions, notes = sessions_for_week(planned, start, first, _before(c, obj.day) if race else c, pace_min,
-                                            b2b and not race, speed)
+                                            b2b and not race, speed, road_long)
         for a in asked:
             what = _join(["miles" if d == "miles" else "vert" for d in a.get("dims", [])])
             notes.insert(0, f"{'Less' if float(a.get('factor', 1.0)) < 1 else 'More'} {what} this week, as you asked")
@@ -552,6 +635,13 @@ def build(obj: Objective, acts: list[dict], history: list[LedgerDay], c: Constra
                 # A week you asked to change doesn't move the build: the next week carries on.
                 level = {k: total[k] for k in DIMS} if limited and not asked else want
         focus = "peak" if kind == "build" and i > 0 and all(level[k] >= peak[k] * 0.98 for k in DIMS) else kind
+        builds += kind == "build"
+        # Hundreds and multi-day races: every third build week's long day runs into the night.
+        night = (rtype in ("hundred", "multiday") and kind == "build" and long is not None
+                 and builds % NIGHT_EVERY == 0)
+        if night:
+            notes.append("Run part of the long day in the dark: headlamp, night pace and eating on the move"
+                         + (", plus a 20 min sleep stop" if rtype == "multiday" else ""))
         hours = total["minutes"] / 60
         weeks.append({
             "index": i, "start": start.isoformat(), "focus": focus,
@@ -567,6 +657,7 @@ def build(obj: Objective, acts: list[dict], history: list[LedgerDay], c: Constra
                     "effort_mi": effort_miles(second["miles"], second["gain_ft"])}},
             "limited_by": limited_by if scale < 1 else [], "notes": list(dict.fromkeys(notes)),
             "workout": next((s["kind"] for s in sessions if s["kind"] in WORKOUTS), None),
+            "night": night,
         })
     # Projected readiness, read at the start of the taper (or the race week): the last 4 weeks
     # before it and the biggest long day in the 8 weeks before it.
@@ -594,7 +685,7 @@ def build(obj: Objective, acts: list[dict], history: list[LedgerDay], c: Constra
     }
     projected = evaluate(dem, proj_cap, pairs)
     return {"objective": obj.json(), "built_on": today.isoformat(), "constraints": asdict(c),
-            "back_to_back": b2b,
+            "back_to_back": b2b, "race_type": rtype,
             "baseline": base, "rates": r, "pace": p, "demand": dem, "peak": peak, "weeks": weeks,
             "projected": {"capacity": proj_cap, **projected}, "reachable": projected["verdict"] != "gap"}
 
@@ -675,6 +766,7 @@ def upcoming_sessions(plan: dict, acts: list[dict], today: date, days: int = 7,
     obj_day = date.fromisoformat(obj["day"])
     pace_min = plan["pace"]["min_per_effort_mi"]
     b2b = bool(plan.get("back_to_back"))
+    road_long = road_long_mi(obj["distance_mi"]) if plan.get("race_type") == "road" else None
     foot = [a for a in acts if is_foot(a["sport"])]
     done_today = any(a["day"] == today.isoformat() for a in foot)
     first = today + timedelta(days=1) if done_today else today
@@ -698,13 +790,14 @@ def upcoming_sessions(plan: dict, acts: list[dict], today: date, days: int = 7,
             # sizes a session ahead may grow to, by kind.
             speed = w.get("workout")
             full, _ = sessions_for_week({d: max(0.0, w[d] - sum(r[d] for r in mine.values())) for d in DIMS},
-                                        start, start, cw, pace_min, b2b and not race, speed)
+                                        start, start, cw, pace_min, b2b and not race, speed, road_long)
             most: dict[str, dict[str, float]] = {}
             for s in full:
                 m = most.setdefault(s["kind"], dict.fromkeys(DIMS, 0.0))
                 for d in DIMS:
                     m[d] = max(m[d], s[d])
-            ss, _ = sessions_for_week(left, start, max(first, start), cw, pace_min, b2b and not race, speed)
+            ss, _ = sessions_for_week(left, start, max(first, start), cw, pace_min, b2b and not race, speed,
+                                      road_long)
             for s in ss:
                 m = most.get(s["kind"])
                 if m is not None and s["day"] not in mine:
@@ -735,7 +828,10 @@ def upcoming_sessions(plan: dict, acts: list[dict], today: date, days: int = 7,
                  "minutes": plan["demand"]["time"]["mid_h"] * 60}
         elif day < first:
             s = {"day": day.isoformat(), "kind": "done", "miles": 0.0, "gain_ft": 0.0, "loss_ft": 0.0, "minutes": 0.0}
-        out.append(s | {"focus": w["focus"]})
+        extra = {"race": plan.get("race_type") or "mountain"}
+        if s["kind"] in ("long", "long2") and w.get("night"):
+            extra["night"] = True
+        out.append(s | {"focus": w["focus"]} | extra)
     return out
 
 
@@ -754,6 +850,10 @@ def workout_how(s: dict, aet: float, ant: float | None) -> str:
     if s["kind"] == "track":
         return (f"Warm up 15 min under {aet:.0f} bpm. Then {_reps(s, (4, 6, 8))} × 800 m ({hard}), with 400 m "
                 "easy jogging between. Cool down 10 min easy. A track or any flat path.")
+    if s["kind"] == "race_pace":
+        miles = _reps(s, (3, 5, 8))
+        return (f"Warm up 15 min under {aet:.0f} bpm. Then {miles} mi steady at your goal race pace, "
+                "taking a gel or drink as you will in the race. Cool down 10 min.")
     if s["kind"] == "tempo":
         block = _reps(s, ("2 × 8", "2 × 15", "3 × 12"))
         steady = f"just under {ant:.0f} bpm" if ant else "comfortably hard, a pace you could hold for an hour"
@@ -775,7 +875,12 @@ def session_text(s: dict, aet: float, objective_name: str | None = None, ant: fl
     if kind == "objective":
         return {"title": objective_name or "Objective", "how": "Go well.", "detail": f"{vol}. Go well."}
     mins = f"about {round(s['minutes'] / 5) * 5:.0f} min"
-    if kind == "long":
+    race = s.get("race", "mountain")
+    if kind == "long" and race == "road":
+        how, title = f"Easy and conversational, under {aet:.0f} bpm.", "Long run"
+        if s.get("focus") == "peak" and s["miles"] >= 10:
+            how += " Run the last 2 to 3 mi at goal race pace."
+    elif kind == "long":
         how = f"Keep it under {aet:.0f} bpm; hike the steep climbs."
         if s.get("longest_descent_ft"):
             how += f" Include one continuous descent of about {round(s['longest_descent_ft'], -2):,.0f} ft."
@@ -790,6 +895,13 @@ def session_text(s: dict, aet: float, objective_name: str | None = None, ant: fl
         how, title = f"Climb steady under {aet:.0f} bpm and hike anything steep.", "Hills"
     else:
         how, title = f"Under {aet:.0f} bpm.", "Easy aerobic"
+    if kind in ("long", "long2") and race in ("hundred", "multiday"):
+        how += (" Power-hike every climb at race effort, and eat from the first hour (about 250 kcal an hour)"
+                " with your race food.")
+        if s.get("night"):
+            how += " Run part of it in the dark with your race headlamp."
+            if race == "multiday":
+                how += " Practice a 20 min sleep stop."
     return {"title": title, "how": how, "detail": f"{vol}, {mins}. {how}"}
 
 

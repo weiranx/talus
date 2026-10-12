@@ -26,8 +26,8 @@ export default function ScoreTrend({ data }: { data: ScorePoint[] }) {
               ) : null
             }
           />
-          <Bar dataKey="score" minPointSize={3} isAnimationActive={false} radius={[2, 2, 0, 0]}>
-            {data.map((d) => <Cell key={d.day} fill={COLOR[d.call]} />)}
+          <Bar dataKey="score" minPointSize={3} isAnimationActive={false} radius={[3, 3, 3, 3]}>
+            {data.map((d, i) => <Cell key={d.day} fill={COLOR[d.call]} fillOpacity={i === data.length - 1 ? 1 : 0.55} />)}
           </Bar>
         </BarChart>
       </ResponsiveContainer>

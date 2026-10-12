@@ -106,7 +106,7 @@ export default async function TodayPage() {
           const limiter = t.readiness.legs.limiter === name && t.readiness.legs.state !== "fresh";
           const nd = ledgerDecimals(name), unit = ledgerUnit(name);
           return (
-            <section key={name} className="card" style={{ flex: "1 1 220px", gap: 10, outline: limiter ? `2px solid var(--${name})` : undefined }}>
+            <section key={name} className={`card ledger-card${limiter ? " limiter" : ""}`} style={{ flex: "1 1 220px", gap: 10, ["--accent" as string]: `var(--${name})` }}>
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
                 <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
                   <span className="swatch" style={{ background: `var(--${name})` }} />
@@ -120,7 +120,7 @@ export default async function TodayPage() {
                     <Explain path={`ledger/${name}/vs_normal`}>{d.vs_normal_text.replace(/^./, (c) => c.toUpperCase())}</Explain>
                   </div>
                 ) : (
-                  <div style={{ display: "flex", alignItems: "baseline", gap: 8, flexWrap: "wrap" }}>
+                  <div style={{ display: "flex", alignItems: "baseline", gap: 8, flexWrap: "wrap", marginBottom: 4 }}>
                     <span className="mono" style={{ fontSize: 30, fontWeight: 600, letterSpacing: "-0.03em", lineHeight: 1.1 }}>
                       <Explain path={`ledger/${name}/vs_normal`}>{signedPct(d.vs_normal)}</Explain>
                     </span>

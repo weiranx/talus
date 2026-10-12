@@ -142,8 +142,11 @@ def test_a_named_race_is_looked_up_and_confirmed(tmp_path, monkeypatch):
     fake = FakeClient({"name": "Canyons 100M", "date": None, "distance_mi": 100, "distance_km": None, "gain_ft": None,
                        "gain_m": None, "loss_ft": None, "loss_m": None}, found)
     monkeypatch.setattr(api, "coach_client", lambda: fake)
+    client.put("/api/coach/note", json={"note": "Canyons 100M in April; I want more vert than miles."})
     r = client.post("/api/plan/talk", json={"text": "training for canyons 100m for next year"}).json()
     assert len(fake.calls) == 2
+    # The athlete's training note goes to both the intake read and the lookup.
+    assert all("more vert than miles" in c["messages"][0]["content"] for c in fake.calls)
     look = fake.calls[1]
     assert look["tools"][0]["type"] == "web_search_20260209" and look["model"] == "claude-opus-5-5"
     assert r["step"] == "objective" and "I looked it up (https://example.com/canyons)" in r["messages"][-1]["text"]

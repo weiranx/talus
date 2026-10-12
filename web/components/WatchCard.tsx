@@ -76,11 +76,12 @@ export default function WatchCard({ lastSync }: { lastSync: string | null }) {
         </div>
       </div>
       <div className="muted">
-        Pulls activities, sleep, HRV and resting heart rate straight off your watch over Bluetooth, without Garmin&apos;s
-        servers. Nothing on the watch is changed or deleted. The Talus iPhone app syncs alongside Garmin Connect. In a
-        browser (Chrome or Edge on Windows or Android; Chrome on a Mac can&apos;t connect), turn off Bluetooth in your
-        phone&apos;s Settings first, since the watch stays hidden while the phone holds it, and keep the watch close. Overnight files only stay on the
-        watch until Garmin Connect syncs them, so sync here first for sleep and HRV.
+        Pulls new activities straight off your watch over Bluetooth, without Garmin&apos;s servers. Nothing on the
+        watch is changed or deleted. The Talus iPhone app syncs alongside Garmin Connect. In a browser (Chrome or Edge
+        on Windows or Android; Chrome on a Mac can&apos;t connect), turn off Bluetooth in your phone&apos;s Settings
+        first, since the watch stays hidden while the phone holds it, and keep the watch close. Sleep, HRV and resting
+        heart rate don&apos;t come from the watch, because Garmin Connect clears those files as it syncs; they still
+        come from intervals.icu or Apple Health.
       </div>
       {supported ? (
         <div className="actions">

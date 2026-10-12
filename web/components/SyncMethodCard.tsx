@@ -6,7 +6,7 @@ import type { Settings } from "@/lib/types";
 
 const METHODS: { key: Settings["sync_method"]; title: string; detail: string }[] = [
   { key: "intervals", title: "intervals.icu", detail: "Talus pulls new activities and overnight data from intervals.icu." },
-  { key: "watch", title: "Garmin watch", detail: "Sync straight from your watch over Bluetooth, here in Chrome or in the iPhone app." },
+  { key: "watch", title: "Garmin watch", detail: "Sync activities straight from your watch over Bluetooth in the iPhone app, or in Chrome on Windows or Android." },
 ];
 
 export default function SyncMethodCard({ method }: { method: Settings["sync_method"] }) {

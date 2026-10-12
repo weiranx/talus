@@ -150,14 +150,21 @@ a:hover { color: var(--link-hover); }
 h1, h2, h3 { margin: 0; }
 button { font-family: inherit; }
 
-.shell { display: flex; flex-wrap: wrap; min-height: 100vh; }
-.sidebar { flex: 1 1 200px; background: var(--surface); padding: 24px 16px; display: flex; flex-direction: column; gap: 20px; }
-.brand { font-size: 20px; font-weight: 700; letter-spacing: 0.02em; padding: 0 12px; }
-.nav { display: flex; flex-wrap: wrap; gap: 4px; }
-.nav a { flex: 1 1 150px; min-height: 44px; display: flex; align-items: center; padding: 0 12px; border-radius: 10px; color: var(--ink); text-decoration: none; font-weight: 500; }
+.shell { display: flex; min-height: 100vh; }
+/* Desktop: a fixed-width sidebar that stays put while the page scrolls. */
+.sidebar { flex: 0 0 216px; position: sticky; top: 0; height: 100vh; overflow-y: auto; background: var(--surface);
+  border-right: 1px solid var(--line); padding: 24px 14px; display: flex; flex-direction: column; gap: 20px; }
+.brand { font-size: 20px; font-weight: 700; letter-spacing: 0.02em; padding: 0 12px; display: flex; align-items: center; gap: 8px; }
+.brand-mark { width: 22px; height: 22px; color: var(--climb); }
+.nav { display: flex; flex-direction: column; gap: 2px; }
+.nav a { min-height: 44px; display: flex; align-items: center; gap: 12px; padding: 0 12px; border-radius: 10px; color: var(--ink); text-decoration: none; font-weight: 500; }
+.nav a:hover { background: var(--hover-bg); color: var(--ink); }
 .nav a[aria-current="page"] { background: var(--strong); color: var(--on-strong); font-weight: 600; }
+.nav-icon { flex-shrink: 0; opacity: 0.85; }
+.nav a[aria-current="page"] .nav-icon { opacity: 1; }
 .side-note { padding: 0 12px; font-size: 12px; color: var(--muted); display: flex; flex-direction: column; gap: 2px; }
-.main { flex: 999 1 560px; min-width: 0; padding: 28px 24px 40px; }
+.account-menu { margin-top: auto; }
+.main { flex: 1 1 0; min-width: 0; padding: 28px 32px 48px; }
 .page { max-width: 1120px; display: flex; flex-direction: column; gap: 16px; }
 
 .page-head { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: flex-end; gap: 8px; }
@@ -189,6 +196,13 @@ table { width: 100%; border-collapse: collapse; font-size: 14px; }
 th { text-align: left; font-size: 12px; font-weight: 500; color: var(--muted); padding: 0 8px 6px 0; white-space: nowrap; }
 td { padding: 9px 8px 9px 0; border-top: 1px solid var(--line); white-space: nowrap; }
 th.num, td.num { text-align: right; font-family: var(--mono); }
+th.num { font-family: inherit; }
+td a { text-decoration: none; font-weight: 500; }
+td a:hover { text-decoration: underline; }
+table.linked tbody tr:not(.week-head):hover td { background: var(--hover-bg); }
+tr.week-head td { border-top: 0; padding-top: 18px; padding-bottom: 6px; background: transparent; }
+tr.week-head:first-child td { padding-top: 4px; }
+.unit { font-family: var(--font-sans), system-ui, sans-serif; font-size: 0.68em; font-weight: 500; color: var(--muted); margin-left: 3px; letter-spacing: 0; }
 tr.hl td { background: var(--row-hl); }
 
 .zones { display: flex; height: 14px; border-radius: 4px; overflow: hidden; gap: 2px; }
@@ -239,7 +253,24 @@ code { font-family: var(--mono); font-size: 13px; background: var(--bg); padding
 .map { height: 360px; border-radius: 12px; overflow: hidden; background: var(--bg); }
 
 @media (max-width: 760px) {
-  .main { padding: 20px 16px 32px; }
+  /* Phone: a slim top bar with the brand and sign-out, and the sections as a tab bar along the bottom. */
+  .shell { flex-direction: column; }
+  .sidebar { position: sticky; top: 0; z-index: 30; height: auto; flex: none; flex-direction: row; align-items: center;
+    justify-content: space-between; padding: 10px 16px; padding-top: max(10px, env(safe-area-inset-top)); border-right: 0; border-bottom: 1px solid var(--line); overflow: visible; }
+  .brand { padding: 0; font-size: 18px; }
+  .account-menu { margin-top: 0; padding: 0; }
+  .account-email { display: none; }
+  .nav { position: fixed; z-index: 30; left: 0; right: 0; bottom: 0; flex-direction: row; gap: 0; background: var(--surface);
+    border-top: 1px solid var(--line); padding: 4px 4px max(4px, env(safe-area-inset-bottom)); }
+  .nav a { flex: 1 1 0; min-width: 0; flex-direction: column; justify-content: center; gap: 2px; min-height: 52px; padding: 4px 2px;
+    font-size: 11px; font-weight: 500; color: var(--muted); border-radius: 10px; }
+  .nav a[aria-current="page"] { background: transparent; color: var(--ink); font-weight: 700; }
+  .nav a[aria-current="page"] .nav-icon { color: var(--climb); }
+  .nav a:hover { background: transparent; }
+  .nav .link-pending { position: absolute; margin: 0; width: 10px; height: 10px; transform: translate(14px, -12px); }
+  .nav a { position: relative; }
+  .nav-label { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100%; }
+  .main { padding: 18px 16px calc(84px + env(safe-area-inset-bottom)); }
   .title { font-size: 26px; }
 }
 
@@ -314,3 +345,20 @@ code { font-family: var(--mono); font-size: 13px; background: var(--bg); padding
 .chip { min-height: 40px; padding: 0 14px; border-radius: 999px; border: 1px solid var(--line-strong); background: var(--field); color: var(--ink); font: inherit; font-size: 14px; cursor: pointer; }
 .chip[aria-pressed="true"] { background: var(--strong); color: var(--on-strong); border-color: var(--strong); }
 .chip:disabled { opacity: 0.5; cursor: default; }
+
+/* Activities: week groups, a table on wide screens and a list on phones. */
+.week-sum { font-weight: 600; color: var(--ink); }
+.act-list { display: none; }
+.act-week { display: flex; flex-direction: column; }
+.act-week + .act-week { margin-top: 14px; }
+.act-week-head { display: flex; flex-direction: column; gap: 2px; padding-bottom: 6px; }
+.act-week-sum { font-size: 12px; color: var(--ink); }
+.act-row { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 10px 0; border-top: 1px solid var(--line);
+  color: var(--ink); text-decoration: none; min-height: 52px; }
+.act-row:hover { color: var(--ink); }
+.act-name { font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.act-nums { display: flex; flex-direction: column; align-items: flex-end; font-size: 13px; line-height: 1.35; white-space: nowrap; }
+@media (max-width: 640px) {
+  .act-table { display: none; }
+  .act-list { display: flex; flex-direction: column; }
+}

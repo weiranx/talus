@@ -18,6 +18,11 @@ import { LEDGERS, type Onboarding, type Today } from "@/lib/types";
 
 export const dynamic = "force-dynamic";
 
+const signedPct = (v: number) => {
+  const p = Math.round(v * 100);
+  return p === 0 ? "0%" : `${p > 0 ? "+" : "−"}${Math.abs(p)}%`;
+};
+
 export default async function TodayPage() {
   // Both at once: setup status decides whether Today shows at all, and Today is the slow one.
   const [obRes, tRes] = await Promise.allSettled([engine<Onboarding>("/api/onboarding"), engine<Today>("/api/today")]);
@@ -110,9 +115,18 @@ export default async function TodayPage() {
                 <Pill tone={badge.tone}>{badge.text}</Pill>
               </div>
               <div>
-                <div className="big">
-                  <Explain path={`ledger/${name}/vs_normal`}>{d.vs_normal_text.replace(/^./, (c) => c.toUpperCase())}</Explain>
-                </div>
+                {d.vs_normal == null ? (
+                  <div className="big">
+                    <Explain path={`ledger/${name}/vs_normal`}>{d.vs_normal_text.replace(/^./, (c) => c.toUpperCase())}</Explain>
+                  </div>
+                ) : (
+                  <div style={{ display: "flex", alignItems: "baseline", gap: 8, flexWrap: "wrap" }}>
+                    <span className="mono" style={{ fontSize: 30, fontWeight: 600, letterSpacing: "-0.03em", lineHeight: 1.1 }}>
+                      <Explain path={`ledger/${name}/vs_normal`}>{signedPct(d.vs_normal)}</Explain>
+                    </span>
+                    <span className="muted">vs your normal</span>
+                  </div>
+                )}
                 <div className="muted">
                   Last 7 days <span className="mono" style={{ color: "var(--ink)" }}><Explain path={`ledger/${name}/fatigue`}>{ledgerNum(d.fatigue, nd) + unit}</Explain></span> a day. Your normal{" "}
                   <span className="mono" style={{ color: "var(--ink)" }}><Explain path={`ledger/${name}/fitness`}>{ledgerNum(d.fitness, nd) + unit}</Explain></span>.
@@ -136,7 +150,7 @@ export default async function TodayPage() {
             <div className="muted">No activities yet this week.</div>
           ) : (
             <div className="table-wrap">
-              <table style={{ minWidth: 440 }}>
+              <table className="linked" style={{ minWidth: 440 }}>
                 <thead>
                   <tr>
                     <th scope="col">Day</th>

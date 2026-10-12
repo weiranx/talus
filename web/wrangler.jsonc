@@ -1,0 +1,18 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  // The Talus web app on Cloudflare Workers, built by @opennextjs/cloudflare (npm run cf:build).
+  // It answers https://talus.weiranxiong.com/* through a Worker route set in the Cloudflare
+  // dashboard, next to a route for talus.weiranxiong.com/api/* with no Worker, so API calls and
+  // uploads go straight to the engine on the droplet. Routes stay out of this file on purpose:
+  // deleting the /* route in the dashboard sends everything back to the droplet (deploy/README.md).
+  "name": "talus-web",
+  "main": ".open-next/worker.js",
+  "compatibility_date": "2026-09-01",
+  "compatibility_flags": ["nodejs_compat", "global_fetch_strictly_public"],
+  "assets": { "directory": ".open-next/assets", "binding": "ASSETS" },
+  "services": [{ "binding": "WORKER_SELF_REFERENCE", "service": "talus-web" }],
+  // Run next to the droplet rather than next to the visitor: a page makes several engine calls.
+  "placement": { "mode": "smart" },
+  "observability": { "enabled": true },
+  "vars": { "ENGINE_URL": "https://talus.weiranxiong.com" }
+}

@@ -1,5 +1,6 @@
 # Talus on a single host. nginx on the host proxies https://talus.weiranxiong.com to 127.0.0.1:3020.
-# The engine has no published port; the web app reaches it as http://engine:8000.
+# The engine has no public port; the web app reaches it as http://engine:8000, and nginx sends
+# /api/* to 127.0.0.1:3021 directly (the web app itself runs on Cloudflare Workers, see README).
 name: talus
 services:
   engine:
@@ -12,6 +13,8 @@ services:
       TZ: ${TALUS_TZ:-America/Los_Angeles}
     volumes:
       - ${TALUS_DATA_PATH:-./data}:/data
+    ports:
+      - "127.0.0.1:${TALUS_ENGINE_PORT:-3021}:8000"
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/auth/status')"]

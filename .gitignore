@@ -7,3 +7,6 @@ data/
 *.db
 node_modules/
 .DS_Store
+.open-next/
+.wrangler/
+.dev.vars

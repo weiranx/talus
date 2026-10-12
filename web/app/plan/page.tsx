@@ -17,7 +17,7 @@ import ReadinessCompact from "@/components/plan/ReadinessCompact";
 import RoadChart from "@/components/plan/RoadChart";
 import ThisWeek from "@/components/plan/ThisWeek";
 import WeeksTable from "@/components/plan/WeeksTable";
-import { engine, EngineError } from "@/lib/api";
+import { engine, engineFailed } from "@/lib/api";
 import { dayLabel, mi, n0 } from "@/lib/format";
 import { FOCUS_TEXT } from "@/lib/plan";
 import type { ChatMessage, Plan, PlanPage, Schedule, Talk } from "@/lib/types";
@@ -80,7 +80,7 @@ export default async function PlanPageView({ searchParams }: { searchParams: Pro
     [p, chat, schedule] = await Promise.all([engine<PlanPage>("/api/plan"), engine<{ messages: ChatMessage[] }>("/api/coach/chat"),
       engine<Schedule>("/api/schedule")]);
   } catch (e) {
-    return <EngineDown message={e instanceof EngineError ? e.message : "Could not reach the engine."} />;
+    return <EngineDown message={engineFailed(e)} />;
   }
   const obj = p.objective;
   const plan = p.draft ?? p.accepted;
@@ -91,7 +91,7 @@ export default async function PlanPageView({ searchParams }: { searchParams: Pro
     try {
       talk = await engine<Talk>("/api/plan/talk?mode=setup");
     } catch (e) {
-      return <EngineDown message={e instanceof EngineError ? e.message : "Could not reach the engine."} />;
+      return <EngineDown message={engineFailed(e)} />;
     }
     return (
       <>

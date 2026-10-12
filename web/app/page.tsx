@@ -12,7 +12,7 @@ import ReadinessScore from "@/components/ReadinessScore";
 import Sparkline from "@/components/Sparkline";
 import ZoneBar from "@/components/ZoneBar";
 import SetupList from "@/components/onboarding/SetupList";
-import { engine, EngineError } from "@/lib/api";
+import { engine, engineFailed, EngineError } from "@/lib/api";
 import { dayLabel, LEDGER_LABEL, ledgerBadge, ledgerDecimals, ledgerNum, ledgerUnit, mi, n0, stateLabel } from "@/lib/format";
 import { LEDGERS, type Onboarding, type Today } from "@/lib/types";
 
@@ -23,7 +23,7 @@ export default async function TodayPage() {
   const [obRes, tRes] = await Promise.allSettled([engine<Onboarding>("/api/onboarding"), engine<Today>("/api/today")]);
   if (obRes.status === "rejected") {
     const e = obRes.reason;
-    return <EngineDown message={e instanceof EngineError ? e.message : "Could not reach the engine."} />;
+    return <EngineDown message={engineFailed(e)} />;
   }
   const ob = obRes.value;
   // A new account goes through setup first; it resumes at the first unfinished step.
@@ -31,7 +31,7 @@ export default async function TodayPage() {
   if (tRes.status === "rejected") {
     const e = tRes.reason;
     if (e instanceof EngineError && e.status === 409) return <SetupList ob={ob} empty />;
-    return <EngineDown message={e instanceof EngineError ? e.message : "Could not reach the engine."} />;
+    return <EngineDown message={engineFailed(e)} />;
   }
   const t = tRes.value;
 

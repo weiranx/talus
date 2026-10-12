@@ -11,6 +11,9 @@ so changing the zone model never changes a load.
 
 from __future__ import annotations
 
+import math
+from bisect import bisect_right
+
 import numpy as np
 
 from .models import Thresholds
@@ -85,7 +88,9 @@ def minutes(hist: dict[str, float] | None, floors: list[int]) -> dict[str, float
 
 
 def index(bpm: float, floors: list[int]) -> int:
-    return int(np.searchsorted(floors, np.floor(bpm), side="right")) + 1
+    # bisect, not np.searchsorted: activity lists call this for every bpm of every run, and
+    # numpy's per-call overhead made it most of the time behind Today, Activities and Plan.
+    return bisect_right(floors, math.floor(bpm)) + 1
 
 
 def indices(hr: np.ndarray, floors: list[int]) -> np.ndarray:

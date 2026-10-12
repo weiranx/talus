@@ -1,15 +1,15 @@
 "use client";
 
 import { CartesianGrid, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
-import { dayLabel, ledgerNum, n0 } from "@/lib/format";
-import type { LedgerDay, ProjectedDay } from "@/lib/types";
+import { type ChartDay, dayLabel, ledgerNum, n0 } from "@/lib/format";
+import type { ProjectedDay } from "@/lib/types";
 
-type Row = Partial<LedgerDay> & { day: string; pfitness?: number; pfatigue?: number };
+type Row = Partial<ChartDay> & { day: string; pfitness?: number; pfatigue?: number };
 
 // `decimals` and `unit` set how numbers read: distance is "4.2 mi", the other loads whole numbers.
 // `projected` carries both lines forward through scheduled runs, drawn dotted.
 export default function LedgerChart({ series, projected = [], color, label, decimals = 0, unit = "" }: {
-  series: LedgerDay[]; projected?: ProjectedDay[]; color: string; label: string; decimals?: number; unit?: string;
+  series: ChartDay[]; projected?: ProjectedDay[]; color: string; label: string; decimals?: number; unit?: string;
 }) {
   const num = (v: number) => ledgerNum(v, decimals) + unit;
   const ahead = projected.filter((p) => !series.length || p.day > series[series.length - 1].day);

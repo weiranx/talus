@@ -12,7 +12,7 @@ import SkipSetup from "@/components/onboarding/SkipSetup";
 import StepNav from "@/components/onboarding/StepNav";
 import Stepper from "@/components/onboarding/Stepper";
 import { isStep } from "@/components/onboarding/steps";
-import { engine, EngineError } from "@/lib/api";
+import { engine, engineFailed } from "@/lib/api";
 import type { Onboarding, OnboardingStep, Settings } from "@/lib/types";
 
 export const dynamic = "force-dynamic";
@@ -38,7 +38,7 @@ export default async function WelcomePage({ searchParams }: { searchParams: Prom
   try {
     [ob, s] = await Promise.all([engine<Onboarding>("/api/onboarding"), engine<Settings>("/api/settings")]);
   } catch (e) {
-    return <EngineDown message={e instanceof EngineError ? e.message : "Could not reach the engine."} />;
+    return <EngineDown message={engineFailed(e)} />;
   }
   const asked = (await searchParams).step;
   // Keep the step in the URL, so a refresh after an upload or save stays on it.

@@ -4,8 +4,8 @@ import IntensityChart from "@/components/IntensityChart";
 import LedgerChart from "@/components/LedgerChart";
 import LinkPending from "@/components/LinkPending";
 import Pill from "@/components/Pill";
-import { engine, EngineError } from "@/lib/api";
-import { dayLabel, duration, LEDGER_LABEL, LEDGER_UNIT, ledgerBadge, ledgerDecimals, ledgerNum, ledgerUnit, mi, n0, pct, zoneColors, zoneKeys } from "@/lib/format";
+import { engine, engineFailed } from "@/lib/api";
+import { chartDay, dayLabel, duration, LEDGER_LABEL, LEDGER_UNIT, ledgerBadge, ledgerDecimals, ledgerNum, ledgerUnit, mi, n0, pct, zoneColors, zoneKeys } from "@/lib/format";
 import { LEDGERS, type LoadData } from "@/lib/types";
 
 export const dynamic = "force-dynamic";
@@ -19,7 +19,7 @@ export default async function LoadPage({ searchParams }: { searchParams: Promise
   try {
     data = await engine<LoadData>(`/api/load?days=${RANGES[range].days}`);
   } catch (e) {
-    return <EngineDown message={e instanceof EngineError ? e.message : "Could not reach the engine."} />;
+    return <EngineDown message={engineFailed(e)} />;
   }
   const th = data.thresholds;
 
@@ -67,7 +67,7 @@ export default async function LoadPage({ searchParams }: { searchParams: Promise
                 </div>
               </div>
             </div>
-            <LedgerChart series={l.series} projected={data.projection?.series[name] ?? []} color={`var(--${name})`} label={LEDGER_LABEL[name]} decimals={nd} unit={unit} />
+            <LedgerChart series={l.series.map(chartDay)} projected={data.projection?.series[name] ?? []} color={`var(--${name})`} label={LEDGER_LABEL[name]} decimals={nd} unit={unit} />
             {(data.projection?.warnings ?? []).filter((w) => w.ledgers.includes(name)).map((w) => (
               <div key={w.week} style={{ color: "var(--warn-ink)", fontSize: 14 }}>
                 Week of {dayLabel(w.week, { month: "short", day: "numeric" })}: {w.text} <Link href="/plan">Change the schedule</Link>

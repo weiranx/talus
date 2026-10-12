@@ -1,7 +1,7 @@
 import Link from "next/link";
 import EngineDown from "@/components/EngineDown";
 import WeeksTable from "@/components/plan/WeeksTable";
-import { engine, EngineError } from "@/lib/api";
+import { engine, engineFailed } from "@/lib/api";
 import { dayLabel, mi, n0 } from "@/lib/format";
 import type { PlanPage } from "@/lib/types";
 
@@ -13,7 +13,7 @@ export default async function FullPlan() {
   try {
     p = await engine<PlanPage>("/api/plan");
   } catch (e) {
-    return <EngineDown message={e instanceof EngineError ? e.message : "Could not reach the engine."} />;
+    return <EngineDown message={engineFailed(e)} />;
   }
   const plan = p.accepted ?? p.draft;
   if (!p.objective || !plan) {

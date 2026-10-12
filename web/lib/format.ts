@@ -1,3 +1,5 @@
+import type { LedgerDay } from "@/lib/types";
+
 export const LEDGER_LABEL = { cardio: "Cardio", distance: "Distance", climb: "Climb", descent: "Descent" } as const;
 
 export const LEDGER_UNIT = {
@@ -57,3 +59,10 @@ const ZONE_RAMPS: Record<number, string[]> = {
 
 export const zoneColors = (n: number) => ZONE_RAMPS[n] ?? ZONE_RAMPS[3];
 export const zoneKeys = (n: number) => Array.from({ length: n }, (_, i) => `z${i + 1}`);
+
+// What a ledger chart draws and its tooltip reads, to two decimals. A year of four ledgers is sent
+// to the browser with the page, so the rest of each day stays on the server.
+export type ChartDay = Pick<LedgerDay, "day" | "load" | "fitness" | "fatigue" | "vs_normal_text" | "flags">;
+const r2 = (v: number) => Math.round(v * 100) / 100;
+export const chartDay = (d: LedgerDay): ChartDay => ({ day: d.day, load: r2(d.load), fitness: r2(d.fitness),
+  fatigue: r2(d.fatigue), vs_normal_text: d.vs_normal_text, flags: d.flags });

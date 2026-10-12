@@ -648,7 +648,8 @@ def coach_brief(refresh: bool = False) -> dict:
     t = today()
     store = get_store()
     day = date.fromisoformat(t["date"])
-    packet = coach.brief_packet(t, _activities(store, day - timedelta(days=13)))
+    acts = _activities(store, day - timedelta(weeks=coach.BRIEF_WEEKS))
+    packet = coach.brief_packet(t, [a for a in acts if a["day"] >= (day - timedelta(days=13)).isoformat()], acts)
     fallback = {k: t["call"][k] for k in ("call", "session", "detail", "why")}
     out = _coach(store, "brief", t["date"], packet, fallback, refresh)
     if out["source"] == "coach":
@@ -662,7 +663,8 @@ def coach_activity(activity_id: int, refresh: bool = False) -> dict:
     store = get_store()
     day = date.today()
     now = {d.ledger: _ledger_json(d) for d in store.ledgers(day) if d.day == day}
-    packet = coach.analysis_packet(a, _thresholds(store), now, day)
+    since = date.fromisoformat(a["day"]) - timedelta(days=max(coach.SIMILAR_DAYS, coach.BEST_DAYS))
+    packet = coach.analysis_packet(a, _thresholds(store), now, day, _activities(store, since))
     return _coach(store, "analysis", str(activity_id), packet, coach.rules_analysis(packet), refresh)
 
 
@@ -1305,7 +1307,7 @@ def post_chat(body: ChatIn) -> dict:
     plan_ctx = accepted if accepted is not None and obj is not None else None
     sessions = _with_own_runs(store, _sessions(store, plan_ctx, acts, day, t["thresholds"]["aet"] if t else 150), acts)
     packet = coach.chat_packet(question, history, t, plan_ctx, now if plan_ctx else None, sessions,
-                               [a for a in acts if a["day"] >= (day - timedelta(days=13)).isoformat()], day)
+                               [a for a in acts if a["day"] >= (day - timedelta(days=13)).isoformat()], day, acts)
     store.add_chat("athlete", question)
     out = _coach(store, "chat", "chat", packet, {"answer": coach.CHAT_FALLBACK, "used": []}, False)
     answer = CHAT_UNAVAILABLE.get(out["fallback_reason"] or "", out["reply"]["answer"])

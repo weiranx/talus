@@ -40,6 +40,7 @@ def no_real_coach(monkeypatch):
     patch in a fake client."""
     from talus import api
     monkeypatch.setattr(api, "coach_client", lambda: None)
+    monkeypatch.setattr(api, "AI_BUILD_INLINE", True)  # the coach's plan build runs in the request
 
 
 OWNER = {"email": "owner@example.com", "password": "correct horse battery"}

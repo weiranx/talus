@@ -16,13 +16,15 @@ export default function CoachSettings({ coach }: { coach: Settings["coach"] }) {
   const router = useRouter();
   const [enabled, setEnabled] = useState(coach.enabled);
   const [style, setStyle] = useState(coach.style);
+  const [aiPlans, setAiPlans] = useState(coach.ai_plans ?? true);
   const [cap, setCap] = useState(coach.cap.limit == null ? "" : String(coach.cap.limit));
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState<{ ok: boolean; text: string } | null>(null);
   const capValue = cap.trim() === "" ? null : Number(cap);
   const capDirty = capValue !== coach.cap.limit;
   const capValid = capValue == null || (Number.isFinite(capValue) && capValue >= 0 && capValue <= 1000);
-  const dirty = capDirty || enabled !== coach.enabled || style !== coach.style;
+  const dirty = capDirty || enabled !== coach.enabled || style !== coach.style || aiPlans !== (coach.ai_plans ?? true);
+  const buildCost = coach.estimate.build?.[coach.analysis_model]?.per_call ?? null;
   const capped = coach.cap.limit != null && coach.cap.spent >= coach.cap.limit;
 
   async function save() {
@@ -32,7 +34,7 @@ export default function CoachSettings({ coach }: { coach: Settings["coach"] }) {
     const res = await fetch("/api/settings/coach", {
       method: "PUT",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ enabled, style, ...(capDirty ? { monthly_cap_usd: capValue } : {}) }),
+      body: JSON.stringify({ enabled, style, ai_plans: aiPlans, ...(capDirty ? { monthly_cap_usd: capValue } : {}) }),
     }).catch(() => null);
     setSaving(false);
     if (!res) return setMessage({ ok: false, text: "Could not save. Is the engine running?" });
@@ -67,6 +69,17 @@ export default function CoachSettings({ coach }: { coach: Settings["coach"] }) {
             : "The owner of this Talus hasn't added an Anthropic key yet."} Until then Talus shows rule-based text.
         </div>
       ) : null}
+
+      <label className="toggle">
+        <input type="checkbox" role="switch" checked={aiPlans} disabled={!enabled} onChange={(e) => setAiPlans(e.target.checked)} />
+        <span>
+          <span style={{ fontWeight: 600 }}>Let the coach build training plans</span>
+          <span className="muted" style={{ display: "block" }}>
+            The coach writes each plan draft from your history, goals and answers, and the engine holds every week to the load limits.
+            {buildCost != null ? `About ${money(buildCost)} a draft. ` : ""}Off, the engine builds plans by its rules.
+          </span>
+        </span>
+      </label>
 
       <div className="form-grid">
         <label className="field">

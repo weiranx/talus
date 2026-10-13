@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { Suspense } from "react";
 import Pill from "@/components/Pill";
+import BuiltBy from "@/components/plan/BuiltBy";
 import CoachPlan, { CoachPlanPending } from "@/components/plan/CoachPlan";
 import ConstraintsForm from "@/components/plan/ConstraintsForm";
 import DeletePlan from "@/components/plan/DeletePlan";
@@ -86,6 +87,7 @@ export function DraftDetail({ p }: { p: PlanPage }) {
           </Pill>
         ) : null}
       </div>
+      <BuiltBy plan={draft} />
       <div className="row">
         <div style={{ flex: "2 1 520px", minWidth: 0, display: "flex", flexDirection: "column", gap: 12 }}>
           <h3 className="label">The first weeks</h3>
@@ -151,6 +153,7 @@ export default function Setup({ p, step }: { p: PlanPage; step: Step }) {
               ) : null}
             </div>
             <div style={{ maxWidth: 760 }}>{planSummary(draft, obj.name)}</div>
+            <div style={{ maxWidth: 760 }}><BuiltBy plan={draft} /></div>
             {!draft.reachable && obj.goal === "target" ? (
               <div>The weeks the load limits allow fall short of the year&apos;s total; the plan won&apos;t loosen them.</div>
             ) : null}

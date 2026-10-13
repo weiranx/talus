@@ -118,6 +118,7 @@ def test_plan_by_conversation(tmp_path, monkeypatch):
 
 def test_typed_answers_go_to_the_cheaper_model(tmp_path, monkeypatch):
     client = _setup(tmp_path, monkeypatch)
+    client.put("/api/settings/coach", json={"enabled": True, "ai_plans": False})  # engine-built drafts
     day = (date.today() + timedelta(weeks=9)).isoformat()
     fake = FakeClient({"name": "Fall 30k", "date": day, "distance_mi": None, "distance_km": 30, "gain_ft": None,
                        "gain_m": 1200, "loss_ft": None, "loss_m": None})
@@ -140,6 +141,7 @@ def test_typed_answers_go_to_the_cheaper_model(tmp_path, monkeypatch):
 
 def test_a_named_race_is_looked_up_and_confirmed(tmp_path, monkeypatch):
     client = _setup(tmp_path, monkeypatch)
+    client.put("/api/settings/coach", json={"enabled": True, "ai_plans": False})  # engine-built drafts
     day = (date.today() + timedelta(weeks=30)).isoformat()
     found = ('Canyons Endurance Runs 100M is in late April.\n{"found": true, "name": "Canyons 100M", "date": "' + day
              + '", "distance_mi": 100.4, "gain_ft": 22000, "loss_ft": 22300, "source": "https://example.com/canyons"}')
@@ -251,6 +253,7 @@ def test_questions_and_cut_off_asks():
 
 def test_plan_questions_go_to_the_coach(tmp_path, monkeypatch):
     client = _setup(tmp_path, monkeypatch)
+    client.put("/api/settings/coach", json={"enabled": True, "ai_plans": False})  # engine-built drafts
     client.put("/api/plan/objective", json=OBJ | {"day": (date.today() + timedelta(weeks=10)).isoformat()})
     client.post("/api/plan/talk/restart", json={"mode": "setup"})
     client.post("/api/plan/talk", json={"answers": {"keep": "Keep it"}})

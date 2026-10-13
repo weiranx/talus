@@ -306,6 +306,24 @@ def rules_load(packet: dict) -> dict:
 
 NAME_PROMPT = """Name this activity the way a runner would title it: two to six words, leading with the peak or place when the data has one, then the route or the kind of day, for example "Mt Baldy via the Bowl", "Easy loop at Griffith Park", "Hill repeats on Mt Wilson Trail", "Long steep hike". Use only place names that appear in the data, never invent one; name_from_device often holds the town. Pick the kind of day from the numbers: a big climb, a long day, an easy run, a hike when most of it was hiking, hard when much of it was above AnT. No numbers, dates, emoji, quotes or markdown."""
 
+BUILD_FOCUS = ("build", "peak", "hold", "recovery", "taper", "race")
+BUILD_WORKOUTS = ("none", "track", "tempo", "hill_repeats", "race_pace")
+BUILD_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "approach": {"type": "string"},
+        "weeks": {"type": "array", "items": {
+            "type": "object",
+            "properties": {"start": {"type": "string"}, "focus": {"type": "string", "enum": list(BUILD_FOCUS)},
+                           "miles": {"type": "number"}, "gain_ft": {"type": "number"}, "loss_ft": {"type": "number"},
+                           "workout": {"type": "string", "enum": list(BUILD_WORKOUTS)}, "note": {"type": "string"}},
+            "required": ["start", "focus", "miles", "gain_ft", "loss_ft", "workout", "note"],
+            "additionalProperties": False}},
+    },
+    "required": ["approach", "weeks"], "additionalProperties": False,
+}
+BUILD_PROMPT = """Build this athlete's training plan, week by week, as their coach. The data holds the objective or goal (objective.event false means a block with no race day: no taper and no race week), the athlete's training days and time limits, their last 12 weeks and biggest days, athlete_note and athlete_answers when they gave them, and engine_draft: the engine's own plan, one entry per week, as a safe reference. Write exactly one entry per engine_draft week, in the same order with the same start. For each week choose the focus, the week's miles, gain_ft and loss_ft, the one speed session (or none), and a note of one short sentence for the athlete on the week's purpose and its key session. Shape the plan the way a good mountain coach would for this athlete and this goal: how fast to build, where the recovery weeks fall, when to peak, how long to taper, when to lean on vert or on miles, and which speed work fits (none for most ultra and mountain builds; track or tempo for road races and getting faster; hill repeats for steep objectives). Respect the note and answers: an injury or niggle, tired lately, little vert near home, a preference they state. The engine checks every week and holds anything that breaks its limits: no week may add more than 10% in any of miles, gain or loss over the last build week, and a week that would ramp a load too fast or overreach is cut. So plan within those limits; a week you ask for above them is cut back. Recovery weeks run about 60 to 75% of the build level. For an event, the last week is the race week (focus race) and the weeks before it taper. Miles and feet only. approach is two or three sentences on how you shaped the plan and why, for the athlete."""
+
 # Reads that run on the brief's cheaper model: short, once a day or once an activity.
 CHEAP_MODES = {"load", "name"}
 
@@ -324,6 +342,9 @@ MODES = {
     "load": {"label": "load read", "schema": _schema(LOAD_FIELDS), "effort": "low", "max_tokens": 6000},
     "name": {"label": "activity name", "schema": _schema(("name",)), "effort": "low", "max_tokens": 1000,
              "prompt": NAME_PROMPT},
+    # Building the plan's weeks; the engine checks them. Its numbers are new by design.
+    "build": {"label": "plan builder", "schema": BUILD_SCHEMA, "effort": "medium", "max_tokens": 32000,
+              "prompt": BUILD_PROMPT, "free_numbers": True},
     # Drafting the athlete's training note from a few answers and their history.
     "note": {"label": "training note", "schema": _schema(NOTE_FIELDS), "effort": "low", "max_tokens": 4000,
              "prompt": NOTE_PROMPT},
@@ -662,6 +683,29 @@ def plan_packet(plan: dict, now: dict, today: date, reason: str, changes: list[d
     }
 
 
+def build_packet(plan: dict, acts: list[dict], today: date) -> dict:
+    """Context for building a plan: the goal, the athlete's limits and history, and the engine's
+    draft of the same weeks as a reference."""
+    from .plan import DAY_NAMES
+
+    c = plan["constraints"]
+    return {
+        "objective": _objective(plan, today),
+        "race_type": plan.get("race_type"),
+        "training_days": [DAY_NAMES[d] for d in c["days"]], "long_day": DAY_NAMES[c["long_day"]],
+        "weekday_max_minutes": c["weekday_min"], "weekend_max_minutes": c["weekend_min"],
+        "speed_work_asked_for": c.get("workout") if c.get("workout") not in (None, "none") else None,
+        "back_to_back_long_days": plan.get("back_to_back"),
+        "recent_per_week": {"distance_mi": _r(plan["baseline"]["miles"], 1), "gain_ft": _r(plan["baseline"]["gain_ft"]),
+                            "loss_ft": _r(plan["baseline"]["loss_ft"]), "hours": _r(plan["baseline"]["hours"], 1)},
+        "weeks_history": weekly_history(acts, today, HISTORY_WEEKS),
+        "bests_90d": bests(acts, today),
+        "engine_draft": [{"start": w["start"], "focus": w["focus"], "miles": _r(w["miles"], 1),
+                          "gain_ft": _r(w["gain_ft"]), "loss_ft": _r(w["loss_ft"]), "workout": w.get("workout") or "none",
+                          "held_back_by": w["limited_by"]} for w in plan["weeks"]],
+    }
+
+
 def _brief_week(w: dict | None) -> dict | None:
     return None if w is None else {"focus": w["focus"], "distance_mi": _r(w["miles"], 1), "gain_ft": _r(w["gain_ft"]),
                                    "loss_ft": _r(w["loss_ft"]), "hours": _r(w["hours"], 1)}
@@ -878,7 +922,7 @@ PROMPT_NUMBERS = {x for x in allowed_numbers(SYSTEM) if x >= 10}
 
 def check(reply: dict, packet: dict, mode: str) -> list[str]:
     """Problems with a reply, as sentences the model can act on. Empty means it passes."""
-    if mode in FIELD_MODES:
+    if mode in FIELD_MODES or MODES[mode].get("free_numbers"):
         return []
     allowed = allowed_numbers(packet) | PROMPT_NUMBERS
     # A proposed action carries new numbers (a run's size), which the athlete confirms on its card;

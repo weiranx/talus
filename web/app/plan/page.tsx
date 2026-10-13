@@ -4,6 +4,7 @@ import EngineDown from "@/components/EngineDown";
 import Pill from "@/components/Pill";
 import Calendar from "@/components/plan/Calendar";
 import Chat from "@/components/plan/Chat";
+import BuiltBy from "@/components/plan/BuiltBy";
 import CoachPlan, { CoachPlanPending } from "@/components/plan/CoachPlan";
 import ConstraintsForm from "@/components/plan/ConstraintsForm";
 import DeletePlan from "@/components/plan/DeletePlan";
@@ -38,6 +39,7 @@ function Draft({ draft, hasAccepted }: { draft: Plan; hasAccepted: boolean }) {
         <h2 className="label">Drafted plan: {draft.reason_text.toLowerCase()}</h2>
         <Pill tone={draft.reachable ? "good" : "bad"}>{draft.reachable ? "Reachable inside the limits" : "Out of reach by this date"}</Pill>
       </div>
+      <BuiltBy plan={draft} />
       {!draft.reachable ? (
         <div>
           The engine can&apos;t get you there inside the load limits by this date, and it won&apos;t loosen them.
@@ -205,6 +207,7 @@ export default async function PlanPageView({ searchParams }: { searchParams: Pro
             {isEvent(obj) ? "Peak" : "Target"} {mi(p.accepted.peak.miles)} mi and {n0(p.accepted.peak.gain_ft)} ft up a week. {isEvent(obj) ? "Lighter weeks are recovery and taper" : "Lighter weeks are recovery weeks"}; this week is outlined.
             {p.accepted.back_to_back ? " Long weekends are back-to-back long days, so no single day has to carry the whole distance." : ""}
             {RACE_TYPE_TEXT[p.accepted.race_type ?? ""] ?? ""}
+            {p.accepted.builder === "coach" ? " The AI coach built these weeks inside the engine's limits." : ""}
           </div>
           <RoadChart weeks={p.accepted.weeks} current={weekStart(p.date)} actuals={p.actuals} />
         </section>

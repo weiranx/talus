@@ -940,14 +940,38 @@ def _build_draft(store: Store, obj: planner.Objective, reason: str) -> dict:
                                  "them yet. Sync your recent activities first.")
     try:
         body = planner.build(obj, acts, history, c, day)
-        body["options"] = planner.options(obj, acts, history, c, day, body)
     except planner.PlanError as e:
         raise HTTPException(422, str(e))
+    body["builder"] = "engine"
+    if reason != "rolling" and store.settings().get("ai_plans", True):
+        body = _ai_build(store, obj, acts, history, c, day, body)
+    body["options"] = planner.options(obj, acts, history, c, day, body)
     body["now"] = (_readiness_json(planner.readiness_now(obj, acts, _descent_fitness(history), day))
                    if planner.is_event(obj) else None)
     body["changes"] = planner.diff(store.plan("accepted"), body)
     store.save_draft(obj.id, reason, body)
     return body
+
+
+def _ai_build(store: Store, obj: planner.Objective, acts: list[dict], history: list, c: planner.Constraints,
+              day: date, engine_plan: dict) -> dict:
+    """The AI coach builds the weeks from the engine's draft, the athlete's history, note and
+    answers; the engine then holds every week to its rules. The engine's draft stands when the
+    coach is off, over its cap, or its plan doesn't line up."""
+    packet = coach.build_packet(engine_plan, acts, day)
+    _noted(store, packet)
+    if answers := store.settings().get("plan_context"):
+        packet["athlete_answers"] = answers
+    out = _coach(store, "build", f"build-{obj.id}", packet, {"approach": "", "weeks": []}, False)
+    if out["source"] != "coach":
+        return engine_plan | {"builder_note": out["fallback_reason"]}
+    try:
+        plan = planner.build(obj, acts, history, c, day, out["reply"]["weeks"])
+    except planner.PlanError as e:
+        return engine_plan | {"builder_note": f"rejected: {e}"}
+    held = sum(1 for w in plan["weeks"] if any(n.startswith("The coach asked for more") for n in w["notes"]))
+    return plan | {"builder": "coach", "approach": out["reply"]["approach"][:800], "build_cost": out["cost"],
+                   "held_weeks": held}
 
 
 def _last_week_review(store: Store, accepted: dict | None, acts: list[dict], day: date) -> dict:
@@ -970,6 +994,7 @@ def _plan_json(p: dict | None) -> dict | None:
     return {k: p.get(k) for k in ("id", "status", "reason", "created_at", "decided_at", "built_on", "constraints",
                                   "baseline", "pace", "demand", "peak", "weeks", "projected", "reachable",
                                   "back_to_back", "race_type", "goal", "target",
+                                  "builder", "approach", "build_cost", "held_weeks",
                                   "options", "now", "changes")} | {"reason_text": planner.REPLAN_TEXT.get(p["reason"], p["reason"])}
 
 
@@ -1363,7 +1388,8 @@ def _talk_finish(store: Store, st: dict, day: date) -> list[dict]:
     actions = [{"id": "accept", "label": "Accept plan"}]
     if store.plan("accepted") is not None:
         actions.append({"id": "keep", "label": "Keep my current plan"})
-    return [interview.coach(interview.draft_summary(plan, obj.name, c.long_day, a), "draft", actions=actions)]
+    return [interview.coach(interview.draft_summary(plan, obj.name, c.long_day, a), "draft", actions=actions)
+            | ({"cost": plan["build_cost"]} if plan.get("build_cost") else {})]
 
 
 def _talk_change(store: Store, st: dict, text: str, day: date) -> list[dict]:
@@ -1397,7 +1423,7 @@ def _talk_change(store: Store, st: dict, text: str, day: date) -> list[dict]:
     if store.plan("accepted") is not None:
         actions.append({"id": "keep", "label": "Keep my current plan"})
     return [interview.coach(interview.change_text(done, skipped, planner.diff(before, plan)), "draft", actions=actions)
-            | (meta or {})]
+            | (meta or {}) | ({"cost": plan["build_cost"]} if plan.get("build_cost") else {})]
 
 
 def _talk_question(store: Store, text: str, day: date, obj: planner.Objective, plan: dict) -> dict:
@@ -1921,6 +1947,7 @@ def get_settings() -> dict:
             "brief_model": cfg["brief_model"],
             "analysis_model": cfg["analysis_model"],
             "style": cfg["coach_style"],
+            "ai_plans": saved.get("ai_plans", True),
             "styles": [{"key": k, "label": v["label"], "description": v["description"]}
                        for k, v in coach.STYLES.items()],
             "models": [{"id": k, "label": v["label"], "input": v["input"], "output": v["output"]}
@@ -1928,7 +1955,7 @@ def get_settings() -> dict:
             # Per model, so the screen can show what a switch would cost. Brief: about two a day,
             # after the sync and after the check-in. Analysis: one per activity, at the last 30 days' rate.
             "estimate": {mode: {m: _usage_estimate(store, mode, m, calls) for m in app_settings.MODELS}
-                         for mode, calls in (("brief", 60), ("analysis", analyses))},
+                         for mode, calls in (("brief", 60), ("analysis", analyses), ("build", 4))},
             "cap": _coach_cap(store),
         },
         "readiness": dict(zip(("sleep_need_h", "sleep_need_source"), wellness.sleep_need(saved))),
@@ -2008,6 +2035,7 @@ class CoachIn(BaseModel):
     analysis_model: str | None = None
     monthly_cap_usd: float | None = Field(default=None, ge=0, le=1000)
     style: str | None = None  # left out keeps the saved style
+    ai_plans: bool | None = None  # the AI coach builds plan drafts; left out keeps the setting
 
 
 @app.put("/api/settings/coach")
@@ -2017,6 +2045,8 @@ def put_coach(body: CoachIn) -> dict:
     values = {"coach_enabled": body.enabled}
     if body.style is not None:
         values["coach_style"] = body.style
+    if body.ai_plans is not None:
+        values["ai_plans"] = body.ai_plans
     if "monthly_cap_usd" in body.model_fields_set:
         values["coach_monthly_cap_usd"] = body.monthly_cap_usd
     get_store().save_settings(values)

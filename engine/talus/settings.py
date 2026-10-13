@@ -20,7 +20,7 @@ MODELS = {
 }
 
 # Typical tokens per call, used for the cost estimate until the coach log has real usage.
-TYPICAL_TOKENS = {"brief": (2500, 500), "analysis": (5000, 1000)}
+TYPICAL_TOKENS = {"brief": (2500, 500), "analysis": (5000, 1000), "build": (12000, 6000)}
 
 COACH_KEYS = ("coach_enabled", "brief_model", "analysis_model", "coach_style")
 

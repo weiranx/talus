@@ -65,6 +65,7 @@ def sources(accounts: Accounts, account: Account, store: Store, saved: dict) -> 
     """Every way data reaches this account that is set up or has been used."""
     intervals = cli.credential_for(accounts, account)
     garmin = accounts.credential(account.id, "garmin")
+    coros = accounts.credential(account.id, "coros")
     method = saved.get("sync_method", "intervals")
     last_intervals = saved.get("last_sync_intervals") or (
         saved.get("last_sync") if (saved.get("last_sync") or {}).get("source") == "intervals" else None)
@@ -75,6 +76,8 @@ def sources(accounts: Accounts, account: Account, store: Store, saved: dict) -> 
         rows.append(row)
     if garmin or saved.get("last_sync_garmin"):
         rows.append(_run("garmin", "Garmin Connect", saved.get("last_sync_garmin"), garmin is not None, synced=True))
+    if coros or saved.get("last_sync_coros"):
+        rows.append(_run("coros", "COROS", saved.get("last_sync_coros"), coros is not None, synced=True))
     if method == "watch" or saved.get("last_sync_watch"):
         run = saved.get("watch_sync") or saved.get("last_sync_watch")
         rows.append(_run("watch", "Garmin watch", run, None, synced=method == "watch"))

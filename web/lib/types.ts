@@ -298,6 +298,8 @@ export interface Settings {
     intervals: { connected: boolean; last_sync: LastSync | null };
     // Garmin direct is unofficial and offered to the owner account only.
     garmin: { available: boolean; connected: boolean; updated_at: string | null; mfa_pending: boolean; last_sync: LastSync | null };
+    // COROS direct (Training Hub's API) is unofficial and offered to the owner account only too.
+    coros: { available: boolean; connected: boolean; updated_at: string | null; region: string | null; last_sync: LastSync | null };
     upload: { last_import: LastImport | null; max_mb: number };
     // Posted by the Talus iOS app to /api/import/healthkit.
     healthkit: { last_sync: { at: string; workouts_added: number; workouts_skipped: number; wellness_days: number } | null };
@@ -600,7 +602,7 @@ export type ImportRange = "6w" | "6m" | "all";
 
 export interface ImportStatus {
   state: "running" | "done";
-  source: "intervals" | "garmin";
+  source: "intervals" | "garmin" | "coros";
   range: ImportRange;
   days: number;
   started: string;
@@ -622,7 +624,7 @@ export interface Onboarding {
   next: OnboardingStep | null;
   import: ImportStatus | null;
   activities: number;
-  sources: { intervals: boolean; garmin: boolean; garmin_available: boolean };
+  sources: { intervals: boolean; garmin: boolean; garmin_available: boolean; coros: boolean; coros_available: boolean };
   resting_hint: number | null;
   coach: { enabled: boolean; style: string; key_set: boolean; styles: { key: string; label: string; description: string }[] };
   import_choices: Record<ImportRange, number>;
@@ -632,7 +634,7 @@ export interface Onboarding {
 export type CheckState = "ok" | "warn" | "bad" | "idle";
 export interface EngineHealth { ok: boolean; revision: string | null; model_version: string; started_at: string; uptime_s: number }
 export interface SourceStatus {
-  key: "intervals" | "garmin" | "watch" | "healthkit" | "upload";
+  key: "intervals" | "garmin" | "coros" | "watch" | "healthkit" | "upload";
   label: string;
   state: CheckState;
   connected: boolean | null;

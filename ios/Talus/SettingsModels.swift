@@ -71,6 +71,27 @@ struct LastImport: Codable, Hashable {
     let wellnessDays: Int
     let noData: Int?
     let error: String?
+    /// The activities this import added, newest first (engines from before this send none).
+    let added: [AddedActivity]?
+}
+
+struct AddedActivity: Codable, Hashable, Identifiable {
+    let id: Int
+    let name: String?
+    let sport: String?
+    let startTime: String?
+    let distanceM: Double?
+    let gainM: Double?
+
+    /// "Sat Oct 11 · Morning Run · 5.7 mi · 1,240 ft up"
+    var line: String {
+        var parts: [String] = []
+        if let t = startTime { parts.append(Fmt.day(t, .dateTime.weekday(.abbreviated).month(.abbreviated).day())) }
+        if let name, !name.isEmpty { parts.append(name) }
+        if let d = distanceM { parts.append("\(Fmt.mi(d / 1609.344)) mi") }
+        if let g = gainM { parts.append("\(Fmt.n0(g * 3.28084)) ft up") }
+        return parts.joined(separator: " · ")
+    }
 }
 
 struct SourceInfo: Codable, Hashable {

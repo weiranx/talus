@@ -2026,9 +2026,21 @@ def sync_now(body: SyncIn, background: BackgroundTasks) -> dict:
     except Exception:
         return store.settings()[f"last_sync_{body.source}"] | {"log": lines}
     # The coach writes after the response, so the sync button doesn't wait on it.
-    background.add_task(warm_coach, result.pop("added_ids"))
+    added = result.pop("added_ids")
+    background.add_task(warm_coach, added)
     background.add_task(start_inferring, store.dir)
-    return result | {"log": lines}
+    return result | {"added": added_activities(store, added), "log": lines}
+
+
+def added_activities(store: Store, ids: list[int]) -> list[dict]:
+    """What an import brought in, so the apps can say which runs are new."""
+    out = []
+    for i in ids:
+        row = store.activity(i)
+        if row is not None:
+            out.append({"id": row["id"], "name": row["name"], "sport": row["sport"], "start_time": row["start_time"],
+                        "distance_m": row["platform_distance_m"], "gain_m": row["platform_gain_m"]})
+    return sorted(out, key=lambda a: a["start_time"] or "", reverse=True)
 
 
 # First run. A new account is walked through six steps; only connecting a source is required.
@@ -2329,9 +2341,21 @@ async def import_file(request: Request, background: BackgroundTasks, name: str =
         tmp.unlink(missing_ok=True)
     if watch_file and not result.get("error") and not result.get("failed"):
         remember_watch_file(store, watch_file)
-    background.add_task(warm_coach, result.pop("added_ids"))
+    added = result.pop("added_ids")
+    background.add_task(warm_coach, added)
     background.add_task(start_inferring, store.dir)
-    return result | {"log": lines}
+    return result | {"added": added_activities(store, added), "log": lines}
+
+
+def added_activities(store: Store, ids: list[int]) -> list[dict]:
+    """What an import brought in, so the apps can say which runs are new."""
+    out = []
+    for i in ids:
+        row = store.activity(i)
+        if row is not None:
+            out.append({"id": row["id"], "name": row["name"], "sport": row["sport"], "start_time": row["start_time"],
+                        "distance_m": row["platform_distance_m"], "gain_m": row["platform_gain_m"]})
+    return sorted(out, key=lambda a: a["start_time"] or "", reverse=True)
 
 
 WATCH_KEYS_KEPT = 2000
@@ -2348,7 +2372,26 @@ def remember_watch_file(store: Store, key: str) -> None:
 def watch_files() -> dict:
     """Files already pulled off the watch, so the apps download only what is new."""
     saved = get_store().settings()
-    return {"files": saved.get("watch_files", []), "last_sync": saved.get("last_sync_watch")}
+    return {"files": saved.get("watch_files", []), "last_sync": saved.get("last_sync_watch"),
+            "last_attempt": saved.get("watch_sync")}
+
+
+class WatchSyncIn(BaseModel):
+    new: int = Field(default=0, ge=0)
+    error: str | None = Field(default=None, max_length=500)
+
+
+@app.post("/api/import/watch/done")
+def watch_sync_done(body: WatchSyncIn) -> dict:
+    """The web or iOS app finished a watch sync. A clean one counts as a sync even when the watch
+    had nothing new, so "last sync" and the status page stay current; a failed one is kept as the
+    source's error until the next clean sync."""
+    now = datetime.now().isoformat(timespec="seconds")
+    update: dict = {"watch_sync": {"at": now, "error": body.error, "saved": body.new}}
+    if body.error is None:
+        update["last_sync_watch"] = now
+    get_store().save_settings(update)
+    return {"ok": True}
 
 
 # The analysis is written right after a sync only for recent activities: a first sync of a

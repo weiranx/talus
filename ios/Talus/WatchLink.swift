@@ -17,8 +17,8 @@ final class WatchLink: NSObject {
             case .unauthorized: "Talus doesn't have Bluetooth access. Allow it in Settings, Privacy & Security, Bluetooth."
             case .notFound: "No Garmin watch found nearby. Wake the watch, keep it close, and try again."
             case .noGarminService: "That device doesn't offer Garmin's sync service."
-            case .disconnected(let why): "The watch disconnected\(why.map { ": \($0)" } ?? ".")"
-            case .timeout(let step): "The watch stopped answering while \(step)."
+            case .disconnected(let why): "The watch disconnected\(why.map { " (\($0))" } ?? ""). Keep it close and try again."
+            case .timeout(let step): "The watch stopped answering while \(step). Wake it, keep it close, and try again."
             case .authRequested: "The watch asked to authenticate, which Talus doesn't do. Sync with Garmin Connect once, then try again."
             case .refused(let what): what
             }
@@ -236,7 +236,15 @@ final class WatchLink: NSObject {
     }
 
     private func management(_ d: Data) {
-        guard let m = GarminWire.management(d) else { return }
+        guard let m = GarminWire.management(d) else {
+            // On a shared link Garmin Connect's own management traffic can show up here. Logging it
+            // shows which client holds the sync service when the watch refuses Talus's.
+            if d.count >= 9 {
+                let cid = d[d.startIndex + 1 ..< d.startIndex + 9].reversed().reduce(UInt64(0)) { $0 << 8 | UInt64($1) }
+                event("Watch message for another app (client \(cid), type \(d[d.startIndex]), \(d.count) bytes)")
+            }
+            return
+        }
         switch m {
         case .closeAll:
             rawWrite(GarminWire.register(service: GarminWire.gfdiService, reliable: 0))
@@ -247,7 +255,7 @@ final class WatchLink: NSObject {
                     return
                 }
                 failAll(LinkError.refused(svc == GarminWire.gfdiService
-                    ? "The watch wouldn't open its sync service (status \(status)). Restart the watch, let Garmin Connect reconnect, then try again."
+                    ? "The watch is busy with another sync, usually Garmin Connect's. Wait a minute and try again; if it keeps happening, restart the watch. (status \(status))"
                     : "The watch refused Talus's request (service \(svc), status \(status)). Try again."))
                 return
             }

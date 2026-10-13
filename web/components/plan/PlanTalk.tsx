@@ -3,6 +3,7 @@
 import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 import AiCost from "@/components/AiCost";
+import CoachText from "@/components/CoachText";
 import { Dots } from "@/components/Loading";
 import type { Talk, TalkGroup, TalkMessage } from "@/lib/types";
 
@@ -119,9 +120,9 @@ export default function PlanTalk({ initial }: { initial: Talk }) {
               <div style={{
                 maxWidth: "min(620px, 92%)", background: m.role === "athlete" ? "var(--strong)" : "var(--bg)",
                 color: m.role === "athlete" ? "var(--on-strong)" : "var(--ink)", borderRadius: 14, padding: "10px 14px", fontSize: 15,
-                whiteSpace: "pre-wrap", opacity: m.role === "coach" && i < lastIndex - 1 ? 0.85 : 1,
+                whiteSpace: m.role === "coach" ? undefined : "pre-wrap", opacity: m.role === "coach" && i < lastIndex - 1 ? 0.85 : 1,
               }}>
-                {m.text}
+                {m.role === "coach" ? <CoachText text={m.text} /> : m.text}
                 {m.cost ? <span className="muted"><AiCost cost={m.cost} /></span> : null}
               </div>
               {active && m.groups?.length ? (

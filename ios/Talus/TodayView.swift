@@ -175,8 +175,8 @@ struct CoachCallCard: View {
                 Text("From your plan").font(.caption).foregroundStyle(.white.opacity(0.6))
             }
             Text(call.session).font(.title.bold()).foregroundStyle(.white)
-            Text(call.detail).foregroundStyle(.white.opacity(0.92))
-            Text("Why: \(call.why)").font(.subheadline).foregroundStyle(.white.opacity(0.75))
+            CoachText(text: call.detail).foregroundStyle(.white.opacity(0.92))
+            CoachText(text: "**Why:** \(call.why)").font(.subheadline).foregroundStyle(.white.opacity(0.75))
             HStack(spacing: 8) {
                 if waiting { ProgressView().controlSize(.small).tint(.white.opacity(0.7)) }
                 Text(note).font(.caption).foregroundStyle(.white.opacity(0.6))

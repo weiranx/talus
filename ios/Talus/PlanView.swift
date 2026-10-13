@@ -780,8 +780,8 @@ private struct ReviewSection: View {
                     .font(.subheadline).foregroundStyle(.secondary)
             }
             if let r {
-                Text(r.reply.week)
-                Text(r.reply.next)
+                CoachText(text: r.reply.week)
+                CoachText(text: r.reply.next)
                 CoachFooter(source: r.source, reason: r.fallbackReason, what: "review", logId: r.logId, feedback: r.feedback, cost: r.cost)
             }
             if let reason = review.replan.first {
@@ -846,7 +846,7 @@ private struct ChatCard: View {
         return HStack {
             if mine { Spacer(minLength: 40) }
             VStack(alignment: .leading, spacing: 6) {
-                Text(m.text)
+                if mine { Text(m.text) } else { CoachText(text: m.text) }
                 if !mine, m.source == "coach", let id = m.logId {
                     Text("AI coach, numbers checked").font(.caption2).foregroundStyle(.secondary)
                     if let cost = m.cost { Text(cost.text).font(.caption2.monospacedDigit()).foregroundStyle(.secondary) }

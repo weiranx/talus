@@ -287,10 +287,17 @@ code { font-family: var(--code); font-size: 13px; background: var(--bg); padding
   .title { font-size: 26px; }
 }
 
-@media (max-width: 560px) {
-  .coach-read { grid-template-columns: 1fr !important; gap: 2px 0 !important; }
-  .coach-read dd { margin-bottom: 10px !important; }
-}
+/* Coach text: comfortable line length and spacing, bold for the numbers that matter. */
+.coach-text { display: flex; flex-direction: column; gap: 8px; font-size: 15.5px; line-height: 1.55; max-width: 66ch; text-wrap: pretty; }
+.coach-text p, .coach-text ul, .coach-text ol { margin: 0; }
+.coach-text ul, .coach-text ol { padding-left: 1.3em; display: flex; flex-direction: column; gap: 4px; }
+.coach-text li::marker { color: var(--muted); }
+.coach-text strong { font-weight: 650; }
+.coach-text.small { font-size: 14px; line-height: 1.5; gap: 6px; }
+.coach-read { margin: 0; display: flex; flex-direction: column; gap: 16px; }
+.coach-read > div { display: flex; flex-direction: column; gap: 4px; }
+.coach-read dt { font-size: 13px; font-weight: 650; color: var(--muted); }
+.coach-read dd { margin: 0; }
 
 .link-btn { background: none; border: 0; padding: 0; color: var(--link); font: inherit; font-size: 12px; cursor: pointer; text-align: left; min-height: 24px; }
 .btn.danger { background: var(--bad-ink); }

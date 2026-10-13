@@ -74,14 +74,73 @@ struct CoachRead: View {
     let rows: [(String, String)]
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
+        VStack(alignment: .leading, spacing: 14) {
             ForEach(rows, id: \.0) { q, a in
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(q).fontWeight(.semibold)
-                    Text(a)
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(q).font(.footnote.weight(.semibold)).foregroundStyle(.secondary)
+                    CoachText(text: a)
                 }
             }
         }
+    }
+}
+
+/// Coach text, rendered for reading: paragraphs, bulleted and numbered lists, and **bold** for the
+/// numbers that matter. The same small subset of markdown the web app renders.
+struct CoachText: View {
+    let text: String
+
+    enum Block { case paragraph(String), bullet(String), numbered(String, String) }
+
+    static func blocks(_ text: String) -> [Block] {
+        var out: [Block] = []
+        var para: [String] = []
+        func flush() { if !para.isEmpty { out.append(.paragraph(para.joined(separator: "\n"))); para = [] } }
+        for raw in text.replacingOccurrences(of: "\r\n", with: "\n").components(separatedBy: "\n") {
+            let line = raw.trimmingCharacters(in: .whitespaces)
+            if line.isEmpty { flush(); continue }
+            if let r = line.range(of: #"^[-*•]\s+"#, options: .regularExpression) {
+                flush(); out.append(.bullet(String(line[r.upperBound...])))
+            } else if let r = line.range(of: #"^\d{1,2}[.)]\s+"#, options: .regularExpression) {
+                flush()
+                let mark = line[..<r.upperBound].trimmingCharacters(in: .whitespaces).replacingOccurrences(of: ")", with: ".")
+                out.append(.numbered(mark, String(line[r.upperBound...])))
+            } else if let r = line.range(of: #"^#{1,4}\s+"#, options: .regularExpression) {
+                flush(); out.append(.paragraph("**\(line[r.upperBound...].replacingOccurrences(of: "**", with: ""))**"))
+            } else {
+                para.append(line)
+            }
+        }
+        flush()
+        return out
+    }
+
+    static func inline(_ s: String) -> AttributedString {
+        (try? AttributedString(markdown: s, options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace))) ?? AttributedString(s)
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            ForEach(Array(Self.blocks(text).enumerated()), id: \.offset) { _, b in
+                switch b {
+                case .paragraph(let t):
+                    Text(Self.inline(t))
+                case .bullet(let t):
+                    HStack(alignment: .firstTextBaseline, spacing: 8) {
+                        Text("•").foregroundStyle(.secondary)
+                        Text(Self.inline(t))
+                    }
+                case .numbered(let n, let t):
+                    HStack(alignment: .firstTextBaseline, spacing: 6) {
+                        Text(n).monospacedDigit().foregroundStyle(.secondary)
+                        Text(Self.inline(t))
+                    }
+                }
+            }
+        }
+        .lineSpacing(3)
+        .fixedSize(horizontal: false, vertical: true)
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 }
 

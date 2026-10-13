@@ -1,5 +1,6 @@
 import AiCost from "@/components/AiCost";
 import CoachFeedback from "@/components/CoachFeedback";
+import CoachText from "@/components/CoachText";
 import { Spinner } from "@/components/Loading";
 import Pill from "@/components/Pill";
 import type { AiCost as Cost, Call } from "@/lib/types";
@@ -18,8 +19,8 @@ export default function CallCard({ call, note, logId, feedback, planned, pending
       </div>
       {planned ? <div style={{ color: "var(--feature-muted)", fontSize: 13, marginBottom: -8 }}>From your plan</div> : null}
       <div style={{ fontSize: 28, lineHeight: "33px", fontWeight: 700, letterSpacing: "-0.01em" }}>{call.session}</div>
-      <div style={{ color: "var(--feature-soft)", maxWidth: 620 }}>{call.detail}</div>
-      <div style={{ color: "var(--feature-muted)", fontSize: 14, maxWidth: 620 }}>Why: {call.why}</div>
+      <CoachText text={call.detail} style={{ color: "var(--feature-soft)" }} />
+      <CoachText className="small" text={`**Why:** ${call.why}`} style={{ color: "var(--feature-muted)" }} />
       <div style={{ display: "flex", flexWrap: "wrap", justifyContent: "space-between", alignItems: "center", gap: 10 }}>
         <div style={{ color: "var(--feature-muted)", fontSize: 12, maxWidth: 520, display: "flex", alignItems: "center", gap: 8 }} role={pending ? "status" : undefined}>
           {pending ? <Spinner /> : null}<span>{note}<AiCost cost={cost} /></span>

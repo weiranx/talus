@@ -224,6 +224,11 @@ class Store:
             cols = {r["name"] for r in self.db.execute("PRAGMA table_info(objective)")}
             if "goal" not in cols:
                 self.db.execute("ALTER TABLE objective ADD COLUMN goal TEXT NOT NULL DEFAULT 'race'")
+            # Cards an older clear_chat left behind: their message is gone, or a newer message took
+            # its id (a card is never older than the message that proposed it).
+            self.db.execute("DELETE FROM coach_action WHERE NOT EXISTS (SELECT 1 FROM chat WHERE chat.id ="
+                            " coach_action.chat_id AND chat.created_at <= coach_action.created_at)")
+            self.db.commit()
 
     @contextmanager
     def _write(self):
@@ -298,7 +303,10 @@ class Store:
 
     @_writes
     def add(self, act: RemoteActivity, raw: RawFile) -> int:
-        path = self.dir / "raw" / act.source / f"{act.source_id}.{EXT[raw.fmt]}"
+        raw_dir = (self.dir / "raw").resolve()
+        path = raw_dir / act.source / f"{act.source_id}.{EXT[raw.fmt]}"
+        if path.resolve().parent.parent != raw_dir:  # a source id names a file, never a path
+            raise ValueError(f"Bad activity id: {act.source_id!r}")
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_bytes(raw.data)
         cur = self.db.execute(
@@ -309,7 +317,7 @@ class Store:
                    raw_fmt = excluded.raw_fmt
                RETURNING id""",
             (act.source, act.source_id, act.start_time.isoformat() if act.start_time else None,
-             act.name, act.sport, act.device_name, str(path.relative_to(self.dir)), raw.fmt,
+             act.name, act.sport, act.device_name, str(path.relative_to(raw_dir.parent)), raw.fmt,
              act.distance_m, act.gain_m),
         )
         activity_id = cur.fetchone()[0]
@@ -618,8 +626,10 @@ class Store:
 
     @_writes
     def clear_chat(self) -> None:
+        # Every card goes with its message: chat ids start again from 1 once the table is empty,
+        # so a card left behind would show under a new answer.
         self.db.execute("DELETE FROM chat")
-        self.db.execute("DELETE FROM coach_action WHERE status = 'proposed'")
+        self.db.execute("DELETE FROM coach_action")
 
     # Activity names: the coach's and the athlete's own, beside the device's name on the activity.
     def activity_names(self) -> dict[int, dict]:

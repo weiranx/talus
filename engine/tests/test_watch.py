@@ -202,6 +202,13 @@ def test_watch_clients_learn_when_stored_runs_happened(tmp_path, monkeypatch):
     client = sign_in()
     day = (_date.today() - timedelta(days=3)).isoformat()
     assert client.post("/api/import?name=run.gpx", content=_gpx().replace(b"2026-10-01", day.encode())).json()["new"] == 1
+    # A file (the watch's own included) is skipped by its key, never by its span: a span would
+    # hide the next activity off the watch, like a cooldown right after a race.
+    assert client.get("/api/import/watch").json()["taken"] == []
+    import sqlite3
+    db_path = next((tmp_path / "data").rglob("talus.db"))
+    with sqlite3.connect(db_path) as db:
+        db.execute("UPDATE activity SET source = 'intervals'")
     taken = client.get("/api/import/watch").json()["taken"]
     assert len(taken) == 1
     start, end = (datetime.fromisoformat(t) for t in taken[0])

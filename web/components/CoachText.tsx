@@ -4,10 +4,10 @@ import { Fragment, type ReactNode } from "react";
 // numbers that matter. Only that small subset of markdown, built as React elements (never HTML),
 // so a stray "*" or "<" in a reply shows as itself. Used for every reply the coach writes.
 
-type Block = { kind: "p"; lines: string[] } | { kind: "ul" | "ol"; items: string[] };
+type Block = { kind: "p"; lines: string[] } | { kind: "ul" | "ol"; items: string[]; start?: number };
 
 const BULLET = /^\s*[-*•]\s+(.*)$/;
-const NUMBERED = /^\s*\d{1,2}[.)]\s+(.*)$/;
+const NUMBERED = /^\s*(\d{1,2})[.)]\s+(.*)$/;
 const HEADING = /^\s*#{1,4}\s+(.*)$/;
 
 export function blocks(text: string): Block[] {
@@ -21,9 +21,10 @@ export function blocks(text: string): Block[] {
       out.push({ kind: "p", lines: [] }); // a blank line ends the block
     } else if (bullet || numbered) {
       const kind = bullet ? "ul" : "ol";
-      const item = (bullet ?? numbered)![1];
+      const item = bullet ? bullet[1] : numbered![2];
       if (last?.kind === kind) last.items.push(item);
-      else out.push({ kind, items: [item] });
+      // "1. a" and "2. b" split by a blank line keep counting from 2.
+      else out.push(numbered ? { kind, items: [item], start: Number(numbered[1]) } : { kind, items: [item] });
     } else {
       const heading = HEADING.exec(line);
       const text = heading ? `**${heading[1].replace(/\*\*/g, "")}**` : line.trim();
@@ -53,7 +54,7 @@ export default function CoachText({ text, className, style }: { text: string | n
         ? <p key={i}>{b.lines.map((l, j) => <Fragment key={j}>{j ? <br /> : null}{inline(l)}</Fragment>)}</p>
         : b.kind === "ul"
           ? <ul key={i}>{b.items.map((t, j) => <li key={j}>{inline(t)}</li>)}</ul>
-          : <ol key={i}>{b.items.map((t, j) => <li key={j}>{inline(t)}</li>)}</ol>)}
+          : <ol key={i} start={b.start && b.start > 1 ? b.start : undefined}>{b.items.map((t, j) => <li key={j}>{inline(t)}</li>)}</ol>)}
     </div>
   );
 }

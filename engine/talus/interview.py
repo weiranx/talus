@@ -421,7 +421,7 @@ def block_text(o: dict, acts: list[dict], today: date) -> str:
         if o["gain_ft"]:
             left.append(f"{_ft(max(0.0, o['gain_ft'] - done['gain_ft']) / weeks)} ft up")
         if o["distance_mi"]:
-            left.append(f"{_mi(max(0.0, o['distance_mi'] - done['distance_mi']) / weeks)} mi")
+            left.append(f"{_mi(max(0.0, o['distance_mi'] - done['miles']) / weeks)} mi")
         text = (f"{o['name']}: you've done {_ft(done['gain_ft'])} ft up and {_mi(done['miles'])} mi so far this year, "
                 f"so the plan aims for about {' and '.join(left)} a week for the {weeks} weeks left, building there "
                 "from your last four weeks inside the load limits.")
@@ -612,12 +612,13 @@ def cant_text(asked: str | None) -> str:
 
 
 QUESTION = re.compile(r"^\s*(?:what|what's|how|when|why|where|which|who|can i|could i|will i|would i|should i|"
-                      r"am i|is|are|do|does|did|is it|tell me|explain)\b", re.I)
+                      r"am i|is|are|does|did|is it|tell me|explain)\b", re.I)
 FINISH = re.compile(r"\b(?:finish|finishing|time|how long|hours?|pace|cutoff|cut-off)\b", re.I)
 
 
 def is_question(text: str) -> bool:
     """A question about the plan or the objective, rather than a change to it."""
+    # A leading "do" asks only with a question mark: "Do less vert next week" is a change.
     return text.strip().endswith("?") or bool(QUESTION.match(text))
 
 

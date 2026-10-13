@@ -275,8 +275,9 @@ def demand(obj: Objective, p: dict) -> dict:
 
 
 def b2b_sized(dem: dict) -> bool:
-    """An objective long enough to train for with back-to-back long days."""
-    return dem["time"]["mid_h"] >= B2B_FROM_H
+    """An objective long enough to train for with back-to-back long days. Never a road race: a
+    slow marathon still trains with one long run, not two shorter days."""
+    return dem["time"]["mid_h"] >= B2B_FROM_H and dem.get("race_type") != "road"
 
 
 def pair_size(first: float, second: float) -> float:

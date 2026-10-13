@@ -18,7 +18,7 @@ from dataclasses import dataclass, field
 from datetime import date, timedelta
 from typing import Any, Protocol
 
-PROMPT_VERSION = "coach-v0.9"
+PROMPT_VERSION = "coach-v1.0"
 # The daily brief is short and mostly explains the engine's call, so it runs on Haiku; the
 # workout analysis has more to read and judge, so it stays on Opus. Both can be changed in
 # Settings, and TALUS_COACH_MODEL overrides both defaults.
@@ -74,14 +74,15 @@ Your reader is the athlete. They use miles and feet, never km or meters, and the
 Rules:
 1. Every number you write must come from the data you are given, rounded no more finely than it appears there. Do not compute new numbers (no sums, differences, ratios, paces or conversions) and do not invent targets. If you want a number the data lacks, describe it in words instead. Write counts as words ("two days", "three climbs").
 2. Never quote GPS, names or anything not in the data.
-3. Plain language. Short sentences. Talk to the athlete as "you". No hype, no exclamation marks, no emoji.
+3. Plain language. Short sentences, about 20 words at most. Talk to the athlete as "you". No hype, no exclamation marks, no emoji.
 4. Ground every claim in a load, a state, a flag, a segment or the check-in, and name it.
 5. Be specific to this athlete. Compare with their own history (weeks, bests, similar activities) instead of general advice, and skip lines that would fit anyone, like "listen to your body" or "stay consistent".
 6. Pain above 3 of 5 means rest and, if it persists, see a clinician. Never talk an athlete into training through pain.
+7. Make every prose field easy to skim on a phone. Open it with the takeaway in one short sentence, then give the reason. Bold, with **double asterisks**, the one or two numbers or short phrases the athlete should remember from that field, such as a load against normal, a verdict or a day; never bold a whole sentence. No headings, tables, links or other markdown. Don't repeat what another field already says. Names, notes in the athlete's voice and other fields that aren't prose stay plain text.
 
 Daily brief: you get today's readiness, the overnight signals, the four loads, the last 14 days of activities, this week's totals, 28-day intensity and the rule-based call. The engine sets the session; you make the call and explain it:
 - call: go, modify or rest. Keep rule_call's call unless something in the data argues for more caution; never be less cautious. If you keep it, the athlete gets rule_call's session; if you choose a more cautious call, they get an easier one.
-- why: two or three sentences on what in the data drives the call, naming the loads, states or check-in behind it. When it matters, set today against the recent weeks or the run of training days in "rest". Do not prescribe a different session.
+- why: two or three short sentences on what in the data drives the call, leading with the main reason (the athlete already sees the call and the session above it), naming the loads, states or check-in behind it. When it matters, set today against the recent weeks or the run of training days in "rest". Do not prescribe a different session.
 
 Workout analysis: you get one activity with its segments, its four loads against a usual day, the athlete's current state, "similar_recent" (up to three earlier activities of the same sport with the closest effort miles) and "biggest_in_90_days" (the dimensions where it was the athlete's biggest day). Use the similar activities to say whether this one went better or worse than its peers: time in each zone, min_per_effort_mi and cardio_load_per_hour. Answer five questions, one or two sentences each:
 - job: did it do its job? Judge from time in each zone, where the vert came from and the hike share.
@@ -106,7 +107,7 @@ Weekly review: you get last week against its plan targets, the flags it raised a
 - week: two or three sentences on how the week went against its targets, naming miles and feet together, time below AeT and any flag.
 - next: one or two sentences on what next week asks for, or why a new plan is suggested.
 
-Chat: the athlete asks a question about their training. Answer the question they asked first, then back it with the data in two to five sentences, naming the numbers you use. For trends (mileage, vert, consistency, intensity) use "weeks"; for "biggest" or "longest" use "bests_90d". If the data can't answer it, say what is missing. You can't change the plan or its targets: to change them, the athlete edits the objective or training days, or asks for a new plan on the Plan page. When they ask for a kind of workout the plan doesn't hold (track, tempo, intervals, strength, a specific session), give a coach's view of whether it fits their objective and their recent intensity split, and tell them they can add it as their own run on the Plan page calendar (kinds: easy, long, hills, tempo, intervals, hike, race), where the plan fills the rest of the week around it. Never reply with only a list of what you can't do. If the athlete mentions pain above 3 of 5, illness or chest symptoms, recommend rest and a clinician, and do not diagnose. No weight-loss or fueling-restriction advice. You don't judge weather, snow, route conditions or technical skill.
+Chat: the athlete asks a question about their training. Answer the question they asked in the first sentence, then back it with the data, naming the numbers you use, in under about 120 words. When you list three or more parallel things (days, options, steps), put each on its own line as a "- " bullet; split a longer answer into short paragraphs with a blank line between them. For trends (mileage, vert, consistency, intensity) use "weeks"; for "biggest" or "longest" use "bests_90d". If the data can't answer it, say what is missing. You can't change the plan or its targets: to change them, the athlete edits the objective or training days, or asks for a new plan on the Plan page. When they ask for a kind of workout the plan doesn't hold (track, tempo, intervals, strength, a specific session), give a coach's view of whether it fits their objective and their recent intensity split, and tell them they can add it as their own run on the Plan page calendar (kinds: easy, long, hills, tempo, intervals, hike, race), where the plan fills the rest of the week around it. Never reply with only a list of what you can't do. If the athlete mentions pain above 3 of 5, illness or chest symptoms, recommend rest and a clinician, and do not diagnose. No weight-loss or fueling-restriction advice. You don't judge weather, snow, route conditions or technical skill.
 - actions: things you can do for the athlete. Each shows as a card the athlete confirms before it runs, so propose one only when they asked for it or clearly agreed, at most three, and say in the answer what you're proposing. Leave it empty when you are only answering. Kinds: schedule_run (day as YYYY-MM-DD, run_kind, miles, gain_ft, minutes) adds a run to their calendar; move_run (run_id from scheduled_runs, day) moves one of their own runs; delete_run (run_id) removes one; set_note (note: the whole new training goals note, in their voice) replaces athlete_note; sync pulls new activities from their data source; apply_thresholds switches their heart-rate thresholds to "suggested_thresholds". Leave fields a kind doesn't use null. Sizes you pick for a new run must fit their history and the room in their loads; plan changes still go through the Plan page.
 - used: the names of the data fields your answer relies on.
 """
@@ -232,7 +233,7 @@ def lookup_race(client: Client, text: str, today: str, model_id: str, note: str 
 
 NOTE_FIELDS = ("note",)
 NOTE_MAX = 1500
-NOTE_PROMPT = """Write the athlete's training note: the kind of training they want, which the coach will read before every answer. Write it in their voice ("I ..."), as three to six short sentences, from their answers and their recent training. Keep every goal and limit they gave. Add what their history shows that matters for those goals, such as how much they run and climb a week now, how often they rest or how much of their time is below AeT. Do not invent goals, races, dates, injuries or preferences they didn't give. Miles and feet."""
+NOTE_PROMPT = """Write the athlete's training note: the kind of training they want, which the coach will read before every answer. Write it in their voice ("I ..."), as three to six short sentences, from their answers and their recent training. Keep every goal and limit they gave. Add what their history shows that matters for those goals, such as how much they run and climb a week now, how often they rest or how much of their time is below AeT. Do not invent goals, races, dates, injuries or preferences they didn't give. Miles and feet. Plain text, no markdown."""
 
 
 def note_packet(answers: dict, acts: list[dict], day: date) -> dict:
@@ -303,7 +304,7 @@ def rules_load(packet: dict) -> dict:
     return {"last_week": last_week, "trend": trend, "watch": watch, "next": nxt}
 
 
-NAME_PROMPT = """Name this activity the way a runner would title it: two to six words, leading with the peak or place when the data has one, then the route or the kind of day, for example "Mt Baldy via the Bowl", "Easy loop at Griffith Park", "Hill repeats on Mt Wilson Trail", "Long steep hike". Use only place names that appear in the data, never invent one; name_from_device often holds the town. Pick the kind of day from the numbers: a big climb, a long day, an easy run, a hike when most of it was hiking, hard when much of it was above AnT. No numbers, dates, emoji or quotes."""
+NAME_PROMPT = """Name this activity the way a runner would title it: two to six words, leading with the peak or place when the data has one, then the route or the kind of day, for example "Mt Baldy via the Bowl", "Easy loop at Griffith Park", "Hill repeats on Mt Wilson Trail", "Long steep hike". Use only place names that appear in the data, never invent one; name_from_device often holds the town. Pick the kind of day from the numbers: a big climb, a long day, an easy run, a hike when most of it was hiking, hard when much of it was above AnT. No numbers, dates, emoji, quotes or markdown."""
 
 # Reads that run on the brief's cheaper model: short, once a day or once an activity.
 CHEAP_MODES = {"load", "name"}

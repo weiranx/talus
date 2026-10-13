@@ -1,4 +1,5 @@
 import AiCost from "@/components/AiCost";
+import CoachText from "@/components/CoachText";
 import CoachFeedback from "@/components/CoachFeedback";
 import { BusyLine, Skel } from "@/components/Loading";
 import { engine } from "@/lib/api";
@@ -10,11 +11,11 @@ const PARTS: [keyof PlanReply, string][] = [["verdict", "Verdict"], ["limiter", 
 export function CoachPlanPending() {
   return (
     <>
-      <dl className="coach-read" style={{ margin: 0, display: "grid", gridTemplateColumns: "110px 1fr", gap: "8px 16px" }} aria-hidden>
+      <dl className="coach-read" aria-hidden>
         {PARTS.map(([k, label], i) => (
-          <div key={k} style={{ display: "contents" }}>
-            <dt style={{ fontWeight: 600 }}>{label}</dt>
-            <dd style={{ margin: 0, display: "flex", alignItems: "center", minHeight: 20 }}><Skel w={`${88 - i * 12}%`} h={13} /></dd>
+          <div key={k}>
+            <dt>{label}</dt>
+            <dd style={{ display: "flex", alignItems: "center", minHeight: 20 }}><Skel w={`${88 - i * 12}%`} h={13} /></dd>
           </div>
         ))}
       </dl>
@@ -33,11 +34,11 @@ export default async function CoachPlan() {
   }
   return (
     <>
-      <dl className="coach-read" style={{ margin: 0, display: "grid", gridTemplateColumns: "110px 1fr", gap: "8px 16px" }}>
+      <dl className="coach-read">
         {PARTS.map(([k, label]) => (
-          <div key={k} style={{ display: "contents" }}>
-            <dt style={{ fontWeight: 600 }}>{label}</dt>
-            <dd style={{ margin: 0 }}>{r.reply[k]}</dd>
+          <div key={k}>
+            <dt>{label}</dt>
+            <dd><CoachText text={r.reply[k]} /></dd>
           </div>
         ))}
       </dl>

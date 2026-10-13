@@ -183,5 +183,5 @@ def rules_name(p: dict) -> dict:
 
 
 def clean(name: str) -> str:
-    return re.sub(r"\s+", " ", name.strip().strip("\"'“”")).rstrip(".")[:NAME_MAX]
+    return re.sub(r"\s+", " ", name.replace("*", "").strip().strip("\"'“”")).rstrip(".")[:NAME_MAX]
 

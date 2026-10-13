@@ -37,6 +37,9 @@ def test_check_flags_invented_numbers_and_a_bolder_call():
     assert "less cautious" in problems[1]
     calm = {"call": "rest", "why": "Descent is 42% above normal."}
     assert coach.check(calm, PACKET, "brief") == []
+    # Bold and bullets for reading don't hide a number from the check.
+    assert coach.check({"call": "rest", "why": "**Rest today.** Descent is **42%** above normal."}, PACKET, "brief") == []
+    assert "18" in coach.check({"call": "rest", "why": "- **18 mi** this week"}, PACKET, "brief")[0]
 
 
 class FakeClient:

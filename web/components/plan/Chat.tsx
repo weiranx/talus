@@ -4,6 +4,7 @@ import ActionCard from "@/components/ActionCard";
 import AiCost from "@/components/AiCost";
 import { useEffect, useRef, useState } from "react";
 import CoachFeedback from "@/components/CoachFeedback";
+import CoachText from "@/components/CoachText";
 import { Dots } from "@/components/Loading";
 import type { ChatMessage } from "@/lib/types";
 
@@ -77,7 +78,7 @@ export default function Chat({ initial, full = false, suggestions = [] }: Props)
             background: m.role === "athlete" ? "var(--strong)" : "var(--bg)", color: m.role === "athlete" ? "var(--on-strong)" : "var(--ink)",
             borderRadius: 12, padding: "8px 12px", fontSize: 14, display: "flex", flexDirection: "column", gap: 6,
           }}>
-            <div style={{ whiteSpace: "pre-wrap" }}>{m.text}</div>
+            {m.role === "coach" ? <CoachText className="small" text={m.text} /> : <div style={{ whiteSpace: "pre-wrap" }}>{m.text}</div>}
             {m.actions?.map((a) => <ActionCard key={a.id} initial={a} />)}
             {m.role === "coach" && m.source === "coach" && m.log_id ? (
               <div style={{ display: "flex", justifyContent: "space-between", gap: 8, alignItems: "center", flexWrap: "wrap" }}>

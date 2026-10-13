@@ -777,7 +777,7 @@ def draft_coach_note(body: NoteDraftIn) -> dict:
     day = date.today()
     packet = coach.note_packet(answers, _activities(store, day - timedelta(weeks=13)), day)
     out = _coach(store, "note", "note", packet, coach.rules_note(packet), False)
-    return {"note": out["reply"]["note"][:coach.NOTE_MAX], "source": out["source"],
+    return {"note": out["reply"]["note"].replace("**", "")[:coach.NOTE_MAX], "source": out["source"],
             "fallback_reason": out["fallback_reason"], "cost": out["cost"]}
 
 
@@ -1755,7 +1755,7 @@ def confirm_action(action_id: int, background: BackgroundTasks) -> dict:
                 store.save_planned_run(r)
                 result = f"Moved to {_day_text(r.day)}."
         elif a["kind"] == "set_note":
-            store.save_settings({"coach_note": p["note"]})
+            store.save_settings({"coach_note": p["note"].replace("**", "")})
             result = "Training goals updated."
         elif a["kind"] == "sync":
             out = sync_now(SyncIn(), background)

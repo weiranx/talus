@@ -91,13 +91,14 @@ export default function ActivityView({ a }: { a: ActivityDetail }) {
       <section className="card">
         <h2 className="label">Terrain segments</h2>
         <div className="table-wrap">
-          <table style={{ minWidth: 640 }}>
+          <table style={{ minWidth: 700 }}>
             <thead>
               <tr>
                 <th scope="col">Segment</th>
                 <th scope="col" className="num">Miles</th>
                 <th scope="col" className="num">Vert, ft</th>
                 <th scope="col" className="num">Grade</th>
+                <th scope="col" className="num" title="Vertical feet per moving hour">ft/h</th>
                 <th scope="col">Mode</th>
                 <th scope="col" className="num">Time</th>
                 <th scope="col">Zones</th>
@@ -122,6 +123,7 @@ export default function ActivityView({ a }: { a: ActivityDetail }) {
                     <td className="num">{mi(seg.distance_mi)}</td>
                     <td className="num">{vert}</td>
                     <td className="num">{Math.round(Math.abs(seg.avg_grade))}%</td>
+                    <td className="num">{seg.vert_rate_ft_h ? n0(seg.vert_rate_ft_h) : "–"}</td>
                     <td>{modeText}</td>
                     <td className="num">{duration(seg.time_s)}</td>
                     <td>{zones}</td>
@@ -132,7 +134,7 @@ export default function ActivityView({ a }: { a: ActivityDetail }) {
             </tbody>
           </table>
         </div>
-        <div className="muted">Pick a segment to find it on the map and profile. Load is climb load on climbs and descent load on descents; steep feet count more than gentle ones.</div>
+        <div className="muted">Pick a segment to find it on the map and profile. ft/h is vertical feet gained or lost per moving hour. Load is climb load on climbs and descent load on descents; steep feet count more than gentle ones.</div>
       </section>
     </>
   );

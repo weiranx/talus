@@ -91,6 +91,9 @@ def test_api_end_to_end(tmp_path, monkeypatch):
     assert abs(sum(s["climb_load"] for s in detail["segments"]) - big["climb_load"]) < 1
     assert abs(sum(s["descent_load"] for s in detail["segments"]) - big["descent_load"]) < 1
     assert len(detail["streams"]["altitude_ft"]) <= 1000
+    assert detail["segments"][0]["vert_rate_ft_h"] > 0
+    kinds = {b["kind"] for b in detail["terrain"]["bands"]}
+    assert kinds == {"climb", "descent"} and all("usual" in b for b in detail["terrain"]["bands"])
     assert set(detail["streams"]["zone"]) == {1}
     assert client.get("/api/activities/999").status_code == 404
 

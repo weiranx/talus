@@ -672,6 +672,20 @@ def _weekday(iso: str) -> str:
     return DAY_NAMES[date.fromisoformat(iso).weekday()]
 
 
+BUILDING_TEXT = ("The AI coach is now building its own version from your training, goals and answers. It shows up "
+                 "here when it's ready, usually in a minute or two. Until then this is the engine's draft.")
+
+
+def built_text(plan: dict) -> str:
+    """The message when the coach's build of a draft finishes."""
+    if plan.get("builder") != "coach":
+        return "The AI coach couldn't build a version this time, so the engine's draft above stands."
+    weeks = [w for w in plan["weeks"] if w["focus"] != "race"] or plan["weeks"]
+    big = max(weeks, key=lambda w: (w["miles"] + w["gain_ft"] / 528))
+    return " ".join(["The AI coach's version is ready."] + _built_by(plan) + [
+        f"Its biggest week is {big['miles']:.0f} mi with {big['gain_ft']:,.0f} ft up."])
+
+
 def _built_by(plan: dict) -> list[str]:
     """How the AI coach shaped the draft, and how many weeks the engine held to its limits."""
     if plan.get("builder") != "coach":

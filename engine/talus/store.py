@@ -583,6 +583,12 @@ class Store:
         return cur.lastrowid
 
     @_writes
+    def replace_draft(self, plan_id: int, body: dict) -> bool:
+        """Swap a waiting draft's weeks for a rebuilt version; a draft decided meanwhile stays as it was."""
+        cur = self.db.execute("UPDATE plan SET body = ? WHERE id = ? AND status = 'draft'", (json.dumps(body), plan_id))
+        return cur.rowcount > 0
+
+    @_writes
     def decide_draft(self, plan_id: int, accept: bool) -> bool:
         now = datetime.now().isoformat(timespec="seconds")
         r = self.db.execute("SELECT 1 FROM plan WHERE id = ? AND status = 'draft'", (plan_id,)).fetchone()

@@ -451,6 +451,8 @@ export interface Plan {
   race_type?: "mountain" | "road" | "hundred" | "multiday";
   // "coach" when the AI coach built the weeks and the engine held them to its limits.
   builder?: "engine" | "coach" | null;
+  // The AI coach is still building its version; the engine's weeks show until it's done.
+  building?: boolean;
   approach?: string | null;
   held_weeks?: number | null;
   options: { smaller: { factor: number; distance_mi: number; gain_ft: number; loss_ft: number } | null; later: string | null };
@@ -595,7 +597,8 @@ export interface TalkMessage {
   role: "athlete" | "coach"; text: string; step?: string | null;
   groups?: TalkGroup[]; actions?: { id: "accept" | "keep" | "retry"; label: string }[]; cost?: AiCost | null;
 }
-export interface Talk { messages: TalkMessage[]; step: string; mode: "setup" | "change"; reads_with_ai: boolean }
+// building: the AI coach is still building its version of the draft; the conversation says when it is ready.
+export interface Talk { messages: TalkMessage[]; step: string; mode: "setup" | "change"; reads_with_ai: boolean; building?: boolean }
 
 export type OnboardingStep = "connect" | "import" | "thresholds" | "sleep" | "coach" | "tour";
 export type ImportRange = "6w" | "6m" | "all";

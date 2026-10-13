@@ -677,3 +677,41 @@ def test_drafts_are_built_by_the_coach_with_the_engine_as_fallback(tmp_path, mon
     assert client.get("/api/settings").json()["coach"]["ai_plans"] is False
     p = client.post("/api/plan/draft", json={"reason": "flag"}).json()["draft"]
     assert p["builder"] == "engine" and len(fake.calls) == 2
+
+
+def test_the_coach_builds_after_the_draft_is_saved_and_the_chat_says_when(tmp_path, monkeypatch):
+    import threading
+    client = _setup(tmp_path, monkeypatch)
+    day = (date.today() + timedelta(weeks=10)).isoformat()
+    draft = client.put("/api/plan/objective", json=OBJ | {"day": day}).json()["draft"]
+    weeks = [{"start": w["start"], "focus": w["focus"], "miles": w["miles"], "gain_ft": w["gain_ft"],
+              "loss_ft": w["loss_ft"], "workout": "hills", "note": "Climb."} for w in draft["weeks"]]
+    gate = threading.Event()
+
+    class Slow(FakeClient):
+        def create(self, **kw):
+            gate.wait(10)
+            return super().create(**kw)
+
+    fake = Slow({"approach": "Climb more.", "weeks": weeks})
+    monkeypatch.setattr(api, "coach_client", lambda: fake)
+    monkeypatch.setattr(api, "AI_BUILD_INLINE", False)
+    client.post("/api/plan/talk/restart", json={"mode": "setup"})
+    client.post("/api/plan/talk", json={"answers": {"keep": "Keep it"}})
+    for answers in ({"goal": "Finish strong"}, {"days": ["Tue", "Thu", "Sat", "Sun"], "long_day": "Sat"},
+                    {"weekday": "1 h", "weekend": "4 h"}, {"terrain": "Rolling hills"},
+                    {"body": "Nothing to note", "feel": "Fresh"}):
+        r = client.post("/api/plan/talk", json={"answers": answers}).json()
+    # The answer comes back at once with the engine's draft; the coach is still working.
+    assert r["step"] == "draft" and r["building"] and "now building its own version" in r["messages"][-1]["text"]
+    p = client.get("/api/plan").json()["draft"]
+    assert p["building"] and p["builder"] == "engine"
+    gate.set()
+    for t in threading.enumerate():
+        if t.name.startswith("plan build"):
+            t.join(10)
+    p = client.get("/api/plan").json()["draft"]
+    assert not p["building"] and p["builder"] == "coach" and p["approach"] == "Climb more."
+    r = client.get("/api/plan/talk").json()
+    assert not r["building"] and r["messages"][-1]["text"].startswith("The AI coach's version is ready.")
+    assert [a["id"] for a in r["messages"][-1]["actions"]] == ["accept"]

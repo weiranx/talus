@@ -6,6 +6,7 @@ miles and all vert is feet.
 
 from __future__ import annotations
 
+import functools
 import hashlib
 import io
 import json
@@ -930,6 +931,13 @@ def _planned_today(store: Store, day: date, aet: float) -> dict | None:
             "miles": it["miles"], "gain_ft": it["gain_ft"], "loss_ft": it["loss_ft"]}
 
 
+# The AI coach's build runs after the engine's draft is saved, so the request answers at once
+# (the proxy in front of the engine drops requests that run past 100 s) and the draft updates in
+# place when the coach is done. Tests run it inline.
+AI_BUILD_INLINE = False
+BUILD_STALE_S = 900  # a build this old was lost (the engine restarted); the engine's draft stands
+
+
 def _build_draft(store: Store, obj: planner.Objective, reason: str) -> dict:
     day = date.today()
     acts = _activities(store)
@@ -943,14 +951,59 @@ def _build_draft(store: Store, obj: planner.Objective, reason: str) -> dict:
     except planner.PlanError as e:
         raise HTTPException(422, str(e))
     body["builder"] = "engine"
-    if reason != "rolling" and store.settings().get("ai_plans", True):
-        body = _ai_build(store, obj, acts, history, c, day, body)
+    ai = reason != "rolling" and _ai_builds(store)
+    if ai:
+        body["building"] = datetime.now().isoformat(timespec="seconds")
+    body = _draft_extras(store, obj, acts, history, c, day, body)
+    body["id"] = store.save_draft(obj.id, reason, body)
+    if ai:
+        engine_plan = {k: v for k, v in body.items() if k not in ("id", "building")}
+        job = functools.partial(_ai_build_job, store.dir, body["id"], obj, acts, history, c, day, engine_plan)
+        if AI_BUILD_INLINE:
+            job()
+        else:
+            ctx = contextvars.copy_context()  # the account, for the coach's settings and spending cap
+            threading.Thread(target=ctx.run, args=(job,), name=f"plan build {body['id']}", daemon=True).start()
+    return body
+
+
+def _ai_builds(store: Store) -> bool:
+    """Whether the AI coach builds this account's drafts: on in Settings, the coach on, a key set."""
+    return bool(store.settings().get("ai_plans", True) and _coach_settings(store)["coach_enabled"]
+                and coach_client() is not None)
+
+
+def _draft_extras(store: Store, obj: planner.Objective, acts: list[dict], history: list, c: planner.Constraints,
+                  day: date, body: dict) -> dict:
     body["options"] = planner.options(obj, acts, history, c, day, body)
     body["now"] = (_readiness_json(planner.readiness_now(obj, acts, _descent_fitness(history), day))
                    if planner.is_event(obj) else None)
     body["changes"] = planner.diff(store.plan("accepted"), body)
-    store.save_draft(obj.id, reason, body)
     return body
+
+
+def _ai_build_job(folder, draft_id: int, obj: planner.Objective, acts: list[dict], history: list,
+                  c: planner.Constraints, day: date, engine_plan: dict) -> None:
+    """Replace the saved draft with the coach's version, or mark the engine's as final. A draft
+    accepted, declined or replaced meanwhile is left alone."""
+    store = Store(folder)
+    try:
+        body = _ai_build(store, obj, acts, history, c, day, engine_plan)
+        if body.get("builder") == "coach":
+            body = _draft_extras(store, obj, acts, history, c, day, body)
+    except Exception as e:  # noqa: BLE001 - any failure leaves the engine's draft standing
+        body = engine_plan | {"builder_note": f"error: {type(e).__name__}"}
+    store.replace_draft(draft_id, body)
+
+
+def _building(p: dict) -> bool:
+    started = p.get("building")
+    if not started:
+        return False
+    try:
+        return (datetime.now() - datetime.fromisoformat(started)).total_seconds() < BUILD_STALE_S
+    except (TypeError, ValueError):
+        return False
 
 
 def _ai_build(store: Store, obj: planner.Objective, acts: list[dict], history: list, c: planner.Constraints,
@@ -967,7 +1020,7 @@ def _ai_build(store: Store, obj: planner.Objective, acts: list[dict], history: l
         return engine_plan | {"builder_note": out["fallback_reason"]}
     try:
         plan = planner.build(obj, acts, history, c, day, out["reply"]["weeks"])
-    except planner.PlanError as e:
+    except (planner.PlanError, KeyError, TypeError, ValueError) as e:
         return engine_plan | {"builder_note": f"rejected: {e}"}
     held = sum(1 for w in plan["weeks"] if any(n.startswith("The coach asked for more") for n in w["notes"]))
     return plan | {"builder": "coach", "approach": out["reply"]["approach"][:800], "build_cost": out["cost"],
@@ -995,7 +1048,8 @@ def _plan_json(p: dict | None) -> dict | None:
                                   "baseline", "pace", "demand", "peak", "weeks", "projected", "reachable",
                                   "back_to_back", "race_type", "goal", "target",
                                   "builder", "approach", "build_cost", "held_weeks",
-                                  "options", "now", "changes")} | {"reason_text": planner.REPLAN_TEXT.get(p["reason"], p["reason"])}
+                                  "options", "now", "changes")} | {"reason_text": planner.REPLAN_TEXT.get(p["reason"], p["reason"]),
+                                                                   "building": _building(p)}
 
 
 def _with_own_runs(store: Store, sessions: list[dict], acts: list[dict]) -> list[dict]:
@@ -1223,9 +1277,34 @@ def _talk_state(store: Store, mode: str | None = None) -> dict:
     return st
 
 
+def _talk_caught_up(store: Store, st: dict) -> bool:
+    """Once the coach's build of the draft finishes, say so in the conversation. True when the
+    conversation changed and needs saving."""
+    draft_id = st.get("building")
+    if not draft_id:
+        return False
+    draft = store.plan("draft")
+    if draft is not None and draft["id"] == draft_id and _building(draft):
+        return False
+    st.pop("building")
+    if draft is not None and draft["id"] == draft_id and st.get("step") == "draft":
+        st["messages"] = (st["messages"] + [interview.coach(interview.built_text(draft), "draft",
+                                                            actions=_draft_actions(store))
+                                            | ({"cost": draft["build_cost"]} if draft.get("build_cost") else {})])[-TALK_KEEP:]
+    return True
+
+
+def _draft_actions(store: Store) -> list[dict]:
+    actions = [{"id": "accept", "label": "Accept plan"}]
+    if store.plan("accepted") is not None:
+        actions.append({"id": "keep", "label": "Keep my current plan"})
+    return actions
+
+
 def _talk_json(store: Store, st: dict) -> dict:
     cfg = _coach_settings(store)
     return {"messages": st["messages"], "step": st["step"], "mode": st.get("mode", "setup"),
+            "building": bool(st.get("building")),
             "reads_with_ai": bool(cfg["coach_enabled"] and os.environ.get("ANTHROPIC_API_KEY"))}
 
 
@@ -1388,8 +1467,11 @@ def _talk_finish(store: Store, st: dict, day: date) -> list[dict]:
     actions = [{"id": "accept", "label": "Accept plan"}]
     if store.plan("accepted") is not None:
         actions.append({"id": "keep", "label": "Keep my current plan"})
-    return [interview.coach(interview.draft_summary(plan, obj.name, c.long_day, a), "draft", actions=actions)
-            | ({"cost": plan["build_cost"]} if plan.get("build_cost") else {})]
+    text = interview.draft_summary(plan, obj.name, c.long_day, a)
+    if plan.get("building"):
+        st["building"] = plan["id"]
+        text += "\n" + interview.BUILDING_TEXT
+    return [interview.coach(text, "draft", actions=actions)]
 
 
 def _talk_change(store: Store, st: dict, text: str, day: date) -> list[dict]:
@@ -1422,8 +1504,11 @@ def _talk_change(store: Store, st: dict, text: str, day: date) -> list[dict]:
     actions = [{"id": "accept", "label": "Accept plan"}]
     if store.plan("accepted") is not None:
         actions.append({"id": "keep", "label": "Keep my current plan"})
-    return [interview.coach(interview.change_text(done, skipped, planner.diff(before, plan)), "draft", actions=actions)
-            | (meta or {}) | ({"cost": plan["build_cost"]} if plan.get("build_cost") else {})]
+    text = interview.change_text(done, skipped, planner.diff(before, plan))
+    if plan.get("building"):
+        st["building"] = plan["id"]
+        text += "\n" + interview.BUILDING_TEXT
+    return [interview.coach(text, "draft", actions=actions) | (meta or {})]
 
 
 def _talk_question(store: Store, text: str, day: date, obj: planner.Objective, plan: dict) -> dict:
@@ -1453,7 +1538,10 @@ def get_talk(mode: str | None = None) -> dict:
     if mode not in (None, "setup", "change"):
         raise HTTPException(422, "Mode is setup or change.")
     store = get_store()
-    return _talk_json(store, _talk_state(store, mode))
+    st = _talk_state(store, mode)
+    if _talk_caught_up(store, st):
+        store.save_settings({TALK_KEY: st})
+    return _talk_json(store, st)
 
 
 @app.post("/api/plan/talk/restart")
@@ -1470,6 +1558,7 @@ def post_talk(body: TalkIn) -> dict:
     store = get_store()
     day = date.today()
     st = _talk_state(store)
+    _talk_caught_up(store, st)
     step = st["step"]
     text = (body.text or "").strip()
     body.text = text or None

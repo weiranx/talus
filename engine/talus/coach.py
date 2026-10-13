@@ -302,8 +302,10 @@ def rules_load(packet: dict) -> dict:
     return {"last_week": last_week, "trend": trend, "watch": watch, "next": nxt}
 
 
-# Reads that run on the brief's cheaper model: short, once a day.
-CHEAP_MODES = {"load"}
+NAME_PROMPT = """Name this activity the way a runner would title it: two to six words, leading with the peak or place when the data has one, then the route or the kind of day, for example "Mt Baldy via the Bowl", "Easy loop at Griffith Park", "Hill repeats on Mt Wilson Trail", "Long steep hike". Use only place names that appear in the data, never invent one; name_from_device often holds the town. Pick the kind of day from the numbers: a big climb, a long day, an easy run, a hike when most of it was hiking, hard when much of it was above AnT. No numbers, dates, emoji or quotes."""
+
+# Reads that run on the brief's cheaper model: short, once a day or once an activity.
+CHEAP_MODES = {"load", "name"}
 
 MODES = {
     # Short reply, so low effort keeps it quick; analysis gets more thought.
@@ -318,6 +320,8 @@ MODES = {
     "edit": {"label": "plan change", "schema": EDIT_SCHEMA, "effort": "low", "max_tokens": 2000,
              "prompt": EDIT_PROMPT, "fields_only": True},
     "load": {"label": "load read", "schema": _schema(LOAD_FIELDS), "effort": "low", "max_tokens": 6000},
+    "name": {"label": "activity name", "schema": _schema(("name",)), "effort": "low", "max_tokens": 1000,
+             "prompt": NAME_PROMPT},
     # Drafting the athlete's training note from a few answers and their history.
     "note": {"label": "training note", "schema": _schema(NOTE_FIELDS), "effort": "low", "max_tokens": 4000,
              "prompt": NOTE_PROMPT},

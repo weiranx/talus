@@ -19,7 +19,7 @@ import ThisWeek from "@/components/plan/ThisWeek";
 import WeeksTable from "@/components/plan/WeeksTable";
 import { engine, engineFailed } from "@/lib/api";
 import { dayLabel, mi, n0 } from "@/lib/format";
-import { FOCUS_TEXT, RACE_TYPE_TEXT } from "@/lib/plan";
+import { FOCUS_TEXT, isEvent, objectiveSize, objectiveWhen, RACE_TYPE_TEXT } from "@/lib/plan";
 import type { ChatMessage, Plan, PlanPage, Schedule, Talk } from "@/lib/types";
 
 export const dynamic = "force-dynamic";
@@ -134,18 +134,14 @@ export default async function PlanPageView({ searchParams }: { searchParams: Pro
     <>
       <header className="page-head">
         <div>
-          <div className="eyebrow">
-            {dayLabel(obj.day, { weekday: "long", month: "long", day: "numeric" })} · {obj.days_to_go} days to go
-          </div>
+          <div className="eyebrow">{objectiveWhen(obj)}</div>
           <h1 className="title">{obj.name}</h1>
         </div>
         <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 8, paddingBottom: 6 }}>
-          <div className="mono" style={{ fontSize: 14 }}>
-            {mi(obj.distance_mi)} mi · {n0(obj.gain_ft)} ft up · {n0(obj.loss_ft)} ft down
-          </div>
+          <div className="mono" style={{ fontSize: 14 }}>{objectiveSize(obj)}</div>
           <div className="actions" style={{ gap: 6 }}>
             <Link className="btn light outline" style={{ minHeight: 36, padding: "0 12px" }} href="/plan?edit=coach">Change with the coach</Link>
-            <Link className="btn light outline" style={{ minHeight: 36, padding: "0 12px" }} href="/plan?edit=objective">Edit objective</Link>
+            <Link className="btn light outline" style={{ minHeight: 36, padding: "0 12px" }} href="/plan?edit=objective">{isEvent(obj) ? "Edit objective" : "Edit goal"}</Link>
             <Link className="btn light outline" style={{ minHeight: 36, padding: "0 12px" }} href="/plan?edit=days">Training days</Link>
             <DeletePlan name={obj.name} />
           </div>
@@ -155,7 +151,7 @@ export default async function PlanPageView({ searchParams }: { searchParams: Pro
       {edit === "objective" || edit === "new" ? (
         <section className="card">
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 8, flexWrap: "wrap" }}>
-            <h2 className="label">{edit === "new" ? "A different objective" : "Edit the objective"}</h2>
+            <h2 className="label">{edit === "new" ? "A different objective or goal" : isEvent(obj) ? "Edit the objective" : "Edit the goal"}</h2>
             <Link href="/plan">Close</Link>
           </div>
           <div className="muted">
@@ -202,18 +198,18 @@ export default async function PlanPageView({ searchParams }: { searchParams: Pro
       <div className="row">
         <section className="card" style={{ flex: "3 1 420px", minWidth: 0 }}>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 8, flexWrap: "wrap" }}>
-            <h2 className="label">Road to {obj.name}</h2>
+            <h2 className="label">{isEvent(obj) ? `Road to ${obj.name}` : "The weeks ahead"}</h2>
             <Link href="/plan/weeks">Every week</Link>
           </div>
           <div className="muted" style={{ fontSize: 14 }}>
-            Peak {mi(p.accepted.peak.miles)} mi and {n0(p.accepted.peak.gain_ft)} ft up a week. Lighter weeks are recovery and taper; this week is outlined.
+            {isEvent(obj) ? "Peak" : "Target"} {mi(p.accepted.peak.miles)} mi and {n0(p.accepted.peak.gain_ft)} ft up a week. {isEvent(obj) ? "Lighter weeks are recovery and taper" : "Lighter weeks are recovery weeks"}; this week is outlined.
             {p.accepted.back_to_back ? " Long weekends are back-to-back long days, so no single day has to carry the whole distance." : ""}
             {RACE_TYPE_TEXT[p.accepted.race_type ?? ""] ?? ""}
           </div>
           <RoadChart weeks={p.accepted.weeks} current={weekStart(p.date)} actuals={p.actuals} />
         </section>
         <div style={{ flex: "2 1 320px", minWidth: 0, display: "flex", flexDirection: "column" }}>
-          {p.readiness ? <ReadinessCompact r={p.readiness} projected={p.accepted.projected} note={p.fitness_only} /> : null}
+          {p.readiness && p.accepted.projected ? <ReadinessCompact r={p.readiness} projected={p.accepted.projected} note={p.fitness_only} /> : null}
         </div>
       </div>
 

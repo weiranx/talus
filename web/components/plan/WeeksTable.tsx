@@ -65,7 +65,7 @@ export default function WeeksTable({ weeks, current, limit, full, actuals }: {
         <div className="muted" style={{ marginTop: 8 }}>* Held back so a load doesn&apos;t ramp too fast.</div>
       ) : null}
       {limit && weeks.length > from + limit ? (
-        <div style={{ marginTop: 8 }}><Link href="/plan/weeks">All {weeks.length} weeks to the objective</Link></div>
+        <div style={{ marginTop: 8 }}><Link href="/plan/weeks">All {weeks.length} weeks</Link></div>
       ) : null}
     </div>
   );

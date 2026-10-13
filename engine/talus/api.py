@@ -16,6 +16,7 @@ import threading
 import time
 import zipfile
 from collections import OrderedDict
+import contextvars
 from contextvars import ContextVar
 from dataclasses import asdict
 from datetime import date, datetime, timedelta
@@ -28,7 +29,7 @@ from fastapi import BackgroundTasks, FastAPI, HTTPException, Request, Response
 from fastapi.responses import JSONResponse, RedirectResponse, StreamingResponse
 from pydantic import BaseModel, ConfigDict, Field
 
-from . import MODEL_VERSION, admin, cli, coach, explain, google_auth, interview, intervals_auth, ledger, readiness_score, status, wellness, zones
+from . import MODEL_VERSION, admin, cli, coach, explain, google_auth, interview, intervals_auth, ledger, naming, readiness_score, status, wellness, zones
 from . import heatmap
 from . import plan as planner
 from . import schedule
@@ -168,13 +169,29 @@ def _summary(text: str, zm: dict | None) -> tuple[dict, dict | None]:
     return hit
 
 
+def _names_on(store: Store) -> bool:
+    return bool(store.settings().get("ai_names", True))
+
+
+def _name(row, names: dict[int, dict], on: bool) -> dict:
+    """The name shown for an activity: one typed in Talus, else the coach's when the device's name
+    is generic (and AI names are on), else the device's."""
+    n = names.get(row["id"]) or {}
+    if n.get("custom_name"):
+        return {"name": n["custom_name"], "source_name": row["name"], "name_by": "you"}
+    if on and n.get("ai_name") and naming.is_generic(row["name"]):
+        return {"name": n["ai_name"], "source_name": row["name"], "name_by": "ai"}
+    return {"name": row["name"], "source_name": row["name"], "name_by": "source"}
+
+
 def _activities(store: Store, since: date | None = None, limit: int | None = None) -> list[dict]:
     zm = _zone_model(store)
+    names, on = store.activity_names(), _names_on(store)
     out = []
     for row in store.scored_activities(since and since.isoformat(), limit):
         m, hr_zone_minutes = _summary(row["summary"], zm)
         out.append({"id": row["id"], "day": row["start_time"][:10], "start_time": row["start_time"],
-                    "name": row["name"], "sport": row["sport"], "source": row["source"],
+                    **_name(row, names, on), "sport": row["sport"], "source": row["source"],
                     "device_name": row["device_name"], **{k: m[k] for k in (
                         "distance_mi", "gain_ft", "loss_ft", "effort_mi", "moving_time_s", "elapsed_time_s",
                         "cardio_load", "climb_load", "descent_load", "cardio_estimated", "zone_minutes",
@@ -646,7 +663,8 @@ def activity(activity_id: int) -> dict:
                 "times_usual_day": None if value is None else ledger.times_usual_day(value, before.get(name, 0.0)),
                 "six_week_high": value is not None and bool(others) and value > max(others)}
 
-    return {"id": activity_id, "name": row["name"], "day": day.isoformat(), "start_time": row["start_time"],
+    return {"id": activity_id, **_name(row, store.activity_names(), _names_on(store)), "day": day.isoformat(),
+            "start_time": row["start_time"],
             "source": row["source"], "device_name": row["device_name"], **core,
             "loads": {name: usual(name, load_values[name]) for name in ledger.ACTIVITY_KEY}}
 
@@ -906,7 +924,8 @@ def _build_draft(store: Store, obj: planner.Objective, reason: str) -> dict:
         body["options"] = planner.options(obj, acts, history, c, day, body)
     except planner.PlanError as e:
         raise HTTPException(422, str(e))
-    body["now"] = _readiness_json(planner.readiness_now(obj, acts, _descent_fitness(history), day))
+    body["now"] = (_readiness_json(planner.readiness_now(obj, acts, _descent_fitness(history), day))
+                   if planner.is_event(obj) else None)
     body["changes"] = planner.diff(store.plan("accepted"), body)
     store.save_draft(obj.id, reason, body)
     return body
@@ -931,7 +950,7 @@ def _plan_json(p: dict | None) -> dict | None:
         return None
     return {k: p.get(k) for k in ("id", "status", "reason", "created_at", "decided_at", "built_on", "constraints",
                                   "baseline", "pace", "demand", "peak", "weeks", "projected", "reachable",
-                                  "back_to_back",
+                                  "back_to_back", "race_type", "goal", "target",
                                   "options", "now", "changes")} | {"reason_text": planner.REPLAN_TEXT.get(p["reason"], p["reason"])}
 
 
@@ -963,13 +982,18 @@ def get_plan() -> dict:
            "fitness_only": planner.FITNESS_ONLY, "thresholds": _thresholds(store)}
     if obj is None:
         return out
+    if obj.goal == "rolling" and _roll(store, obj, day):
+        obj, accepted = store.objective(), store.plan("accepted")
     history = _plan_history(store, day)
-    now = planner.readiness_now(obj, acts, _descent_fitness(history), day)
+    readiness = None
+    if planner.is_event(obj):
+        now = planner.readiness_now(obj, acts, _descent_fitness(history), day)
+        readiness = {**_readiness_json(now), "demand": now["demand"], "capacity": now["capacity"], "pace": now["pace"]}
     draft = store.plan("draft")
     return out | {
-        "objective": obj.json() | {"days_to_go": (obj.day - day).days},
-        "readiness": {**_readiness_json(now), "demand": now["demand"], "capacity": now["capacity"],
-                      "pace": now["pace"]},
+        "objective": obj.json() | {"days_to_go": (obj.day - day).days, "event": planner.is_event(obj),
+                                   "goal_text": planner.GOAL_KINDS.get(obj.goal, obj.goal)},
+        "readiness": readiness,
         "accepted": _plan_json(accepted), "draft": _plan_json(draft),
         "sessions": _with_own_runs(store, _sessions(store, accepted, acts, day, th.aet if th else 150), acts),
         "review": _last_week_review(store, accepted, acts, day) if accepted else None,
@@ -981,6 +1005,23 @@ def get_plan() -> dict:
     }
 
 
+def _roll(store: Store, obj: planner.Objective, day: date) -> bool:
+    """An ongoing plan is redrawn from the latest training at the start of each week, and stays
+    accepted: it always looks ROLLING_WEEKS ahead. True when it was redrawn."""
+    accepted = store.plan("accepted")
+    monday = day - timedelta(days=day.weekday())
+    if accepted is None or accepted["built_on"] >= monday.isoformat() or store.plan("draft") is not None:
+        return False
+    obj.day = monday + timedelta(weeks=planner.ROLLING_WEEKS, days=-1)
+    store.update_objective(obj)
+    try:
+        _build_draft(store, obj, "rolling")
+    except HTTPException:
+        return False
+    draft = store.plan("draft")
+    return draft is not None and store.decide_draft(draft["id"], True)
+
+
 def _this_week(store: Store, accepted: dict | None, acts: list[dict], day: date) -> dict:
     """This week's target, done and still scheduled, as the calendar counts them."""
     start = day - timedelta(days=day.weekday())
@@ -990,13 +1031,16 @@ def _this_week(store: Store, accepted: dict | None, acts: list[dict], day: date)
 class ObjectiveIn(BaseModel):
     name: str = Field(min_length=1, max_length=80)
     day: date
-    distance_mi: float = Field(gt=0, le=300)
-    gain_ft: float = Field(ge=0, le=80000)
-    loss_ft: float = Field(ge=0, le=80000)
+    # A race or trip's own numbers; a block's weekly targets; a yearly target's totals.
+    distance_mi: float = Field(ge=0, le=20000)
+    gain_ft: float = Field(ge=0, le=5_000_000)
+    loss_ft: float = Field(ge=0, le=5_000_000)
     longest_climb_ft: float | None = Field(default=None, ge=0, le=30000)
     longest_descent_ft: float | None = Field(default=None, ge=0, le=30000)
     high_point_ft: float | None = Field(default=None, ge=-1500, le=30000)
     source: str = Field(default="manual", pattern="^(manual|gpx)$")
+    # Left out (as iOS does), an edit keeps the current goal and a new objective is a race.
+    goal: str | None = Field(default=None, pattern="^(race|trip|base|maintain|comeback|faster|target|rolling)$")
     new: bool = False  # true replaces the objective; false edits the active one
 
 
@@ -1007,9 +1051,17 @@ def put_objective(body: ObjectiveIn) -> dict:
     if body.day <= date.today():
         raise HTTPException(422, "Pick an objective date after today.")
     store = get_store()
+    current = store.objective()
+    if body.goal is None:
+        body.goal = current.goal if current is not None and not body.new else "race"
+    if body.goal in planner.EVENT_GOALS and not 0 < body.distance_mi <= 300:
+        raise HTTPException(422, "A race or objective is more than 0 and at most 300 mi.")
+    if body.goal != "target" and (body.gain_ft > 80000 or body.loss_ft > 80000 or body.distance_mi > 300):
+        raise HTTPException(422, "That's more than 300 mi or 80,000 ft; only a yearly target goes past that.")
+    if body.goal == "target" and not (body.distance_mi or body.gain_ft):
+        raise HTTPException(422, "A yearly target needs miles, feet of climbing, or both.")
     fields = body.model_dump(exclude={"new"})
     fields["name"] = fields["name"].strip()
-    current = store.objective()
     if current is None or body.new:
         obj = planner.Objective(**fields)
         obj.id = store.save_objective(obj)
@@ -1188,15 +1240,26 @@ def _talk_objective(store: Store, st: dict, body: TalkIn, day: date) -> list[dic
         o.pop("keep", None)
         if body.route.get("name") and not o.get("name"):
             o["name"] = str(body.route["name"])[:80]
-    if body.text and interview.general(body.text) and not interview.rules_objective(body.text, day).get("distance_mi"):
-        # No race in mind: offer a fitness block that ends in a long mountain day.
-        st["objective"] = interview.fitness_block(_activities(store, day - timedelta(days=56)), day)
-        o = st["objective"]
-        return [interview.coach(
-            f"No race needed. I'll set up a {interview.BLOCK_WEEKS}-week block that builds your weekly miles and vert "
-            f"toward a long mountain day of {o['distance_mi']:.1f} mi with {round(o['gain_ft']):,} ft up, a little past "
-            "your biggest day of the last 8 weeks, then you can start the next block. Use this, or tell me a race or a "
-            "day you have in mind.", "objective", [{"key": "confirm", "options": ["Use this"], "value": None}])]
+    if o.get("looked_up") == "block" and o.get("confirmed") and not body.text:
+        # A goal with no race day, confirmed: on to the training days (no "goal for the day" to ask).
+        st["objective"] = o
+        st["step"] = "days"
+        return [interview.coach(f"Set: {interview.block_line(o)}."), interview.ask("days", st["defaults"])]
+    chip = interview.GOAL_CHIPS.get(str((body.answers or {}).get("goal_kind") or ""))
+    kind = chip or (interview.goal_kind(body.text) if body.text else None)
+    if kind and kind != "target" and body.text and interview.rules_objective(body.text, day).get("distance_mi"):
+        kind = None  # a race with its numbers, like "get faster for the Baldy 50k on Jan 2, 31 mi"
+    if not kind and o.get("goal") == "target" and body.text and interview.year_totals(body.text):
+        kind = "target"
+    if kind:
+        totals = interview.year_totals(body.text or "") if kind == "target" else None
+        if kind == "target" and not totals:
+            st["objective"] = {"goal": "target"}
+            return [interview.coach("How much this year? Like \"1,000,000 ft\" or \"2,000 mi\", or both.", "objective")]
+        acts = _activities(store, day - timedelta(days=120))
+        st["objective"] = interview.block_objective(kind, acts, day, totals)
+        return [interview.coach(interview.block_text(st["objective"], acts, day), "objective",
+                                [{"key": "confirm", "options": ["Use this"], "value": None}])]
     if body.text:
         got = interview.rules_objective(body.text, day)
         if interview.missing(o | got):
@@ -1243,6 +1306,9 @@ def _talk_objective(store: Store, st: dict, body: TalkIn, day: date) -> list[dic
                         [f"I still need {interview._join_words([interview.MISSING_TEXT[k] for k in need])}."])
         return [interview.coach(text, "objective", st["messages"][-1].get("groups") if not body.text else []) | (meta or {})]
     o.setdefault("loss_ft", o["gain_ft"])
+    if not planner.is_event(o):  # kept a goal with no race day
+        st["step"] = "days"
+        return [interview.coach(f"Set: {interview.block_line(o)}."), interview.ask("days", st["defaults"])]
     st["step"] = "goal"
     return [interview.coach(f"Training for {interview.objective_line(o)}.") | (meta or {}),
             interview.ask("goal")]
@@ -1259,9 +1325,10 @@ def _talk_finish(store: Store, st: dict, day: date) -> list[dict]:
     c.adjust = interview.lighter_start(day) if a.get("feel") == "Tired lately" else []
     store.save_settings({"plan_constraints": asdict(c), "plan_context": interview.context(a)})
     current = store.objective()
+    goal = o.get("goal") or ("trip" if interview.TRIP.search(o.get("name") or "") else "race")
     fields = {k: o.get(k) for k in ("name", "distance_mi", "gain_ft", "loss_ft", "longest_climb_ft",
                                     "longest_descent_ft", "high_point_ft")} | {
-        "day": date.fromisoformat(o["day"]), "source": o.get("source", "manual")}
+        "day": date.fromisoformat(o["day"]), "source": o.get("source", "manual"), "goal": goal}
     if o.get("keep") and current is not None:
         obj, reason = current, "constraints"
     else:
@@ -1326,7 +1393,8 @@ def _talk_question(store: Store, text: str, day: date, obj: planner.Objective, p
     except HTTPException:
         t = None
     acts = _activities(store)
-    now = _readiness_json(planner.readiness_now(obj, acts, _descent_fitness(_plan_history(store, day)), day))
+    now = (_readiness_json(planner.readiness_now(obj, acts, _descent_fitness(_plan_history(store, day)), day))
+           if planner.is_event(obj) else None)
     packet = coach.chat_packet(text, [], t, plan, now, [], [a for a in acts if a["day"] >= (day - timedelta(days=13)).isoformat()],
                                day, acts)
     _noted(store, packet)
@@ -1551,7 +1619,7 @@ def post_chat(body: ChatIn) -> dict:
     obj = store.objective()
     acts = _activities(store)
     now = None
-    if obj is not None:
+    if obj is not None and planner.is_event(obj):
         now = _readiness_json(planner.readiness_now(obj, acts, _descent_fitness(_plan_history(store, day)), day))
     plan_ctx = accepted if accepted is not None and obj is not None else None
     sessions = _with_own_runs(store, _sessions(store, plan_ctx, acts, day, t["thresholds"]["aet"] if t else 150), acts)
@@ -2046,9 +2114,21 @@ def sync_now(body: SyncIn, background: BackgroundTasks) -> dict:
     except Exception:
         return store.settings()[f"last_sync_{body.source}"] | {"log": lines}
     # The coach writes after the response, so the sync button doesn't wait on it.
-    background.add_task(warm_coach, result.pop("added_ids"))
+    added = result.pop("added_ids")
+    background.add_task(warm_coach, added)
     background.add_task(start_inferring, store.dir)
-    return result | {"log": lines}
+    return result | {"added": added_activities(store, added), "log": lines}
+
+
+def added_activities(store: Store, ids: list[int]) -> list[dict]:
+    """What an import brought in, so the apps can say which runs are new."""
+    out = []
+    for i in ids:
+        row = store.activity(i)
+        if row is not None:
+            out.append({"id": row["id"], "name": row["name"], "sport": row["sport"], "start_time": row["start_time"],
+                        "distance_m": row["platform_distance_m"], "gain_m": row["platform_gain_m"]})
+    return sorted(out, key=lambda a: a["start_time"] or "", reverse=True)
 
 
 # First run. A new account is walked through six steps; only connecting a source is required.
@@ -2349,9 +2429,21 @@ async def import_file(request: Request, background: BackgroundTasks, name: str =
         tmp.unlink(missing_ok=True)
     if watch_file and not result.get("error") and not result.get("failed"):
         remember_watch_file(store, watch_file)
-    background.add_task(warm_coach, result.pop("added_ids"))
+    added = result.pop("added_ids")
+    background.add_task(warm_coach, added)
     background.add_task(start_inferring, store.dir)
-    return result | {"log": lines}
+    return result | {"added": added_activities(store, added), "log": lines}
+
+
+def added_activities(store: Store, ids: list[int]) -> list[dict]:
+    """What an import brought in, so the apps can say which runs are new."""
+    out = []
+    for i in ids:
+        row = store.activity(i)
+        if row is not None:
+            out.append({"id": row["id"], "name": row["name"], "sport": row["sport"], "start_time": row["start_time"],
+                        "distance_m": row["platform_distance_m"], "gain_m": row["platform_gain_m"]})
+    return sorted(out, key=lambda a: a["start_time"] or "", reverse=True)
 
 
 WATCH_KEYS_KEPT = 2000
@@ -2368,12 +2460,134 @@ def remember_watch_file(store: Store, key: str) -> None:
 def watch_files() -> dict:
     """Files already pulled off the watch, so the apps download only what is new."""
     saved = get_store().settings()
-    return {"files": saved.get("watch_files", []), "last_sync": saved.get("last_sync_watch")}
+    return {"files": saved.get("watch_files", []), "last_sync": saved.get("last_sync_watch"),
+            "last_attempt": saved.get("watch_sync")}
+
+
+class WatchSyncIn(BaseModel):
+    new: int = Field(default=0, ge=0)
+    error: str | None = Field(default=None, max_length=500)
+
+
+@app.post("/api/import/watch/done")
+def watch_sync_done(body: WatchSyncIn) -> dict:
+    """The web or iOS app finished a watch sync. A clean one counts as a sync even when the watch
+    had nothing new, so "last sync" and the status page stay current; a failed one is kept as the
+    source's error until the next clean sync."""
+    now = datetime.now().isoformat(timespec="seconds")
+    update: dict = {"watch_sync": {"at": now, "error": body.error, "saved": body.new}}
+    if body.error is None:
+        update["last_sync_watch"] = now
+    get_store().save_settings(update)
+    return {"ok": True}
 
 
 # The analysis is written right after a sync only for recent activities: a first sync of a
 # year of history shouldn't pay for a read of every old run. Older ones get theirs when opened.
 WARM_ANALYSIS_DAYS = 14
+
+
+# Activity names. The coach names an activity from its peak or place and the kind of day; a name
+# typed in Talus always wins, and a name the device or platform didn't make up is kept.
+
+def _ai_name(store: Store, row, refresh: bool = False) -> dict:
+    th = store.thresholds()
+    detail = _detail_core(store, row, th, zones.model(th, store.settings().get("hr_zones")))
+    shape, start, high = naming.features(detail)
+    place = naming.places(store, *(start or (None, None)), high)
+    packet = naming.packet(row, detail, place, shape)
+    out = _coach(store, "name", str(row["id"]), packet, naming.rules_name(packet), refresh)
+    name = naming.clean(str(out["reply"].get("name") or "")) or naming.rules_name(packet)["name"]
+    if name and (out["source"] == "coach" or place["peak"] or place["area"]):
+        store.set_activity_name(row["id"], ai_name=name)
+    return {"name": name, "source": out["source"], "fallback_reason": out["fallback_reason"], "cost": out["cost"]}
+
+
+class NameIn(BaseModel):
+    name: str | None = Field(default=None, max_length=naming.NAME_MAX)
+
+
+@app.put("/api/activities/{activity_id}/name")
+def rename_activity(activity_id: int, body: NameIn) -> dict:
+    """Name an activity yourself; an empty name goes back to the coach's or the device's."""
+    store = get_store()
+    row = store.activity(activity_id)
+    if row is None:
+        raise HTTPException(404, "No such activity.")
+    store.set_activity_name(activity_id, custom_name=(body.name or "").strip() or None)
+    return _name(row, store.activity_names(), _names_on(store))
+
+
+@app.post("/api/activities/{activity_id}/name/suggest")
+def suggest_activity_name(activity_id: int) -> dict:
+    """A fresh name from the coach, to use or edit. It becomes the coach's name for the activity;
+    a name you typed stays until you save the suggestion."""
+    store = get_store()
+    row = store.activity(activity_id)
+    if row is None or store.thresholds() is None:
+        raise HTTPException(404, "No such activity.")
+    return _ai_name(store, row, refresh=True)
+
+
+NAME_COST_USD = 0.0002  # one Haiku call of about 700 tokens in, 30 out, rounded up
+_naming: dict[str, dict] = {}
+_naming_guard = threading.Lock()
+
+
+def _unnamed(store: Store) -> list:
+    names = store.activity_names()
+    return [r for r in store.scored_activities() if naming.is_generic(r["name"])
+            and not (names.get(r["id"]) or {}).get("ai_name")]
+
+
+@app.get("/api/names/backfill")
+def names_backfill_status() -> dict:
+    store = get_store()
+    pending = len(_unnamed(store))
+    with _naming_guard:
+        job = dict(_naming.get(str(store.dir)) or {})
+    return {"enabled": _names_on(store), "pending": pending, "estimate_usd": round(pending * NAME_COST_USD, 2),
+            "running": bool(job.get("running")), "named": job.get("named", 0), "total": job.get("total", 0)}
+
+
+@app.post("/api/names/backfill")
+def names_backfill() -> dict:
+    """Name every past activity that has a generic name, in the background, oldest first."""
+    store = get_store()
+    key = str(store.dir)
+    rows = sorted(_unnamed(store), key=lambda r: r["start_time"])
+    with _naming_guard:
+        if (_naming.get(key) or {}).get("running"):
+            return names_backfill_status()
+        _naming[key] = {"running": True, "named": 0, "total": len(rows)}
+
+    def run() -> None:
+        own = Store(store.dir)  # a SQLite connection belongs to the thread that opened it
+        try:
+            for r in rows:
+                try:
+                    _ai_name(own, r)
+                except Exception:  # an unreadable file keeps its name
+                    pass
+                with _naming_guard:
+                    _naming[key]["named"] += 1
+        finally:
+            with _naming_guard:
+                _naming[key]["running"] = False
+
+    ctx = contextvars.copy_context()  # the account, for the coach's settings and spending cap
+    threading.Thread(target=ctx.run, args=(run,), name=f"names {key}", daemon=True).start()
+    return names_backfill_status()
+
+
+class NamesIn(BaseModel):
+    enabled: bool
+
+
+@app.put("/api/settings/names")
+def put_names(body: NamesIn) -> dict:
+    get_store().save_settings({"ai_names": body.enabled})
+    return {"ok": True}
 
 
 def warm_coach(activity_ids: list[int]) -> list[str]:
@@ -2388,6 +2602,14 @@ def warm_coach(activity_ids: list[int]) -> list[str]:
         return ["Coach skipped: " + ("no ANTHROPIC_API_KEY" if b["fallback_reason"] == "no_key" else "turned off in Settings")]
     lines = [f"Coach brief: {b['reply']['call']} ({b['source']})"]
     store = get_store()
+    if _names_on(store):
+        for aid in dict.fromkeys(activity_ids):
+            row = store.activity(aid)
+            if row is not None and row["start_time"] and naming.is_generic(row["name"]):
+                try:
+                    lines.append(f"Named activity {aid}: {_ai_name(store, row)['name']}")
+                except (HTTPException, ValueError, OSError):
+                    pass
     recent = (date.today() - timedelta(days=WARM_ANALYSIS_DAYS)).isoformat()
     for aid in dict.fromkeys(activity_ids):
         row = store.activity(aid)

@@ -1,3 +1,4 @@
+import json
 from dataclasses import asdict
 from datetime import date, timedelta
 
@@ -186,13 +187,57 @@ def test_sentences_and_numbers_are_not_objective_names():
     assert not interview.general("Baldy 50k on Jan 2")
 
 
-def test_no_race_gets_a_fitness_block(tmp_path, monkeypatch):
+def test_goals_without_a_race_day(tmp_path, monkeypatch):
+    assert interview.goal_kind("just general fitness") == "base"
+    assert interview.goal_kind("coming back after an injury") == "comeback"
+    assert interview.goal_kind("I want to get faster") == "faster"
+    assert interview.goal_kind("just maintain over the winter") == "maintain"
+    assert interview.goal_kind("an ongoing plan, week to week") == "rolling"
+    assert interview.goal_kind("1M ft this year") == "target"
+    assert interview.year_totals("1M ft and 2,000 mi") == {"distance_mi": 2000.0, "gain_ft": 1_000_000.0}
+    assert interview.goal_kind("Baldy 50k on Jan 2") is None
     client = _setup(tmp_path, monkeypatch)
     r = client.post("/api/plan/talk", json={"text": "just general fitness"}).json()
     last = r["messages"][-1]
-    assert r["step"] == "objective" and "12-week block" in last["text"] and last["groups"][0]["key"] == "confirm"
+    assert r["step"] == "objective" and "12-week base block" in last["text"] and last["groups"][0]["key"] == "confirm"
     r = client.post("/api/plan/talk", json={"answers": {"confirm": "Use this"}}).json()
-    assert r["step"] == "goal" and "Training for Mountain fitness block" in r["messages"][-2]["text"]
+    assert r["step"] == "days" and r["messages"][-2]["text"].startswith("Set: build base,")
+    for answers in ({"days": ["Tue", "Thu", "Sat", "Sun"], "long_day": "Sat"}, {"weekday": "1 h", "weekend": "4 h"},
+                    {"terrain": "Rolling hills"}, {"body": "Nothing to note", "feel": "Fresh"}):
+        r = client.post("/api/plan/talk", json={"answers": answers}).json()
+    text = r["messages"][-1]["text"]
+    assert r["step"] == "draft" and "weeks: Build base" in text and "taper" not in text and "race" not in text
+    p = client.get("/api/plan").json()
+    assert p["objective"]["goal"] == "base" and not p["objective"]["event"] and p["readiness"] is None
+    d = p["draft"]
+    assert d["goal"] == "base" and d["projected"] is None and d["now"] is None
+    assert {w["focus"] for w in d["weeks"]} <= {"build", "hold", "recovery"}
+    assert all(s["kind"] != "objective" for s in p["sessions"])
+    # A yearly target: tap the chip, then say how much.
+    client.post("/api/plan/talk/restart", json={"mode": "setup"})
+    r = client.post("/api/plan/talk", json={"answers": {"goal_kind": "Yearly target"}}).json()
+    assert "How much this year?" in r["messages"][-1]["text"]
+    r = client.post("/api/plan/talk", json={"text": "500k ft"}).json()
+    assert r["messages"][-1]["text"].startswith("500,000 ft in ") and "a week for the" in r["messages"][-1]["text"]
+
+
+def test_an_ongoing_plan_moves_on_each_week(tmp_path, monkeypatch):
+    client = _setup(tmp_path, monkeypatch)
+    day = date.today()
+    end = day - timedelta(days=day.weekday()) + timedelta(weeks=8, days=-1)
+    r = client.put("/api/plan/objective", json={"name": "Ongoing plan", "day": end.isoformat(), "distance_mi": 30,
+                                                "gain_ft": 5000, "loss_ft": 5000, "goal": "rolling", "new": True}).json()
+    plan_id = r["draft"]["id"]
+    client.post(f"/api/plan/{plan_id}/accept")
+    # Built last week: the next read redraws it from this week and keeps it accepted.
+    store = api.get_store()
+    body = store.plan("accepted")
+    body["built_on"] = (day - timedelta(days=day.weekday() + 7)).isoformat()
+    store.db.execute("UPDATE plan SET body = ? WHERE status = 'accepted'", (json.dumps(body),))
+    store.db.commit()
+    p = client.get("/api/plan").json()
+    assert p["accepted"]["id"] != plan_id and p["accepted"]["built_on"] == day.isoformat()
+    assert p["accepted"]["reason"] == "rolling" and p["objective"]["day"] == end.isoformat()
 
 
 def test_questions_and_cut_off_asks():

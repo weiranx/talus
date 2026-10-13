@@ -22,18 +22,42 @@ final class WatchSync: ObservableObject {
     @Published private(set) var progress: Progress?
     @Published private(set) var result: (ok: Bool, text: String)?
     @Published private(set) var log: [String] = []
+    /// The activities the last sync added, newest first.
+    @Published private(set) var added: [AddedActivity] = []
+    /// When the last sync ended, so screens can refresh and show what it brought in.
+    @Published private(set) var finishedAt: Date?
+    /// The last sync started on its own when the app opened, rather than from the button.
+    @Published private(set) var automatic = false
 
     private var link: WatchLink?
+    private static let lastAttemptKey = "watch.lastAttempt"
+    /// Opening the app syncs when the last clean sync is older than this...
+    static let autoSyncAfter: TimeInterval = 3600
+    /// ...and no sync was tried in the last few minutes (a failing watch isn't retried on every open).
+    static let autoRetryAfter: TimeInterval = 15 * 60
 
     struct Imported: Decodable { let files: [String]; let lastSync: String? }
 
-    func sync(_ api: API) async {
+    /// Syncs when the app opens, if this account syncs from the watch and the last sync is old.
+    func syncIfDue(_ api: API) async {
+        guard !running else { return }
+        if let last = UserDefaults.standard.object(forKey: Self.lastAttemptKey) as? Date,
+           Date.now.timeIntervalSince(last) < Self.autoRetryAfter { return }
+        guard let s = try? await api.get("/api/settings", as: SettingsData.self), s.syncMethod == "watch" else { return }
+        if let at = s.sources.watch?.lastSync.flatMap(Self.date), Date.now.timeIntervalSince(at) < Self.autoSyncAfter { return }
+        await sync(api, automatic: true)
+    }
+
+    func sync(_ api: API, automatic: Bool = false) async {
         guard !running else { return }
         running = true
+        self.automatic = automatic
         result = nil
         progress = nil
+        self.added = []
         log = []
-        defer { running = false; phase = nil; progress = nil }
+        UserDefaults.standard.set(Date.now, forKey: Self.lastAttemptKey)
+        defer { running = false; phase = nil; progress = nil; finishedAt = .now }
 
         let link = WatchLink()
         self.link = link
@@ -65,6 +89,7 @@ final class WatchSync: ObservableObject {
                     let r = try await upload(api, f, fit)
                     phase = "Downloading"
                     added += r.new
+                    self.added = ((r.added ?? []) + self.added).sorted { ($0.startTime ?? "") > ($1.startTime ?? "") }
                     note("\(f.fileName): \(SettingsText.importLine(r))")
                     if let e = r.error { failed.append("\(f.fileName): \(e)") }
                 } catch let e as WatchLink.LinkError {
@@ -80,10 +105,19 @@ final class WatchSync: ObservableObject {
                 "Pulled \(done) \(done == 1 ? "file" : "files") off the watch, \(added) new \(added == 1 ? "activity" : "activities")."
             if !failed.isEmpty { text += " \(failed.count) failed: \(failed.joined(separator: "; "))" }
             result = (failed.isEmpty, text)
+            await finished(api, new: added, error: failed.isEmpty ? nil : "\(failed.count) of \(todo.count) files failed.")
         } catch {
             result = (false, error.localizedDescription + (added > 0 ? " \(added) new activities were imported before that." : ""))
             note("Stopped: \(error.localizedDescription)")
+            await finished(api, new: added, error: error.localizedDescription)
         }
+    }
+
+    /// Tells the engine how the sync went: "last sync" and the status page count a clean sync with
+    /// nothing new, and show the error of a failed one.
+    private func finished(_ api: API, new: Int, error: String?) async {
+        struct Done: Encodable { let new: Int; let error: String? }
+        _ = try? await api.post("/api/import/watch/done", Done(new: new, error: error.map { String($0.prefix(500)) }))
     }
 
     private func upload(_ api: API, _ f: WatchFile, _ fit: Data) async throws -> LastImport {

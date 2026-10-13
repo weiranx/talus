@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { Suspense, type ReactNode } from "react";
+import ActivityName from "@/components/ActivityName";
 import CoachRead, { coachRead, CoachReadPending } from "@/components/CoachRead";
 import ActivityView from "@/components/ActivityView";
 import EngineDown from "@/components/EngineDown";
@@ -37,7 +38,7 @@ export default async function ActivityPage({ params }: { params: Promise<{ id: s
           <div className="eyebrow">
             <Link href="/activities">Activities</Link> / {dayLabel(a.day, { weekday: "long", month: "short", day: "numeric" })}
           </div>
-          <h1 className="title">{a.name ?? "Activity"}</h1>
+          <ActivityName id={a.id} name={a.name} sourceName={a.source_name ?? null} by={a.name_by ?? "source"} />
           <div className="muted">
             {({ intervals: "Synced from intervals.icu", garmin: "Synced from Garmin", demo: "Demo data" } as Record<string, string>)[a.source] ?? "Imported file"}
             {a.device_name ? `, recorded on ${a.device_name}` : ""}.

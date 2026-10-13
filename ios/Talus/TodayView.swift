@@ -3,6 +3,7 @@ import SwiftUI
 
 struct TodayView: View {
     @EnvironmentObject private var api: API
+    @EnvironmentObject private var watch: WatchSync
 
     var body: some View {
         NavigationStack {
@@ -15,6 +16,7 @@ struct TodayView: View {
                         VStack(alignment: .leading, spacing: 14) {
                             Text(Fmt.day(t.date, .dateTime.weekday(.wide).month(.abbreviated).day()))
                                 .font(.subheadline).foregroundStyle(.secondary)
+                            WatchSyncBanner()
                             CoachCallCard(rules: t.call)
                             CheckInCard(initial: t.checkin, onSaved: reload)
                             ReadinessCard(readiness: t.readiness, score: t.score)
@@ -32,6 +34,7 @@ struct TodayView: View {
                         .padding()
                     }
                     .refreshable { await reload() }
+                    .onChange(of: watch.finishedAt) { _, _ in if !watch.added.isEmpty { Task { await reload() } } }
                     .navigationDestination(for: Int.self) { ActivityDetailView(id: $0) }
                     .navigationTitle("Today")
                 }
@@ -47,6 +50,45 @@ struct TodayView: View {
         } catch APIError.server(409, _) {
             return .setup(try await api.get("/api/onboarding", as: Onboarding.self))
         }
+    }
+}
+
+/// A watch sync that started when the app opened: its progress, then the runs it brought in or why
+/// it stopped. Shown for a while after it ends; a sync started from Settings shows there instead.
+struct WatchSyncBanner: View {
+    @EnvironmentObject private var watch: WatchSync
+
+    var body: some View {
+        if watch.automatic && (watch.running || recentlyFinished) {
+            Card {
+                if watch.running {
+                    HStack(spacing: 8) {
+                        ProgressView()
+                        Text(progressText).font(.subheadline)
+                    }
+                } else if !watch.added.isEmpty {
+                    Label("\(watch.added.count) new from your watch", systemImage: "applewatch.radiowaves.left.and.right")
+                        .font(.subheadline.bold())
+                    ForEach(watch.added.prefix(5)) { a in
+                        NavigationLink(value: a.id) { Text(a.line).font(.subheadline) }
+                    }
+                } else if let r = watch.result, !r.ok {
+                    Label("Watch sync didn't finish", systemImage: "exclamationmark.triangle").font(.subheadline.bold())
+                    Text(r.text).font(.caption).foregroundStyle(.secondary)
+                    NavigationLink("Sync from watch") { SourcesPage() }.font(.subheadline)
+                }
+            }
+        }
+    }
+
+    private var recentlyFinished: Bool {
+        guard let at = watch.finishedAt, Date.now.timeIntervalSince(at) < 600 else { return false }
+        return !watch.added.isEmpty || watch.result?.ok == false
+    }
+
+    private var progressText: String {
+        if let p = watch.progress { return "Syncing your watch: \(p.index) of \(p.count)" }
+        return watch.phase.map { "\($0)…" } ?? "Syncing your watch…"
     }
 }
 

@@ -18,7 +18,7 @@ from . import settings as app_settings
 from .accounts import Account, Accounts
 from .store import Store
 
-SYNC_KEYS = {"last_sync_intervals": "intervals.icu", "last_sync_garmin": "Garmin",
+SYNC_KEYS = {"last_sync_intervals": "intervals.icu", "last_sync_garmin": "Garmin", "last_sync_coros": "COROS",
              "last_sync_healthkit": "Apple Health", "last_import": "File upload"}
 
 
@@ -64,6 +64,8 @@ def account_row(accounts: Accounts, account: Account, month: date) -> dict:
         connected.append("intervals.icu")
     if accounts.credential(account.id, "garmin"):
         connected.append("Garmin")
+    if accounts.credential(account.id, "coros"):
+        connected.append("COROS")
     ceiling = coach_ceiling(account)
     return {
         "id": account.id, "email": account.email, "is_owner": account.is_owner, "is_admin": account.is_admin,

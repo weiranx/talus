@@ -2081,6 +2081,7 @@ def _sources(saved: dict) -> dict:
     their own last sync; uploads share the last import."""
     accounts, account = get_accounts(), _account.get()
     garmin = accounts.credential(account.id, "garmin") if account else None
+    coros = accounts.credential(account.id, "coros") if account else None
     return {
         "intervals": {"connected": _intervals_credential() is not None,
                       "last_sync": saved.get("last_sync_intervals")
@@ -2089,6 +2090,9 @@ def _sources(saved: dict) -> dict:
                    "updated_at": garmin and garmin["updated_at"],
                    "mfa_pending": bool(account) and _garmin().mfa_pending(account.id),
                    "last_sync": saved.get("last_sync_garmin")},
+        "coros": {"available": _is_owner(), "connected": coros is not None,
+                  "updated_at": coros and coros["updated_at"], "region": coros and coros.get("region"),
+                  "last_sync": saved.get("last_sync_coros")},
         "upload": {"last_import": saved.get("last_import"), "max_mb": MAX_UPLOAD_MB},
         "healthkit": {"last_sync": saved.get("last_sync_healthkit")},
         "watch": {"last_sync": saved.get("last_sync_watch")},
@@ -2100,9 +2104,28 @@ def _garmin():
     return garmin
 
 
+OWNER_SOURCES = {"garmin": "Garmin Connect", "coros": "COROS"}
+
+
+def _owner_source(source: str):
+    """The saved sign-in for an unofficial source, and how to save refreshed tokens. Those
+    sources are tied to one person's login, so they never reach another account."""
+    account = current_account()
+    if not account.is_owner:
+        raise HTTPException(403, f"{OWNER_SOURCES[source]} is for the owner account only.")
+    cred = get_accounts().credential(account.id, source)
+    if cred is None:
+        raise HTTPException(409, f"Connect {OWNER_SOURCES[source]} under Data sources first.")
+
+    def save(values: dict) -> None:
+        kept = {k: v for k, v in cred.items() if k not in ("kind", "updated_at")}
+        get_accounts().set_credential(account.id, source, "tokens", kept | values)
+    return cred, save
+
+
 class SyncIn(BaseModel):
     days: int = Field(default=30, ge=1, le=730)
-    source: str = Field(default="intervals", pattern="^(intervals|garmin)$")
+    source: str = Field(default="intervals", pattern="^(intervals|garmin|coros)$")
 
 
 @app.post("/api/sync")
@@ -2114,15 +2137,7 @@ def sync_now(body: SyncIn, background: BackgroundTasks) -> dict:
         if cred is None:
             raise HTTPException(409, "Connect intervals.icu under Data sources first.")
     else:
-        account = current_account()
-        if not account.is_owner:
-            raise HTTPException(403, "Garmin Connect is for the owner account only.")
-        cred = get_accounts().credential(account.id, "garmin")
-        if cred is None:
-            raise HTTPException(409, "Connect Garmin under Data sources first.")
-
-        def save(values: dict) -> None:
-            get_accounts().set_credential(account.id, "garmin", "tokens", values)
+        cred, save = _owner_source(body.source)
     lines: list[str] = []
     try:
         result = cli.sync(store, body.source, date.today() - timedelta(days=body.days), log=lines.append,
@@ -2184,10 +2199,11 @@ def _onboarding(store: Store) -> dict:
     done, skipped = set(ob.get("done") or []), set(ob.get("skipped") or [])
     accounts, account = get_accounts(), _account.get()
     garmin = bool(account) and accounts.credential(account.id, "garmin") is not None
+    coros = bool(account) and accounts.credential(account.id, "coros") is not None
     intervals = _intervals_credential() is not None
     imp = _import_status(store)
     state = {
-        "connect": intervals or garmin or activities > 0,
+        "connect": intervals or garmin or coros or activities > 0,
         "import": activities > 0 or bool(imp and imp.get("state") == "done" and not imp.get("error")),
         "thresholds": th is not None,
         "sleep": wellness.sleep_need(saved)[1] == "saved",
@@ -2203,7 +2219,8 @@ def _onboarding(store: Store) -> dict:
         "established": bool(ob.get("established")),
         "steps": steps, "next": nxt,
         "import": imp, "activities": activities,
-        "sources": {"intervals": intervals, "garmin": garmin, "garmin_available": _is_owner()},
+        "sources": {"intervals": intervals, "garmin": garmin, "garmin_available": _is_owner(),
+                    "coros": coros, "coros_available": _is_owner()},
         "resting_hint": _resting_hint(store),
         "coach": {"enabled": _coach_settings(store)["coach_enabled"], "style": _coach_settings(store)["coach_style"],
                   "key_set": bool(os.environ.get("ANTHROPIC_API_KEY")),
@@ -2265,7 +2282,7 @@ def put_onboarding(body: OnboardingIn) -> dict:
 
 
 class ImportIn(BaseModel):
-    source: str = Field(default="intervals", pattern="^(intervals|garmin)$")
+    source: str = Field(default="intervals", pattern="^(intervals|garmin|coros)$")
     range: str = Field(default="6m", pattern="^(6w|6m|all)$")
 
 
@@ -2281,14 +2298,7 @@ def start_import(body: ImportIn) -> dict:
         if cred is None:
             raise HTTPException(409, "Connect intervals.icu first.")
     else:
-        if not account.is_owner:
-            raise HTTPException(403, "Garmin Connect is for the owner account only.")
-        cred = get_accounts().credential(account.id, "garmin")
-        if cred is None:
-            raise HTTPException(409, "Connect Garmin first.")
-
-        def save(values: dict) -> None:
-            get_accounts().set_credential(account.id, "garmin", "tokens", values)
+        cred, save = _owner_source(body.source)
     key, folder, days = str(store.dir), store.dir, IMPORT_DAYS[body.range]
     status = {"state": "running", "source": body.source, "range": body.range, "days": days,
               "started": datetime.now().isoformat(timespec="seconds"), "done": 0, "total": None,
@@ -2368,6 +2378,35 @@ def garmin_mfa(body: MfaIn) -> dict:
 def disconnect_garmin() -> dict:
     """Forget the Garmin tokens. Activities already synced stay."""
     get_accounts().clear_credential(current_account().id, "garmin")
+    return {"ok": True}
+
+
+class CorosIn(BaseModel):
+    email: str = Field(min_length=3, max_length=200)
+    password: str = Field(min_length=1, max_length=200)
+    region: Literal["en", "eu", "cn"] = "en"
+
+
+@app.post("/api/sources/coros")
+def connect_coros(body: CorosIn) -> dict:
+    """Sign in to COROS once. The password is used for this sign-in and dropped; only the access
+    token is kept, encrypted. Signing in to Training Hub on the web ends it, and this asks again."""
+    account = current_account()
+    if not account.is_owner:
+        raise HTTPException(403, "COROS is for the owner account only.")
+    from .sources import coros
+    try:
+        cred = coros.login(body.email.strip(), body.password, body.region)
+    except coros.CorosError as e:
+        raise HTTPException(400, str(e))
+    get_accounts().set_credential(account.id, "coros", "tokens", cred)
+    return {"status": "connected"}
+
+
+@app.delete("/api/sources/coros")
+def disconnect_coros() -> dict:
+    """Forget the COROS token. Activities already synced stay."""
+    get_accounts().clear_credential(current_account().id, "coros")
     return {"ok": True}
 
 

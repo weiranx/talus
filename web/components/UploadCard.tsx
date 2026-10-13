@@ -61,9 +61,9 @@ export default function UploadCard({ upload }: { upload: Settings["sources"]["up
       {lines.map((l, i) => <div key={i} className={l.ok ? "ok-text" : "error-text"}>{l.text}</div>)}
       {!lines.length && upload.last_import ? <div className="muted">Last: {importLine(upload.last_import)}</div> : null}
       <div className="muted">
-        Activities you already have from another source are kept once. Not connected: Strava, whose API terms bar apps
-        with AI coaching, and COROS, which opens its API only to approved partners. Export files from either and upload
-        them here.
+        Activities you already have from another source are kept once. Strava isn&apos;t connected because its API terms
+        bar apps with AI coaching: export your files and upload them here. On COROS, connect COROS in your intervals.icu
+        settings and Talus picks your runs up through intervals.icu.
       </div>
     </section>
   );

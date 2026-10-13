@@ -643,3 +643,25 @@ export interface StatusOverview {
     intervals_oauth: { enabled: boolean; connected: number };
   }) | null;
 }
+
+// /api/heatmap: every scored activity with its route as an encoded polyline (null without GPS).
+export type HeatKind = "trail" | "run" | "hike" | "ride" | "other";
+export interface HeatActivity {
+  id: number;
+  day: string;
+  start_time: string;
+  name: string | null;
+  sport: string | null;
+  kind: HeatKind;
+  distance_mi: number;
+  gain_ft: number;
+  loss_ft: number;
+  effort_mi: number;
+  moving_time_s: number;
+  line: string | null;
+  pending: boolean;
+}
+export interface HeatmapData {
+  pending: number;
+  activities: HeatActivity[];
+}

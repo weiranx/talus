@@ -343,7 +343,7 @@ MODES = {
     "name": {"label": "activity name", "schema": _schema(("name",)), "effort": "low", "max_tokens": 1000,
              "prompt": NAME_PROMPT},
     # Building the plan's weeks; the engine checks them. Its numbers are new by design.
-    "build": {"label": "plan builder", "schema": BUILD_SCHEMA, "effort": "medium", "max_tokens": 32000,
+    "build": {"label": "plan builder", "schema": BUILD_SCHEMA, "effort": "medium", "max_tokens": 20000,
               "prompt": BUILD_PROMPT, "free_numbers": True},
     # Drafting the athlete's training note from a few answers and their history.
     "note": {"label": "training note", "schema": _schema(NOTE_FIELDS), "effort": "low", "max_tokens": 4000,
@@ -1136,7 +1136,7 @@ def run(mode: str, packet: dict, fallback: dict, client: Client | None, model_id
     for attempt in (1, 2):
         try:
             resp, reply = _ask(client, mode, packet, problems, model_id, style)
-        except (anthropic.APIError, json.JSONDecodeError) as e:
+        except (anthropic.APIError, ValueError) as e:  # ValueError: bad JSON, or a request the SDK won't send
             return Result("rules", fallback, model_id, attempt, f"api_error: {type(e).__name__}", rejected, usage)
         usage = _add_usage(usage, _usage(resp))  # a retry is billed too
         if reply is None:

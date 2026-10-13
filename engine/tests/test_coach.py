@@ -2,7 +2,7 @@ import json
 from datetime import date, datetime, timedelta
 from types import SimpleNamespace
 
-from talus import api, cli, coach
+from talus import api, cli, coach, settings
 from tests.conftest import sign_in
 from tests.test_api import _gpx
 
@@ -388,3 +388,23 @@ def test_action_numbers_may_be_quoted_but_not_invented_elsewhere():
                           "minutes": None, "run_id": None, "note": None}]}
     assert coach.check(reply, PACKET, "chat") == []
     assert coach.check(reply | {"answer": "Added 83 mi."}, PACKET, "chat") == ["These numbers are not in the data: 83."]
+
+
+def test_every_mode_fits_a_request_the_sdk_sends_without_streaming():
+    # The SDK refuses (ValueError, before any request) a non-streaming call whose max_tokens
+    # could run past 10 minutes; the plan builder at 32k tokens failed every time.
+    import anthropic
+    from anthropic._constants import MODEL_NONSTREAMING_TOKENS
+    sdk = anthropic.Anthropic(api_key="test")
+    for mode, cfg in coach.MODES.items():
+        for model in settings.MODELS:
+            sdk._calculate_nonstreaming_timeout(cfg["max_tokens"], MODEL_NONSTREAMING_TOKENS.get(model))
+
+
+def test_a_request_the_sdk_refuses_falls_back_to_rules():
+    class Refusing(FakeClient):
+        def create(self, **kw):
+            raise ValueError("Streaming is required for operations that may take longer than 10 minutes.")
+
+    r = coach.run("brief", PACKET, FALLBACK, Refusing())
+    assert r.source == "rules" and r.reply == FALLBACK and r.fallback_reason == "api_error: ValueError"

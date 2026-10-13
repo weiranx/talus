@@ -270,3 +270,18 @@ def test_plan_questions_go_to_the_coach(tmp_path, monkeypatch):
     assert r["messages"][-1]["text"] == "About 9 to 11 hours on your recent pace."
     assert len(fake.calls) == 1 and "Mode: chat." in fake.calls[0]["messages"][0]["content"]
     assert client.get("/api/coach/chat").json()["messages"] == []  # not added to the Coach chat
+
+
+def test_a_leading_do_is_a_change_unless_it_asks():
+    assert not interview.is_question("Do less vert next week")
+    assert interview.is_question("Do I need more vert?") and interview.is_question("Does the taper start soon")
+
+
+def test_a_yearly_target_reads_what_is_done_so_far():
+    from datetime import date
+    today = date(2026, 10, 13)
+    acts = [{"day": "2026-02-01", "start_time": "2026-02-01T08:00:00", "distance_mi": 10.0, "gain_ft": 2000.0,
+             "loss_ft": 2000.0, "effort_mi": 14.0, "moving_time_s": 7200, "sport": "Run"}]
+    o = interview.block_objective("target", acts, today, {"distance_mi": 2000.0, "gain_ft": 0.0})
+    text = interview.block_text(o, acts, today)
+    assert "10.0 mi so far this year" in text

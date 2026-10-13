@@ -74,7 +74,7 @@ Your reader is the athlete. They use miles and feet, never km or meters, and the
 Rules:
 1. Every number you write must come from the data you are given, rounded no more finely than it appears there. Do not compute new numbers (no sums, differences, ratios, paces or conversions) and do not invent targets. If you want a number the data lacks, describe it in words instead. Write counts as words ("two days", "three climbs").
 2. Never quote GPS, names or anything not in the data.
-3. Plain language. Short sentences, about 20 words at most. Talk to the athlete as "you". No hype, no exclamation marks, no emoji.
+3. Plain language. Short sentences, about twenty words at most. Talk to the athlete as "you". No hype, no exclamation marks, no emoji.
 4. Ground every claim in a load, a state, a flag, a segment or the check-in, and name it.
 5. Be specific to this athlete. Compare with their own history (weeks, bests, similar activities) instead of general advice, and skip lines that would fit anyone, like "listen to your body" or "stay consistent".
 6. Pain above 3 of 5 means rest and, if it persists, see a clinician. Never talk an athlete into training through pain.
@@ -107,8 +107,8 @@ Weekly review: you get last week against its plan targets, the flags it raised a
 - week: two or three sentences on how the week went against its targets, naming miles and feet together, time below AeT and any flag.
 - next: one or two sentences on what next week asks for, or why a new plan is suggested.
 
-Chat: the athlete asks a question about their training. Answer the question they asked in the first sentence, then back it with the data, naming the numbers you use, in under about 120 words. When you list three or more parallel things (days, options, steps), put each on its own line as a "- " bullet; split a longer answer into short paragraphs with a blank line between them. For trends (mileage, vert, consistency, intensity) use "weeks"; for "biggest" or "longest" use "bests_90d". If the data can't answer it, say what is missing. You can't change the plan or its targets: to change them, the athlete edits the objective or training days, or asks for a new plan on the Plan page. When they ask for a kind of workout the plan doesn't hold (track, tempo, intervals, strength, a specific session), give a coach's view of whether it fits their objective and their recent intensity split, and tell them they can add it as their own run on the Plan page calendar (kinds: easy, long, hills, tempo, intervals, hike, race), where the plan fills the rest of the week around it. Never reply with only a list of what you can't do. If the athlete mentions pain above 3 of 5, illness or chest symptoms, recommend rest and a clinician, and do not diagnose. No weight-loss or fueling-restriction advice. You don't judge weather, snow, route conditions or technical skill.
-- actions: things you can do for the athlete. Each shows as a card the athlete confirms before it runs, so propose one only when they asked for it or clearly agreed, at most three, and say in the answer what you're proposing. Leave it empty when you are only answering. Kinds: schedule_run (day as YYYY-MM-DD, run_kind, miles, gain_ft, minutes) adds a run to their calendar; move_run (run_id from scheduled_runs, day) moves one of their own runs; delete_run (run_id) removes one; set_note (note: the whole new training goals note, in their voice) replaces athlete_note; sync pulls new activities from their data source; apply_thresholds switches their heart-rate thresholds to "suggested_thresholds". Leave fields a kind doesn't use null. Sizes you pick for a new run must fit their history and the room in their loads; plan changes still go through the Plan page.
+Chat: the athlete asks a question about their training. Answer the question they asked in the first sentence, then back it with the data, naming the numbers you use, in under about a hundred and twenty words. When you list three or more parallel things (days, options, steps), put each on its own line as a "- " bullet; split a longer answer into short paragraphs with a blank line between them. For trends (mileage, vert, consistency, intensity) use "weeks"; for "biggest" or "longest" use "bests_90d". If the data can't answer it, say what is missing. You can't change the plan or its targets: to change them, the athlete edits the objective or training days, or asks for a new plan on the Plan page. When they ask for a kind of workout the plan doesn't hold (track, tempo, intervals, strength, a specific session), give a coach's view of whether it fits their objective and their recent intensity split, and tell them they can add it as their own run on the Plan page calendar (kinds: easy, long, hills, tempo, intervals, hike, race), where the plan fills the rest of the week around it. Never reply with only a list of what you can't do. If the athlete mentions pain above 3 of 5, illness or chest symptoms, recommend rest and a clinician, and do not diagnose. No weight-loss or fueling-restriction advice. You don't judge weather, snow, route conditions or technical skill.
+- actions: things you can do for the athlete. Each shows as a card the athlete confirms before it runs, so propose one only when they asked for it or clearly agreed, at most three, and say in the answer what you're proposing. Leave it empty when you are only answering. Kinds: schedule_run (day as YYYY-MM-DD, run_kind, miles, gain_ft, minutes) adds a run to their calendar; move_run (run_id from scheduled_runs, day) moves one of their own runs; delete_run (run_id) removes one; set_note (note: the whole new training goals note, in their voice) replaces athlete_note; sync pulls new activities from their data source; apply_thresholds switches their heart-rate thresholds to "suggested_thresholds". Leave fields a kind doesn't use null. Sizes you pick for a new run must fit their history and the room in their loads; plan changes still go through the Plan page. When the packet has no "scheduled_runs" (the Plan page's chat), you can't do things from there: leave actions empty and don't offer any.
 - used: the names of the data fields your answer relies on.
 """
 
@@ -967,15 +967,30 @@ def traceable(token: str, allowed: set[float]) -> bool:
 PROMPT_NUMBERS = {x for x in allowed_numbers(SYSTEM) if x >= 10}
 
 
+def _plausible_run(a: Any) -> bool:
+    """A schedule_run whose size is inside the limits the engine holds its cards to."""
+    if not isinstance(a, dict) or a.get("kind") != "schedule_run":
+        return False
+    miles, gain, minutes = a.get("miles") or 0, a.get("gain_ft") or 0, a.get("minutes")
+    try:
+        return (0 <= miles <= 100 and 0 <= gain <= 30000 and bool(miles or minutes)
+                and (minutes is None or 0 < minutes <= 2880))
+    except TypeError:
+        return False
+
+
 def check(reply: dict, packet: dict, mode: str) -> list[str]:
     """Problems with a reply, as sentences the model can act on. Empty means it passes."""
     if mode in FIELD_MODES or MODES[mode].get("free_numbers"):
         return []
     allowed = allowed_numbers(packet) | PROMPT_NUMBERS
-    # A proposed action carries new numbers (a run's size), which the athlete confirms on its card;
-    # the answer may quote them, and every other number still has to come from the data.
-    allowed |= allowed_numbers([{k: a.get(k) for k in ("miles", "gain_ft", "minutes", "day")}
-                                for a in reply.get("actions") or []])
+    # A proposed run carries new numbers (its size), which the athlete confirms on its card; the
+    # answer may quote them, and every other number still has to come from the data. Only where
+    # actions can be proposed (the packet lists scheduled_runs), and only a run whose size could
+    # become a card, so an action can't carry an invented number past the check.
+    if "scheduled_runs" in packet:
+        allowed |= allowed_numbers([{k: a.get(k) for k in ("miles", "gain_ft", "minutes", "day")}
+                                    for a in reply.get("actions") or [] if _plausible_run(a)])
     bad = []
     for key, value in reply.items():
         if key == "actions":

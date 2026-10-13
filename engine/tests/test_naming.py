@@ -72,3 +72,35 @@ def test_backfill_names_every_generic_activity_once(tmp_path, monkeypatch):
         time.sleep(0.1)
     assert s["pending"] == 0 and s["named"] == 30
     assert {a["name"] for a in client.get("/api/activities").json()} == {"Run at Griffith Park"}
+
+
+def test_names_the_athlete_typed_are_kept():
+    for name in ("Mt Whitney Hike", "Baldy Bowl Run", "Cactus to Clouds hike", "Tempo run", "Long run",
+                 "Hill repeats run", "Track workout", "WS100", "UTMB2025"):
+        assert not naming.is_generic(name), name
+    for name in ("Trail Run", "Lunch Ride", "Indoor Cardio", "Afternoon Hike", "Backcountry Skiing", "activity_12345"):
+        assert naming.is_generic(name), name
+
+
+def test_a_failed_place_lookup_is_asked_again(tmp_path, monkeypatch):
+    from talus.store import Store
+    store = Store(tmp_path)
+    calls = []
+
+    def down(lat, lon):
+        calls.append(1)
+        raise naming.LookupFailed("timed out")
+
+    monkeypatch.setattr(naming, "area_name", down)
+    monkeypatch.setattr(naming, "peak_name", down)
+    assert naming.places(store, 34.1, -118.3, (34.12, -118.30)) == {"area": None, "peak": None}
+    assert store.place("area:34.100,-118.300") is None  # not cached as "nothing here"
+    monkeypatch.setattr(naming, "area_name", lambda lat, lon: "Griffith Park")
+    assert naming.places(store, 34.1, -118.3, None)["area"] == "Griffith Park"
+
+
+def test_overpass_timeouts_are_failures_not_empty_answers(monkeypatch):
+    import pytest
+    monkeypatch.setattr(naming, "_get", lambda *a, **k: {"elements": [], "remark": "runtime error: Query timed out"})
+    with pytest.raises(naming.LookupFailed):
+        naming.peak_name(34.1, -118.3)

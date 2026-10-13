@@ -39,16 +39,22 @@ export default function Heatmap() {
 
   // Lines the engine hasn't drawn yet are read in the background; ask again until they are all there.
   useEffect(() => {
-    let stop = false, timer: ReturnType<typeof setTimeout>;
+    let stop = false, loaded = false, timer: ReturnType<typeof setTimeout>;
     const load = () =>
       fetch("/api/heatmap", { cache: "no-store" })
         .then((r) => (r.ok ? r.json() : Promise.reject(new Error(`Engine returned ${r.status}`))))
         .then((d: HeatmapData) => {
           if (stop) return;
+          loaded = true;
           setData(d);
           if (d.pending > 0) timer = setTimeout(load, 3000);
         })
-        .catch((e) => !stop && setError(e instanceof Error ? e.message : "Could not reach the engine."));
+        .catch((e) => {
+          if (stop) return;
+          // Once routes are showing, a failed poll only means asking again.
+          if (loaded) timer = setTimeout(load, 3000);
+          else setError(e instanceof Error ? e.message : "Could not reach the engine.");
+        });
     load();
     return () => { stop = true; clearTimeout(timer); };
   }, []);

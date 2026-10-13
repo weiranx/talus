@@ -112,7 +112,9 @@ export default function HeatMapView({ tracks }: { tracks: HeatTrack[] }) {
   useEffect(() => {
     if (!ready.current || !map.current) return;
     (map.current.getSource("routes") as import("maplibre-gl").GeoJSONSource | undefined)?.setData(geojson(tracks));
-    setPicked(null);
+    // New lines drawn while you look keep your pick; a filter that hides it clears it.
+    const ids = new Set(tracks.map((t) => t.id));
+    setPicked((p) => (p && p.ids.every((id) => ids.has(id)) ? p : null));
   }, [tracks]);
 
   useEffect(() => {

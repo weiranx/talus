@@ -1129,7 +1129,7 @@ def _with_own_runs(store: Store, sessions: list[dict], acts: list[dict]) -> list
     for s in sessions:
         it = own.get(s["day"])
         out.append(s if it is None else s | {k: it[k] for k in ("kind", "miles", "gain_ft", "loss_ft", "minutes", "title")}
-                   | {"how": it["notes"] or "Your own run.", "detail": it["detail"], "own": True})
+                   | {"how": it["notes"] or "Your own run.", "detail": it["detail"], "steps": [], "own": True})
     return out
 
 
@@ -1446,7 +1446,8 @@ def _talk_objective(store: Store, st: dict, body: TalkIn, day: date) -> list[dic
         if kind == "target" and not totals:
             st["objective"] = {"goal": "target"}
             return [interview.coach("How much this year? Like \"1,000,000 ft\" or \"2,000 mi\", or both.", "objective")]
-        acts = _activities(store, day - timedelta(days=120))
+        # The whole year for a yearly target's "done so far", and four months for the baseline.
+        acts = _activities(store, min(day - timedelta(days=120), date(day.year, 1, 1)))
         st["objective"] = interview.block_objective(kind, acts, day, totals)
         return [interview.coach(interview.block_text(st["objective"], acts, day), "objective",
                                 [{"key": "confirm", "options": ["Use this"], "value": None}])]
@@ -1550,16 +1551,19 @@ def _talk_change(store: Store, st: dict, text: str, day: date) -> list[dict]:
     if interview.is_question(text) and not interview.rules_edits(text):
         return [_talk_question(store, text, day, obj, before)]
     c = _constraints(store)
+    # Week 1 is this week, even in a plan accepted weeks ago.
+    ahead = [w for w in before["weeks"] if w["start"] >= (day - timedelta(days=day.weekday())).isoformat()]
     packet = {"today": day.isoformat(), "text": text, "training_days": c.days, "long_day": c.long_day,
-              "weeks_in_plan": len(before["weeks"])}
+              "weeks_in_plan": len(ahead)}
     read, meta = _talk_read(store, "edit", text, packet, {"edits": interview.rules_edits(text)})
     edits = read["edits"] if meta is None else interview.from_edits(read["edits"])
-    if not edits and interview.is_question(text):
+    # The rules can't tell "What pace should my tempo runs be?" from a change; only the coach can.
+    if interview.is_question(text) and (not edits or meta is None):
         return [_talk_question(store, text, day, obj, before)]
     if not edits:
         asked = read.get("cannot") if meta is not None and isinstance(read.get("cannot"), str) else None
         return [interview.coach(interview.cant_text(asked), "draft") | (meta or {})]
-    new_c, done, skipped = interview.apply_edits(edits, asdict(c), before["weeks"])
+    new_c, done, skipped = interview.apply_edits(edits, asdict(c), ahead)
     if not done:
         return [interview.coach(interview.change_text(done, skipped, []) + "\n" + interview.EDIT_HELP, "draft") | (meta or {})]
     store.save_settings({"plan_constraints": asdict(planner.Constraints.from_json(new_c))})
@@ -1649,6 +1653,7 @@ def post_talk(body: TalkIn) -> dict:
             reply = [interview.coach("Done. Your plan is on the calendar, and you can change it here any time."
                                      if body.action == "accept" else "Kept your current plan.")]
         st["step"] = "done"
+        st.pop("building", None)  # decided mid-build: nothing left to wait for
     elif body.action == "retry" or step == "stuck":
         reply = _talk_finish(store, st, day)
     elif step == "objective":
@@ -1960,6 +1965,9 @@ def confirm_action(action_id: int, background: BackgroundTasks) -> dict:
         return {"id": action_id, "status": a["status"], "result": a["result"]}
     p = a["payload"]
     try:
+        # A card confirmed days later can't put a run on a day that has passed.
+        if a["kind"] in ("schedule_run", "move_run") and date.fromisoformat(p["day"]) < date.today():
+            raise ValueError(f"{_day_text(date.fromisoformat(p['day']))} has passed. Ask the coach again.")
         if a["kind"] == "schedule_run":
             store.save_planned_run(schedule.PlannedRun(date.fromisoformat(p["day"]), p["kind"], p["miles"],
                                                        p["gain_ft"], p["gain_ft"], p["minutes"]))
@@ -2597,7 +2605,7 @@ def disconnect_coros() -> dict:
 
 
 class HealthKitWorkout(BaseModel):
-    uuid: str = Field(min_length=1, max_length=64)
+    uuid: str = Field(min_length=1, max_length=64, pattern="^[A-Za-z0-9-]+$")  # it names the raw file
     sport: str = Field(pattern="^(run|trail_run|hike|walk|ride|other)$")
     name: str | None = Field(default=None, max_length=200)
     start: str = Field(min_length=10, max_length=40)  # ISO 8601 with offset
@@ -2711,14 +2719,16 @@ UNSCORED_SPAN_S = 1800
 
 
 def taken_spans(store: Store) -> list[list[str]]:
-    """When each recent activity ran, from any source, as [start, end] in UTC. The apps skip a
+    """When each recent activity ran, from a synced source, as [start, end] in UTC. Files (the
+    watch's own included) are left out: the watch's files are skipped by key, and a span around
+    one would hide the next activity off the watch, like a cooldown right after a race. The apps skip a
     watch activity that falls inside one, so a run intervals.icu or Apple Health already brought in
     isn't downloaded off the watch only to be dropped as a duplicate. Starts are stored as local
     wall-clock time and read in the engine's zone, like every file without one."""
     since = (date.today() - timedelta(days=WATCH_TAKEN_DAYS)).isoformat()
     rows = store.db.execute(
         """SELECT a.start_time, s.summary FROM activity a LEFT JOIN activity_score s ON s.activity_id = a.id
-           WHERE a.start_time >= ?""", (since,)).fetchall()
+           WHERE a.start_time >= ? AND a.source != 'file'""", (since,)).fetchall()
     out = []
     for r in rows:
         start = datetime.fromisoformat(r["start_time"])
@@ -2764,6 +2774,8 @@ def _ai_name(store: Store, row, refresh: bool = False) -> dict:
     name = naming.clean(str(out["reply"].get("name") or "")) or naming.rules_name(packet)["name"]
     if name and (out["source"] == "coach" or place["peak"] or place["area"]):
         store.set_activity_name(row["id"], ai_name=name)
+    elif start is None and (store.activity_names().get(row["id"]) or {}).get("ai_name") is None:
+        store.set_activity_name(row["id"], ai_name="")  # no route to name it by: the backfill stops asking
     return {"name": name, "source": out["source"], "fallback_reason": out["fallback_reason"], "cost": out["cost"]}
 
 
@@ -2801,7 +2813,7 @@ _naming_guard = threading.Lock()
 def _unnamed(store: Store) -> list:
     names = store.activity_names()
     return [r for r in store.scored_activities() if naming.is_generic(r["name"])
-            and not (names.get(r["id"]) or {}).get("ai_name")]
+            and (names.get(r["id"]) or {}).get("ai_name") is None]  # "" is tried and left with its name
 
 
 @app.get("/api/names/backfill")
@@ -2818,6 +2830,8 @@ def names_backfill_status() -> dict:
 def names_backfill() -> dict:
     """Name every past activity that has a generic name, in the background, oldest first."""
     store = get_store()
+    if not _names_on(store):
+        raise HTTPException(409, "AI names are off. Turn them on in Settings first.")
     key = str(store.dir)
     rows = sorted(_unnamed(store), key=lambda r: r["start_time"])
     with _naming_guard:
@@ -2831,8 +2845,8 @@ def names_backfill() -> dict:
             for r in rows:
                 try:
                     _ai_name(own, r)
-                except Exception:  # an unreadable file keeps its name
-                    pass
+                except Exception:  # an unreadable file keeps its name, and isn't asked about again
+                    own.set_activity_name(r["id"], ai_name="")
                 with _naming_guard:
                     _naming[key]["named"] += 1
         finally:
@@ -3268,6 +3282,8 @@ def _target(accounts: Accounts, admin_account: Account, account_id: int) -> Acco
         raise HTTPException(404, "No such account.")
     if target.id == admin_account.id:
         raise HTTPException(409, "That's your own account. Change it from Settings.")
+    if target.is_owner:
+        raise HTTPException(409, "That's the owner's account.")
     return target
 
 

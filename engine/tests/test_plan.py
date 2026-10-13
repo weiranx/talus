@@ -760,3 +760,13 @@ def test_road_plans_do_hill_sprints():
     p = planner.build(_obj(weeks=12, distance_mi=13.1, gain_ft=300, loss_ft=300), acts, _history(acts),
                       planner.Constraints(), TODAY)
     assert {w["hill_session"] for w in p["weeks"] if w["focus"] == "build"} == {"hill_sprints"}
+
+
+def test_a_slow_marathon_still_trains_with_one_long_run():
+    # With no foot days learned yet, the default pace puts a flat marathon at about 7 h, over
+    # B2B_FROM_H, but a road plan never splits its long run into two shorter days.
+    o = _obj(name="Marathon", distance_mi=26.2, gain_ft=0, loss_ft=0, longest_descent_ft=0)
+    dem = planner.demand(o, planner.pace([], TODAY))
+    assert dem["race_type"] == "road" and dem["time"]["mid_h"] >= planner.B2B_FROM_H
+    assert not planner.b2b_sized(dem)
+    assert planner.b2b_sized(dem | {"race_type": "mountain"})

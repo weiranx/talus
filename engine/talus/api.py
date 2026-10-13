@@ -30,7 +30,7 @@ from fastapi.responses import JSONResponse, RedirectResponse, StreamingResponse
 from pydantic import BaseModel, ConfigDict, Field
 
 from . import MODEL_VERSION, admin, cli, coach, explain, google_auth, interview, intervals_auth, ledger, naming, readiness_score, status, wellness, zones
-from . import heatmap
+from . import heatmap, terrain
 from . import plan as planner
 from . import schedule
 from . import settings as app_settings
@@ -40,7 +40,7 @@ from .models import Thresholds
 from .parse import parse
 from .readiness import daily_call, readiness
 from .route import route_numbers
-from .score import MAX_DT_S, score
+from .score import MAX_DT_S, MOVING_MPS, _hiking, score
 from .store import Store
 from .units import ft, mi
 
@@ -474,7 +474,7 @@ def _detail_key(store: Store, row, th: Thresholds, zm: dict) -> str:
     st = (store.dir / row["raw_path"]).stat()
     return json.dumps({"file": [row["raw_path"], st.st_mtime_ns, st.st_size, row["raw_fmt"], row["sport"]],
                        "th": asdict(th), "zones": [zm["zones"], zm["floors"]], "model": MODEL_VERSION,
-                       "points": MAX_POINTS}, sort_keys=True)
+                       "points": MAX_POINTS, "terrain": terrain.VERSION}, sort_keys=True)
 
 
 def _detail_path(store: Store, row, key: str):
@@ -515,12 +515,68 @@ def _detail_from_disk_or_file(store: Store, row, th: Thresholds, zm: dict, key: 
         path.parent.mkdir(exist_ok=True)
         for old in path.parent.glob(f"activity-{row['id']}-*.json"):  # from older thresholds or zones
             old.unlink(missing_ok=True)
-        tmp = path.with_suffix(f".{threading.get_ident()}.tmp")
-        tmp.write_text(json.dumps(hit))
-        tmp.replace(path)
+        _write_json(path, hit)
+        _save_terrain(store, row, hit["terrain"])
     except (OSError, TypeError):
         pass  # a read-only or full disk only costs the next view a re-read
     return hit
+
+
+def _write_json(path, data) -> None:
+    tmp = path.with_suffix(f".{threading.get_ident()}.tmp")
+    tmp.write_text(json.dumps(data))
+    tmp.replace(path)
+
+
+# Each activity's grade and durability numbers are also kept on their own, keyed on the file only,
+# so comparing an activity with the athlete's earlier ones reads a few small files, and survives a
+# change of thresholds or zones.
+_terrains: dict[str, dict | None] = {}
+_terrains_guard = threading.Lock()
+
+
+def _terrain_path(store: Store, row):
+    st = (store.dir / row["raw_path"]).stat()
+    key = json.dumps([row["raw_path"], st.st_mtime_ns, st.st_size, row["raw_fmt"], row["sport"], terrain.VERSION])
+    return store.dir / "cache" / f"terrain-{row['id']}-{hashlib.sha1(key.encode()).hexdigest()[:16]}.json"
+
+
+def _save_terrain(store: Store, row, data: dict | None) -> None:
+    path = _terrain_path(store, row)
+    if path.exists():
+        return
+    for old in path.parent.glob(f"terrain-{row['id']}-*.json"):
+        old.unlink(missing_ok=True)
+    _write_json(path, {"terrain": data})
+
+
+def _terrain_of(store: Store, row) -> dict | None:
+    """An activity's saved grade and durability numbers, or None until its file has been read
+    (the background read-ahead gets to every activity)."""
+    try:
+        path = str(_terrain_path(store, row))
+    except OSError:
+        return None
+    with _terrains_guard:
+        if path in _terrains:
+            return _terrains[path]
+    try:
+        data = json.loads(open(path).read())["terrain"]
+    except (OSError, ValueError, KeyError):
+        return None
+    with _terrains_guard:
+        _terrains[path] = data
+    return data
+
+
+def _terrain_history(store: Store, row) -> list[dict]:
+    """Grade and durability numbers of the same kind of activity in the 90 days before this one."""
+    start = row["start_time"]
+    since = (date.fromisoformat(start[:10]) - timedelta(days=terrain.HISTORY_DAYS)).isoformat()
+    k = heatmap.kind(row["sport"])
+    return [t for r in store.scored_activities(since)
+            if r["start_time"] < start and r["id"] != row["id"] and heatmap.kind(r["sport"]) == k
+            and (t := _terrain_of(store, r))]
 
 
 def _score_detail(store: Store, row, th: Thresholds, zm: dict) -> dict:
@@ -535,19 +591,28 @@ def _score_detail(store: Store, row, th: Thresholds, zm: dict) -> dict:
     def pick(arr, f=lambda x: x, nd=1):
         return None if arr is None else [round(float(f(v)), nd) for v in arr[idx]]
 
-    dt = np.minimum(np.diff(streams.time, prepend=streams.time[0]), MAX_DT_S)
+    raw_dt = np.diff(streams.time, prepend=streams.time[0])
+    dt = np.minimum(raw_dt, MAX_DT_S)
+    with np.errstate(divide="ignore", invalid="ignore"):
+        speed = np.where(raw_dt > 0, np.diff(streams.distance, prepend=streams.distance[0]) / raw_dt, 0.0)
+    hiking = _hiking(streams, speed)
+    moving = speed > MOVING_MPS
     segments = []
     for n, seg in enumerate(result.segments):
         sl = (streams.time >= seg.start_s) & (streams.time <= seg.end_s)
         z = None if split is None else {f"z{k}": float(np.sum(dt[sl & (split == k)]) / 60) for k in (1, 2, 3)}
         hz = None if zone is None else {f"z{k}": float(np.sum(dt[sl & (zone == k)]) / 60)
                                         for k in range(1, zm["zones"] + 1)}
+        mt = float(np.sum(dt[sl & moving]))
+        vert_m = seg.gain_m if seg.kind == "climb" else seg.loss_m if seg.kind == "descent" else 0.0
+        seg_hr = None if hr is None or mt <= 0 else round(float(np.sum((hr * dt)[sl & moving]) / mt), 1)
         segments.append({"index": n, "kind": seg.kind, "distance_mi": mi(seg.distance_m),
                          "gain_ft": ft(seg.gain_m), "loss_ft": ft(seg.loss_m), "avg_grade": seg.avg_grade,
                          "grade_band": seg.grade_band, "hike_share": seg.hike_share,
                          "time_s": seg.end_s - seg.start_s, "start_s": seg.start_s, "end_s": seg.end_s,
                          "zone_minutes": z, "hr_zone_minutes": hz, "climb_load": seg.climb_load,
-                         "descent_load": seg.descent_load})
+                         "descent_load": seg.descent_load, "avg_hr": seg_hr,
+                         "vert_rate_ft_h": round(ft(vert_m) / mt * 3600) if mt >= 60 and vert_m else None})
     return {
         "sport": streams.sport,
         "distance_mi": result.distance_mi, "gain_ft": result.gain_ft, "loss_ft": result.loss_ft,
@@ -561,6 +626,7 @@ def _score_detail(store: Store, row, th: Thresholds, zm: dict) -> dict:
         "cardio_estimated": result.cardio_estimated, "notes": result.notes,
         "load_values": {name: getattr(result, key) for name, key in ledger.ACTIVITY_KEY.items()},
         "segments": segments,
+        "terrain": terrain.analyze(streams, hiking),
         "streams": {"time_s": pick(streams.time, nd=0), "distance_mi": pick(streams.distance, mi, 3),
                     "altitude_ft": pick(streams.altitude, ft, 0), "heart_rate": pick(hr, nd=0),
                     "zone": None if zone is None else [int(v) for v in zone[idx]],
@@ -652,6 +718,7 @@ def activity(activity_id: int) -> dict:
     zm = zones.model(th, store.settings().get("hr_zones"))
     core = dict(_detail_core(store, row, th, zm))
     load_values = core.pop("load_values")
+    core["terrain"] = terrain.compare(core.get("terrain"), _terrain_history(store, row))
     day = date.fromisoformat(row["start_time"][:10])
     before = {d.ledger: d.fitness for d in store.ledgers(day - timedelta(days=1))
               if d.day == day - timedelta(days=1)}

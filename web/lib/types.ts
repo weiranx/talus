@@ -164,7 +164,47 @@ export interface Segment {
   hr_zone_minutes: HrZoneMinutes | null;
   climb_load: number;
   descent_load: number;
+  avg_hr?: number | null;
+  vert_rate_ft_h?: number | null;
 }
+
+// Climbing and descending by grade, and durability (engine terrain.py).
+export interface GradeSplit { time_s: number; vert_rate_ft_h: number; pace_min_mi: number | null; avg_hr: number | null }
+export interface GradeBand {
+  key: string;
+  label: string;
+  kind: "climb" | "descent";
+  time_s: number;
+  distance_mi: number;
+  vert_ft: number;
+  vert_rate_ft_h: number;
+  pace_min_mi: number | null;
+  hike_share: number;
+  avg_hr: number | null;
+  hike: GradeSplit | null;
+  run: GradeSplit | null;
+  usual: { runs: number; vert_rate_ft_h: number; avg_hr: number | null; rate_change_pct: number | null; hr_change_bpm: number | null; fastest: boolean } | null;
+}
+export interface DurabilityHalf {
+  time_s: number; distance_mi: number; gain_ft: number; flat_pace_min_mi: number | null;
+  climb_rate_ft_h: number | null; avg_hr: number | null; efficiency: number | null;
+}
+export interface Durability {
+  first: DurabilityHalf;
+  second: DurabilityHalf;
+  flat_pace_min_mi: number | null;
+  pace_change_pct: number | null;
+  climb_rate_change_pct: number | null;
+  decoupling_pct: number | null;
+  verdict: "held" | "drifted" | "faded" | null;
+  usual_decoupling_pct: number | null;
+  usual_runs: number;
+}
+export interface HikeOrRun {
+  key: string; label: string; hike_rate_ft_h: number; run_rate_ft_h: number; run_rate_gain_pct: number;
+  hike_hr: number | null; run_hr: number | null; run_hr_cost_bpm: number | null;
+}
+export interface Terrain { bands: GradeBand[]; durability: Durability | null; hike_or_run: HikeOrRun[] }
 
 export interface UsualDay { load: number | null; times_usual_day: number | null; six_week_high: boolean }
 
@@ -177,6 +217,7 @@ export interface ActivityDetail extends Omit<ActivitySummary, "cardio_load" | "c
   minutes_above_8000ft: number;
   loads: Record<Ledger, UsualDay>;
   segments: Segment[];
+  terrain?: Terrain | null;
   zone_model: ZoneModel;
   streams: {
     time_s: number[];

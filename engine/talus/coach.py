@@ -84,9 +84,9 @@ Daily brief: you get today's readiness, the overnight signals, the four loads, t
 - call: go, modify or rest. Keep rule_call's call unless something in the data argues for more caution; never be less cautious. If you keep it, the athlete gets rule_call's session; if you choose a more cautious call, they get an easier one.
 - why: two or three short sentences on what in the data drives the call, leading with the main reason (the athlete already sees the call and the session above it), naming the loads, states or check-in behind it. When it matters, set today against the recent weeks or the run of training days in "rest". Do not prescribe a different session.
 
-Workout analysis: you get one activity with its segments, its four loads against a usual day, the athlete's current state, "similar_recent" (up to three earlier activities of the same sport with the closest effort miles) and "biggest_in_90_days" (the dimensions where it was the athlete's biggest day). Use the similar activities to say whether this one went better or worse than its peers: time in each zone, min_per_effort_mi and cardio_load_per_hour. Answer five questions, one or two sentences each:
+Workout analysis: you get one activity with its segments, its four loads against a usual day, the athlete's current state, "similar_recent" (up to three earlier activities of the same sport with the closest effort miles) and "biggest_in_90_days" (the dimensions where it was the athlete's biggest day). Use the similar activities to say whether this one went better or worse than its peers: time in each zone, min_per_effort_mi and cardio_load_per_hour. "grades" has the climbing and descending rate (vertical ft per hour) on each band of grade with "usual_90d", the athlete's own median on the same grade; "hike_vs_run_on_climbs" says what running a climb bought over hiking it, in speed and beats; "durability" sets the second half against the first on grade-adjusted pace, so an out-and-back is fair, and decoupling_pct is how much heart rate drifted against that pace (under 5% held, over 10% faded). These are the read Garmin and Strava can't give, so use them when they say something: a grade climbed or descended well faster or slower than usual, running a steep grade for little gain at a high heart-rate cost, or a fade. Answer five questions, one or two sentences each:
 - job: did it do its job? Judge from time in each zone, where the vert came from and the hike share.
-- off: where did it go off? Name the segment (as labeled) where heart rate or effort drifted, or say nothing stood out.
+- off: where did it go off? Name the segment (as labeled) or grade where heart rate or effort drifted, or the half that faded, or say nothing stood out.
 - cost: what did it cost? Name the loads, especially any 6-week high or any load well above a usual day.
 - changes: what does it change for the next few days? Point to the ledger it pushed hardest.
 - takeaway: one thing to keep or change next time.
@@ -604,7 +604,51 @@ def analysis_packet(a: dict, thresholds: dict, ledgers_now: dict, today: date,
                       "descent_load": _r(s["descent_load"])}
                      for label, s in zip(segment_labels(segs), segs)],
         "ledgers_now": {name: _ledger(d, name) for name, d in ledgers_now.items()},
+        **terrain_packet(a.get("terrain")),
     }
+
+
+def _pace_text(min_per_mi: float | None) -> str | None:
+    if not min_per_mi:
+        return None
+    m = int(round(min_per_mi * 60))
+    return f"{m // 60}:{m % 60:02d}/mi"
+
+
+def terrain_packet(t: dict | None) -> dict:
+    """The activity's climbing and descending by grade against the athlete's usual on the same
+    grades, hiking against running on the climbs, and how the second half held up."""
+    if not t:
+        return {}
+    grades = []
+    for b in t["bands"]:
+        u = b["usual"]
+        grades.append({
+            "grade": f"{b['kind']} {b['label']}", "vert_ft": b["vert_ft"], "time": _hm(b["time_s"]),
+            "vert_rate_ft_per_hour": b["vert_rate_ft_h"],
+            "pace": _pace_text(b["pace_min_mi"]) if b["kind"] == "descent" else None,
+            "hike_share_pct": _r(b["hike_share"] * 100), "avg_hr": _r(b["avg_hr"]),
+            "usual_90d": None if not u else {
+                "earlier_activities": u["runs"], "vert_rate_ft_per_hour": u["vert_rate_ft_h"], "avg_hr": u["avg_hr"],
+                "rate_vs_usual_pct": u["rate_change_pct"], "hr_vs_usual_bpm": u["hr_change_bpm"],
+                "fastest_in_90_days": u["fastest"]}})
+    d = t["durability"]
+    out = {"grades": grades, "hike_vs_run_on_climbs": [
+        {"grade": h["label"], "hiking_ft_per_hour": h["hike_rate_ft_h"], "running_ft_per_hour": h["run_rate_ft_h"],
+         "running_faster_pct": h["run_rate_gain_pct"], "hiking_hr": _r(h["hike_hr"]), "running_hr": _r(h["run_hr"]),
+         "running_costs_bpm": h["run_hr_cost_bpm"]} for h in t["hike_or_run"]]}
+    if d:
+        half = lambda h: {"distance_mi": h["distance_mi"], "gain_ft": h["gain_ft"], "time": _hm(h["time_s"]),
+                          "grade_adjusted_pace": _pace_text(h["flat_pace_min_mi"]),
+                          "steep_climb_ft_per_hour": h["climb_rate_ft_h"], "avg_hr": _r(h["avg_hr"])}
+        out["durability"] = {
+            "first_half": half(d["first"]), "second_half": half(d["second"]),
+            "grade_adjusted_pace": _pace_text(d["flat_pace_min_mi"]),
+            "grade_adjusted_pace_change_pct": d["pace_change_pct"],
+            "steep_climb_rate_change_pct": d["climb_rate_change_pct"],
+            "decoupling_pct": d["decoupling_pct"], "usual_decoupling_pct": d["usual_decoupling_pct"],
+            "verdict": d["verdict"]}
+    return out
 
 
 def _week(w: dict) -> dict:
@@ -978,6 +1022,21 @@ def rules_analysis(packet: dict) -> dict:
         takeaway = f"Most of the climbing came on {band_name.get(band, band)} grades: {gain[band]:,} ft."
     else:
         takeaway = "A flat day: no climbing to speak of."
+    dur = packet.get("durability")
+    if dur and dur["verdict"] == "faded":
+        drift = (f"heart rate drifted {dur['decoupling_pct']}% against grade-adjusted pace"
+                 if dur["decoupling_pct"] is not None else
+                 f"grade-adjusted pace slowed {dur['grade_adjusted_pace_change_pct']}%")
+        off = f"The second half faded: {drift}. " + off
+    moved = [g for g in packet.get("grades", []) if g["usual_90d"] and g["usual_90d"]["rate_vs_usual_pct"] is not None
+             and abs(g["usual_90d"]["rate_vs_usual_pct"]) >= 8]
+    if moved:
+        g = max(moved, key=lambda g: g["vert_ft"])  # the grade that carried the most vert
+        u = g["usual_90d"]
+        verb = "climbed" if g["grade"].startswith("climb") else "descended"
+        takeaway += (f" On {g['grade'].split(' ', 1)[1]} grades you {verb} at {g['vert_rate_ft_per_hour']:,} ft/h, "
+                     f"{abs(u['rate_vs_usual_pct'])}% {'faster' if u['rate_vs_usual_pct'] > 0 else 'slower'} "
+                     f"than your usual {u['vert_rate_ft_per_hour']:,} ft/h.")
     return {"job": job, "off": off, "cost": cost, "changes": changes, "takeaway": takeaway}
 
 

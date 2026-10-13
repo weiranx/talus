@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { dayLabel, mi, n0 } from "@/lib/format";
-import { FOCUS_TEXT, hours, WORKOUT_TEXT } from "@/lib/plan";
+import { FOCUS_TEXT, HILL_TEXT, hours, WORKOUT_TEXT } from "@/lib/plan";
 import type { LongDay, PlanWeek, WeekActual } from "@/lib/types";
 
 // Week targets to the objective: miles and feet side by side, the long day, and why a week was held back.
@@ -45,7 +45,7 @@ export default function WeeksTable({ weeks, current, limit, full, actuals }: {
           {shown.map((w) => (
             <tr key={w.start} className={w.start === current ? "hl" : undefined}>
               <td>{dayLabel(w.start, { month: "short", day: "numeric" })}</td>
-              <td>{FOCUS_TEXT[w.focus]}{w.limited_by.length ? " *" : ""}{w.workout ? <span className="muted"> · {WORKOUT_TEXT[w.workout].toLowerCase()}</span> : null}</td>
+              <td>{FOCUS_TEXT[w.focus]}{w.limited_by.length ? " *" : ""}{w.workout ? <span className="muted"> · {WORKOUT_TEXT[w.workout].toLowerCase()}</span> : null}{w.hill_session ? <span className="muted"> · {HILL_TEXT[w.hill_session].toLowerCase()}</span> : null}</td>
               <td className="num">{mi(w.miles)}</td>
               <td className="num">{n0(w.gain_ft)}</td>
               <td className="num">{n0(w.loss_ft)}</td>

@@ -428,7 +428,8 @@ export interface Objective {
 
 export type Goal = "race" | "trip" | "base" | "maintain" | "comeback" | "faster" | "target" | "rolling";
 
-export type Workout = "none" | "track" | "tempo" | "hill_repeats" | "race_pace";
+export type Workout = "none" | "track" | "tempo" | "hill_repeats" | "race_pace" | "threshold" | "fartlek" | "progression";
+export type HillSession = "vert_climb" | "power_hike" | "downhill" | "muscular_endurance" | "hill_sprints";
 
 export interface Constraints {
   days: number[]; weekday_min: number; weekend_min: number; long_day: number; notes: string;
@@ -462,6 +463,7 @@ export interface PlanWeek {
   limited_by: string[];
   notes: string[];
   workout?: Exclude<Workout, "none"> | null;
+  hill_session?: HillSession | null;
   // The AI coach's line for the week, when it built the plan.
   coach_note?: string | null;
 }
@@ -501,7 +503,8 @@ export interface Plan {
   changes: { start: string; before: WeekBrief | null; after: WeekBrief }[];
 }
 
-export type SessionKind = "long" | "long2" | "hills" | "easy" | "track" | "tempo" | "hill_repeats" | "race_pace" | "rest" | "objective" | "done";
+export type SessionKind = "long" | "long2" | "hills" | "easy" | "track" | "tempo" | "hill_repeats" | "race_pace"
+  | "threshold" | "fartlek" | "progression" | "rest" | "objective" | "done";
 
 export interface PlanSession {
   day: string;
@@ -513,6 +516,11 @@ export interface PlanSession {
   focus: Focus;
   title: string;
   how: string;
+  // How to run it, warm-up to cool-down, with heart-rate targets.
+  steps?: string[];
+  // The hill day's session, or recovery/strides on an easy day; strength is added after the run.
+  type?: string;
+  strength?: boolean;
   own?: boolean;
   detail: string;
   longest_descent_ft?: number | null;

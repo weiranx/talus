@@ -672,6 +672,17 @@ def _weekday(iso: str) -> str:
     return DAY_NAMES[date.fromisoformat(iso).weekday()]
 
 
+def _built_by(plan: dict) -> list[str]:
+    """How the AI coach shaped the draft, and how many weeks the engine held to its limits."""
+    if plan.get("builder") != "coach":
+        return []
+    out = [f"The AI coach built this one: {plan['approach'].strip()}" if plan.get("approach") else
+           "The AI coach built this one."]
+    if n := plan.get("held_weeks"):
+        out.append(f"The engine held {n} week{'s' if n != 1 else ''} it asked for to the 10% build limit.")
+    return out
+
+
 def block_summary(plan: dict, name: str, long_day: int, a: dict) -> str:
     """The draft for a goal with no race day."""
     weeks, b = plan["weeks"], plan["baseline"]
@@ -684,7 +695,7 @@ def block_summary(plan: dict, name: str, long_day: int, a: dict) -> str:
             else "builds to")
     lines = [f"Here's your draft: {span}. From your last four weeks, about {_mi(b['miles'])} mi and {_ft(b['gain_ft'])} ft "
              f"up a week, it {move} {_mi(pk['miles'])} mi with {_ft(pk['gain_ft'])} ft up and {_ft(pk['loss_ft'])} ft down, "
-             f"with a recovery week every {'third' if goal == 'comeback' else 'fourth'} week."]
+             f"with a recovery week every {'third' if goal == 'comeback' else 'fourth'} week."] + _built_by(plan)
     longs = [w["long"] for w in weeks if w.get("long")]
     if big := max(longs, key=lambda l: l["effort_mi"], default=None):
         lines.append(f"Your biggest long day is {_mi(big['miles'])} mi with {_ft(big['gain_ft'])} ft up, on a {DAY_NAMES[long_day]}.")
@@ -723,6 +734,7 @@ def draft_summary(plan: dict, name: str, long_day: int, a: dict) -> str:
         lines = [f"Here's your draft: {len(plan['weeks'])} weeks to {name}. You start from your last four weeks, about "
                  f"{_mi(b['miles'])} mi and {_ft(b['gain_ft'])} ft up a week, and build to a peak of {_mi(pk['miles'])} mi "
                  f"with {_ft(pk['gain_ft'])} ft up and {_ft(pk['loss_ft'])} ft down."]
+    lines += _built_by(plan)
     if big and big.get("second"):
         two = big["second"]
         lines.append(f"Your objective is long enough for back-to-back long days: the biggest pair is {_mi(big['miles'])} mi "

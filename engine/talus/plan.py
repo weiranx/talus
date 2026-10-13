@@ -557,8 +557,13 @@ def _long_descent(obj: Objective, long_loss: float) -> float | None:
     return min(long_loss, obj.longest_descent_ft * DURABILITY_TARGET)
 
 
-def build(obj: Objective, acts: list[dict], history: list[LedgerDay], c: Constraints, today: date) -> dict:
-    """Weekly targets from this week to the objective's week. See the module docstring."""
+def build(obj: Objective, acts: list[dict], history: list[LedgerDay], c: Constraints, today: date,
+          proposal: list[dict] | None = None) -> dict:
+    """Weekly targets from this week to the objective's week. See the module docstring.
+
+    `proposal`, from the AI coach, sets each week's focus, miles, gain, loss and speed session in
+    place of the engine's own build. The engine still holds every week to its rules: no week adds
+    more than BUILD_RATE over the last build week, and the load-limit cuts apply as always."""
     if obj.day <= today:
         raise PlanError("Pick an objective date after today.")
     if not c.days:
@@ -594,6 +599,8 @@ def build(obj: Objective, acts: list[dict], history: list[LedgerDay], c: Constra
             "gain_ft": max(obj.gain_ft * volume, long_target["gain_ft"] / share["gain_ft"]),
             "loss_ft": max(obj.loss_ft * volume, long_target["loss_ft"] / share["loss_ft"])}
     default_speed = road_workout(obj.distance_mi) if rtype == "road" else None
+    if proposal is not None:
+        kinds = _proposed_kinds(proposal, n, week0, event)
     tapers = [i for i, k in enumerate(kinds) if k == "taper"]
     builds = 0
     # Build to what the objective needs. Already past it, hold no more than HOLD_ABOVE of it:
@@ -623,7 +630,15 @@ def build(obj: Objective, acts: list[dict], history: list[LedgerDay], c: Constra
     for i, kind in enumerate(kinds):
         start = week0 + timedelta(weeks=i)
         descent_fitness_at[i] = proj.fitness("descent")
-        if kind == "build" and i > 0:
+        held: list[str] = []
+        if proposal is not None:
+            # The coach's week, held to BUILD_RATE over the last build level (no more than that level
+            # for any other week).
+            pw = proposal[i]
+            cap = {k: max(level[k], 1.0) * (BUILD_RATE if kind == "build" else 1.0) for k in DIMS}
+            want = {k: min(float(pw[k]), cap[k]) for k in DIMS}
+            held = [k for k in DIMS if float(pw[k]) > cap[k] * 1.01]
+        elif kind == "build" and i > 0:
             want = {k: peak[k] if level[k] >= peak[k] else min(peak[k], max(level[k], 1.0) * BUILD_RATE)
                     for k in DIMS}
         elif kind == "taper":
@@ -641,8 +656,13 @@ def build(obj: Objective, acts: list[dict], history: list[LedgerDay], c: Constra
                     planned[k] *= f
         race = event and _in_week(obj.day, start)
         speed = (c.workout if c.workout in WORKOUTS else default_speed) if kind in ("build", "taper") else None
+        if proposal is not None:
+            speed = proposal[i]["workout"] if proposal[i]["workout"] in WORKOUTS and kind != "race" else None
         sessions, notes = sessions_for_week(planned, start, first, _before(c, obj.day) if race else c, pace_min,
                                             b2b and not race, speed, road_long)
+        if held:
+            notes.insert(0, f"The coach asked for more {_join(['miles' if k == 'miles' else 'gain' if k == 'gain_ft' else 'descent' for k in held])}; "
+                            f"held to {round((BUILD_RATE - 1) * 100)}% over the last build week")
         for a in asked:
             what = _join(["miles" if d == "miles" else "vert" for d in a.get("dims", [])])
             notes.insert(0, f"{'Less' if float(a.get('factor', 1.0)) < 1 else 'More'} {what} this week, as you asked")
@@ -693,6 +713,9 @@ def build(obj: Objective, acts: list[dict], history: list[LedgerDay], c: Constra
                 level = {k: total[k] for k in DIMS} if limited and not asked else want
         focus = ("peak" if event else "hold") if kind == "build" and i > 0 and all(
             level[k] >= peak[k] * 0.98 for k in DIMS) else kind
+        if proposal is not None:
+            pf = proposal[i]["focus"]
+            focus = pf if kind == "build" and pf in ("build", "peak", "hold") else kind
         builds += kind == "build"
         # Hundreds and multi-day races: every third build week's long day runs into the night.
         night = (rtype in ("hundred", "multiday") and kind == "build" and long is not None
@@ -716,6 +739,7 @@ def build(obj: Objective, acts: list[dict], history: list[LedgerDay], c: Constra
             "limited_by": limited_by if scale < 1 else [], "notes": list(dict.fromkeys(notes)),
             "workout": next((s["kind"] for s in sessions if s["kind"] in WORKOUTS), None),
             "night": night,
+            **({"coach_note": str(proposal[i].get("note") or "")[:240]} if proposal is not None else {}),
         })
     common = {"objective": obj.json(), "built_on": today.isoformat(), "constraints": asdict(c),
               "back_to_back": b2b, "race_type": rtype, "goal": obj.goal,
@@ -756,6 +780,23 @@ def build(obj: Objective, acts: list[dict], history: list[LedgerDay], c: Constra
     }
     projected = evaluate(dem, proj_cap, pairs)
     return common | {"projected": {"capacity": proj_cap, **projected}, "reachable": projected["verdict"] != "gap"}
+
+
+def _proposed_kinds(proposal: list[dict], n: int, week0: date, event: bool) -> list[str]:
+    """The week kinds of a coach's plan, after checking it lines up with the plan's weeks. For an
+    event the last week is always the race week; a block has no taper or race week."""
+    if len(proposal) != n:
+        raise PlanError(f"The coach's plan has {len(proposal)} weeks; the plan has {n}.")
+    kinds = []
+    for i, pw in enumerate(proposal):
+        if pw.get("start") != (week0 + timedelta(weeks=i)).isoformat():
+            raise PlanError("The coach's weeks don't line up with the plan's.")
+        if not all(isinstance(pw.get(k), (int, float)) and 0 <= pw[k] < 1e6 for k in DIMS):
+            raise PlanError("The coach's plan has a week without usable numbers.")
+        f = pw.get("focus")
+        kinds.append("race" if event and i == n - 1 else "recovery" if f == "recovery"
+                     else "taper" if f == "taper" and event and i >= n - 4 else "build")
+    return kinds
 
 
 def options(obj: Objective, acts: list[dict], history: list[LedgerDay], c: Constraints, today: date,

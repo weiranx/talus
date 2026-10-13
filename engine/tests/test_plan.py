@@ -627,3 +627,53 @@ def test_blocks_with_no_race_day():
                       acts, hist, c, TODAY)
     assert 6000 < t["peak"]["gain_ft"] < 8000 and t["peak"]["miles"] == base["miles"]
     assert t["target"]["totals"]["gain_ft"] > 0
+
+
+def test_the_coach_builds_the_weeks_and_the_engine_holds_them_to_its_limits():
+    acts = _acts()
+    hist = _history(acts)
+    engine = planner.build(_obj(), acts, hist, planner.Constraints(), TODAY)
+    proposal = [{"start": w["start"], "focus": w["focus"], "miles": w["miles"], "gain_ft": w["gain_ft"],
+                 "loss_ft": w["loss_ft"], "workout": "hills", "note": f"Week {i + 1}."}
+                for i, w in enumerate(engine["weeks"])]
+    proposal[2] = proposal[2] | {"focus": "build", "gain_ft": proposal[1]["gain_ft"] * 3}  # far past 10%
+    p = planner.build(_obj(), acts, hist, planner.Constraints(), TODAY, proposal)
+    w = p["weeks"][2]
+    assert w["gain_ft"] <= p["weeks"][1]["gain_ft"] * planner.BUILD_RATE + 1
+    assert any(n.startswith("The coach asked for more") for n in w["notes"]) and w["coach_note"] == "Week 3."
+    assert p["weeks"][-1]["focus"] == "race"
+    # A plan that doesn't line up with the engine's weeks is refused.
+    with pytest.raises(planner.PlanError):
+        planner.build(_obj(), acts, hist, planner.Constraints(), TODAY, proposal[:-1])
+    with pytest.raises(planner.PlanError):
+        planner.build(_obj(), acts, hist, planner.Constraints(), TODAY,
+                      [proposal[0] | {"miles": "lots"}] + proposal[1:])
+
+
+def test_drafts_are_built_by_the_coach_with_the_engine_as_fallback(tmp_path, monkeypatch):
+    client = _setup(tmp_path, monkeypatch)
+    day = (date.today() + timedelta(weeks=10)).isoformat()
+    # Coach off: the engine builds the draft.
+    draft = client.put("/api/plan/objective", json=OBJ | {"day": day}).json()["draft"]
+    assert draft["builder"] == "engine" and draft["build_cost"] is None
+    weeks = [{"start": w["start"], "focus": w["focus"], "miles": w["miles"], "gain_ft": w["gain_ft"],
+              "loss_ft": w["loss_ft"], "workout": "tempo", "note": "Steady."} for w in draft["weeks"]]
+    reply = {"approach": "Vert first, then miles, with a tempo run each week.", "weeks": weeks}
+    fake = FakeClient(reply, {"approach": "Off by a week.", "weeks": weeks[1:]})
+    monkeypatch.setattr(api, "coach_client", lambda: fake)
+    p = client.post("/api/plan/draft", json={"reason": "request"}).json()["draft"]
+    assert p["builder"] == "coach" and p["approach"].startswith("Vert first")
+    assert "Mode: plan builder." in fake.calls[0]["messages"][0]["content"]
+    assert "engine_draft" in fake.calls[0]["messages"][0]["content"]
+    assert p["weeks"][1]["coach_note"] == "Steady."
+    # The same inputs reuse the reply; a plan that doesn't line up falls back to the engine's.
+    assert client.post("/api/plan/draft", json={"reason": "request"}).json()["draft"]["builder"] == "coach"
+    assert len(fake.calls) == 1
+    client.put("/api/coach/note", json={"note": "More vert than miles."})
+    p = client.post("/api/plan/draft", json={"reason": "missed"}).json()["draft"]
+    assert p["builder"] == "engine" and len(fake.calls) == 2
+    # The setting turns it off.
+    client.put("/api/settings/coach", json={"enabled": True, "ai_plans": False})
+    assert client.get("/api/settings").json()["coach"]["ai_plans"] is False
+    p = client.post("/api/plan/draft", json={"reason": "flag"}).json()["draft"]
+    assert p["builder"] == "engine" and len(fake.calls) == 2

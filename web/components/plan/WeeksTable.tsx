@@ -56,7 +56,7 @@ export default function WeeksTable({ weeks, current, limit, full, actuals }: {
                   {actuals?.[w.start] ? `${mi(actuals[w.start].miles)} mi, ${n0(actuals[w.start].gain_ft)} ft${w.start === current ? " so far" : ""}` : ""}
                 </td>
               ) : null}
-              {full ? <td style={{ whiteSpace: "normal", minWidth: 220, fontSize: 13 }} className="muted">{w.notes.join(". ")}</td> : null}
+              {full ? <td style={{ whiteSpace: "normal", minWidth: 220, fontSize: 13 }} className="muted">{[w.coach_note, ...w.notes].filter(Boolean).join(". ")}</td> : null}
             </tr>
           ))}
         </tbody>

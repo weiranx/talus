@@ -312,9 +312,11 @@ export interface Settings {
     brief_model: string;
     analysis_model: string;
     style: string;
+    // The AI coach builds plan drafts (the engine checks them); off means the engine builds them.
+    ai_plans?: boolean;
     styles: { key: string; label: string; description: string }[];
     models: { id: string; label: string; input: number; output: number }[];
-    estimate: { brief: Record<string, CostEstimate>; analysis: Record<string, CostEstimate> };
+    estimate: { brief: Record<string, CostEstimate>; analysis: Record<string, CostEstimate>; build?: Record<string, CostEstimate> };
     // This month's spending on the server's Anthropic key. ceiling is null for the owner.
     cap: { limit: number | null; ceiling: number | null; spent: number; month: string };
   };
@@ -417,6 +419,8 @@ export interface PlanWeek {
   limited_by: string[];
   notes: string[];
   workout?: Exclude<Workout, "none"> | null;
+  // The AI coach's line for the week, when it built the plan.
+  coach_note?: string | null;
 }
 
 export interface WeekBrief { focus: Focus; miles: number; gain_ft: number; loss_ft: number; hours: number }
@@ -443,6 +447,10 @@ export interface Plan {
   goal?: Goal;
   target?: { done: Vol3; planned: Vol3; totals: Vol3 } | null;
   race_type?: "mountain" | "road" | "hundred" | "multiday";
+  // "coach" when the AI coach built the weeks and the engine held them to its limits.
+  builder?: "engine" | "coach" | null;
+  approach?: string | null;
+  held_weeks?: number | null;
   options: { smaller: { factor: number; distance_mi: number; gain_ft: number; loss_ft: number } | null; later: string | null };
   now: ReadinessEval | null;
   changes: { start: string; before: WeekBrief | null; after: WeekBrief }[];

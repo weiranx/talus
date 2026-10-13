@@ -158,7 +158,7 @@ def test_sync_method_and_watch_file_keys(tmp_path, monkeypatch):
     assert client.put("/api/settings/sync-method", json={"method": "strava"}).status_code == 422
     assert client.get("/api/settings").json()["sync_method"] == "watch"
 
-    assert client.get("/api/import/watch").json() == {"files": [], "last_sync": None}
+    assert client.get("/api/import/watch").json() == {"files": [], "last_sync": None, "last_attempt": None}
     hrv = hrv_fit(utc(2026, 10, 5, 13, 31), 61)
     r = client.post("/api/import?name=hrv.fit&watch_file=68-1-1791000000", content=hrv).json()
     assert r["wellness_days"] == 1
@@ -166,3 +166,25 @@ def test_sync_method_and_watch_file_keys(tmp_path, monkeypatch):
     w = client.get("/api/import/watch").json()
     assert w["files"] == ["68-1-1791000000"] and w["last_sync"]
     assert client.get("/api/settings").json()["sources"]["watch"]["last_sync"] == w["last_sync"]
+
+
+def test_a_finished_watch_sync_is_recorded(tmp_path, monkeypatch):
+    from tests.conftest import sign_in
+
+    monkeypatch.setenv("TALUS_DATA_DIR", str(tmp_path / "data"))
+    client = sign_in()
+    client.put("/api/settings/sync-method", json={"method": "watch"})
+
+    # A failed attempt is the watch source's error on the status page, and is not a sync.
+    assert client.post("/api/import/watch/done", json={"error": "The watch was busy."}).status_code == 200
+    w = client.get("/api/import/watch").json()
+    assert w["last_sync"] is None and w["last_attempt"]["error"] == "The watch was busy."
+    row = next(r for r in client.get("/api/status").json()["sources"] if r["key"] == "watch")
+    assert (row["state"], row["error"]) == ("bad", "The watch was busy.")
+
+    # A clean sync with nothing new still counts as a sync.
+    assert client.post("/api/import/watch/done", json={"new": 0}).status_code == 200
+    w = client.get("/api/import/watch").json()
+    assert w["last_sync"] and w["last_attempt"]["error"] is None
+    row = next(r for r in client.get("/api/status").json()["sources"] if r["key"] == "watch")
+    assert (row["state"], row["at"]) == ("ok", w["last_sync"])

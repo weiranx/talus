@@ -76,7 +76,8 @@ def sources(accounts: Accounts, account: Account, store: Store, saved: dict) -> 
     if garmin or saved.get("last_sync_garmin"):
         rows.append(_run("garmin", "Garmin Connect", saved.get("last_sync_garmin"), garmin is not None, synced=True))
     if method == "watch" or saved.get("last_sync_watch"):
-        rows.append(_run("watch", "Garmin watch", saved.get("last_sync_watch"), None, synced=method == "watch"))
+        run = saved.get("watch_sync") or saved.get("last_sync_watch")
+        rows.append(_run("watch", "Garmin watch", run, None, synced=method == "watch"))
     if saved.get("last_sync_healthkit"):
         rows.append(_run("healthkit", "Apple Health", saved.get("last_sync_healthkit"), None, synced=False))
     if saved.get("last_import"):

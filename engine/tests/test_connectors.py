@@ -233,8 +233,10 @@ def test_upload_files_zip_batches_and_health_export(tmp_path, monkeypatch):
 
     r = client.post("/api/import?name=run.gpx", content=_gpx()).json()
     assert (r["new"], r["saved"], r["error"]) == (1, 1, None)
+    assert [(a["id"], a["start_time"][:10]) for a in r["added"]] == [(1, "2026-10-01")]
+    assert r["added"][0]["distance_m"] > 0
     again = client.post("/api/import?name=run.gpx", content=_gpx()).json()
-    assert again["new"] == 0  # the same file twice
+    assert again["new"] == 0 and again["added"] == []  # the same file twice
 
     buf = io.BytesIO()
     with zipfile.ZipFile(buf, "w") as zf:

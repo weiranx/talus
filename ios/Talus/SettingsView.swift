@@ -148,7 +148,7 @@ private struct WatchCard: View {
     var body: some View {
         Card {
             SectionLabel("Garmin watch")
-            Text("Pulls new activities straight off your watch over Bluetooth, without Garmin Connect's servers. Sleep, HRV and resting heart rate still come from intervals.icu or Apple Health. Keep the watch close and awake. Nothing on the watch is changed or deleted.")
+            Text("Pulls new activities straight off your watch over Bluetooth, without Garmin Connect's servers. Talus syncs on its own when you open the app and the last sync is over an hour old. Sleep, HRV and resting heart rate still come from intervals.icu or Apple Health. Nothing on the watch is changed or deleted.")
                 .font(.caption).foregroundStyle(.secondary)
             LabeledContent("Last sync", value: lastSync.map(SettingsText.when) ?? "Not yet")
                 .font(.subheadline)
@@ -170,6 +170,12 @@ private struct WatchCard: View {
                 .font(.caption)
             }
             if let r = watch.result { FormMessage(ok: r.ok, text: r.text) }
+            if !watch.added.isEmpty && !watch.running {
+                VStack(alignment: .leading, spacing: 4) {
+                    ForEach(watch.added) { a in Text(a.line) }
+                }
+                .font(.caption)
+            }
             if !watch.log.isEmpty && !watch.running {
                 DisclosureGroup("Details", isExpanded: $showLog) {
                     VStack(alignment: .leading, spacing: 2) {

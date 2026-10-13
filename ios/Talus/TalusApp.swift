@@ -78,6 +78,7 @@ struct RootView: View {
     @EnvironmentObject private var api: API
     @EnvironmentObject private var session: SessionModel
     @EnvironmentObject private var health: HealthSync
+    @EnvironmentObject private var watch: WatchSync
     @Environment(\.scenePhase) private var phase
 
     var body: some View {
@@ -93,9 +94,15 @@ struct RootView: View {
                 ServerView(message: message)
             }
         }
-        .task { await session.check(api) }
+        .task {
+            await session.check(api)
+            if case .signedIn = session.state { await watch.syncIfDue(api) }
+        }
         .onChange(of: phase) { _, now in
-            if now == .active, case .signedIn = session.state { Task { await health.syncIfDue(api) } }
+            if now == .active, case .signedIn = session.state {
+                Task { await health.syncIfDue(api) }
+                Task { await watch.syncIfDue(api) }
+            }
         }
     }
 }

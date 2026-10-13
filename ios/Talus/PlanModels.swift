@@ -92,6 +92,29 @@ struct Objective: Codable, Hashable {
     let highPointFt: Double?
     let source: String
     let daysToGo: Int
+    // What the plan is for: a race or trip (event), or a block of weekly targets with no race day.
+    let goal: String?
+    let event: Bool?
+    let goalText: String?
+
+    var isEvent: Bool { event ?? true }
+
+    /// The date and days to go, or the block's goal and how long it runs.
+    var whenText: String {
+        if isEvent { return "\(Fmt.day(day, .dateTime.weekday(.wide).month(.wide).day())) · \(daysToGo) days to go" }
+        if goal == "rolling" { return "Ongoing plan · redrawn each Monday" }
+        return "\(goalText ?? "Plan") · through \(Fmt.day(day, .dateTime.month(.abbreviated).day()))"
+    }
+
+    /// The day's distance and vert, a block's weekly targets, or a year's totals.
+    var sizeText: String {
+        if isEvent { return Fmt.distVert(mi: distanceMi, gain: gainFt, loss: lossFt) }
+        if goal == "target" {
+            return [gainFt > 0 ? "\(Fmt.n0(gainFt)) ft up" : nil, distanceMi > 0 ? "\(Fmt.n0(distanceMi)) mi" : nil]
+                .compactMap { $0 }.joined(separator: " · ") + " this year"
+        }
+        return "\(Fmt.mi(distanceMi)) mi · \(Fmt.n0(gainFt)) ft up a week"
+    }
 }
 
 struct Constraints: Codable, Hashable {
@@ -156,7 +179,7 @@ struct Plan: Codable, Hashable {
     let baseline: Vol
     let peak: Vol
     let weeks: [PlanWeek]
-    let projected: ReadinessEval
+    let projected: ReadinessEval?
     let reachable: Bool
     let options: PlanOptions
     let changes: [PlanChange]
@@ -320,6 +343,7 @@ enum PlanText {
         switch f {
         case "build": "Build"
         case "peak": "Peak"
+        case "hold": "Hold"
         case "recovery": "Recovery"
         case "taper": "Taper"
         case "race": "Objective week"

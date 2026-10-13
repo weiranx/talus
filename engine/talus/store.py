@@ -112,7 +112,8 @@ CREATE TABLE IF NOT EXISTS objective (
     high_point_ft REAL,
     source TEXT NOT NULL,
     created_at TEXT NOT NULL,
-    active INTEGER NOT NULL
+    active INTEGER NOT NULL,
+    goal TEXT NOT NULL DEFAULT 'race'
 );
 CREATE TABLE IF NOT EXISTS plan (
     id INTEGER PRIMARY KEY,
@@ -219,6 +220,10 @@ class Store:
             # no-op once set. The schema check writes nothing when the tables exist.
             self.db.execute("PRAGMA journal_mode = WAL").fetchone()
             self.db.executescript(SCHEMA)
+            # Columns added after a table was first made.
+            cols = {r["name"] for r in self.db.execute("PRAGMA table_info(objective)")}
+            if "goal" not in cols:
+                self.db.execute("ALTER TABLE objective ADD COLUMN goal TEXT NOT NULL DEFAULT 'race'")
 
     @contextmanager
     def _write(self):
@@ -528,7 +533,8 @@ class Store:
         if r is None:
             return None
         return Objective(r["name"], date.fromisoformat(r["day"]), r["distance_mi"], r["gain_ft"], r["loss_ft"],
-                         r["longest_climb_ft"], r["longest_descent_ft"], r["high_point_ft"], r["source"], r["id"])
+                         r["longest_climb_ft"], r["longest_descent_ft"], r["high_point_ft"], r["source"], r["id"],
+                         r["goal"])
 
     @_writes
     def save_objective(self, obj: Objective) -> int:
@@ -537,9 +543,10 @@ class Store:
         self.db.execute("UPDATE plan SET status = 'superseded' WHERE status IN ('draft', 'accepted')")
         cur = self.db.execute(
             "INSERT INTO objective (name, day, distance_mi, gain_ft, loss_ft, longest_climb_ft, longest_descent_ft,"
-            " high_point_ft, source, created_at, active) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)",
+            " high_point_ft, source, created_at, active, goal) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?)",
             (obj.name, obj.day.isoformat(), obj.distance_mi, obj.gain_ft, obj.loss_ft, obj.longest_climb_ft,
-             obj.longest_descent_ft, obj.high_point_ft, obj.source, datetime.now().isoformat(timespec="seconds")))
+             obj.longest_descent_ft, obj.high_point_ft, obj.source, datetime.now().isoformat(timespec="seconds"),
+             obj.goal))
         return cur.lastrowid
 
     @_writes
@@ -547,9 +554,9 @@ class Store:
         """Change the active objective in place; its accepted plan stands until a new one is accepted."""
         self.db.execute(
             "UPDATE objective SET name = ?, day = ?, distance_mi = ?, gain_ft = ?, loss_ft = ?, longest_climb_ft = ?,"
-            " longest_descent_ft = ?, high_point_ft = ?, source = ? WHERE id = ? AND active = 1",
+            " longest_descent_ft = ?, high_point_ft = ?, source = ?, goal = ? WHERE id = ? AND active = 1",
             (obj.name, obj.day.isoformat(), obj.distance_mi, obj.gain_ft, obj.loss_ft, obj.longest_climb_ft,
-             obj.longest_descent_ft, obj.high_point_ft, obj.source, obj.id))
+             obj.longest_descent_ft, obj.high_point_ft, obj.source, obj.goal, obj.id))
 
     @_writes
     def clear_objective(self) -> None:

@@ -372,7 +372,14 @@ export interface Objective {
   high_point_ft: number | null;
   source: "manual" | "gpx";
   days_to_go: number;
+  // What the plan is for. A race or trip has a day to be ready for (event); a block has none, and
+  // its distance and gain are weekly targets (a yearly target's are the year's totals).
+  goal?: Goal;
+  event?: boolean;
+  goal_text?: string;
 }
+
+export type Goal = "race" | "trip" | "base" | "maintain" | "comeback" | "faster" | "target" | "rolling";
 
 export type Workout = "none" | "track" | "tempo" | "hill_repeats" | "race_pace";
 
@@ -393,7 +400,7 @@ export interface LongDay {
   second?: { day: string; miles: number; gain_ft: number; loss_ft: number; minutes: number; effort_mi: number } | null;
 }
 
-export type Focus = "build" | "peak" | "recovery" | "taper" | "race";
+export type Focus = "build" | "peak" | "hold" | "recovery" | "taper" | "race";
 
 export interface PlanWeek {
   index: number;
@@ -412,6 +419,8 @@ export interface PlanWeek {
 
 export interface WeekBrief { focus: Focus; miles: number; gain_ft: number; loss_ft: number; hours: number }
 
+export interface Vol3 { miles: number; gain_ft: number; loss_ft: number }
+
 export interface Plan {
   id: number;
   status: "draft" | "accepted";
@@ -426,12 +435,14 @@ export interface Plan {
   demand: { effort_mi: number; time: { low_h: number; mid_h: number; high_h: number; pace_learned: boolean } };
   peak: { miles: number; gain_ft: number; loss_ft: number };
   weeks: PlanWeek[];
-  projected: ReadinessEval & { capacity: Record<string, number> };
+  projected: (ReadinessEval & { capacity: Record<string, number> }) | null;
   reachable: boolean;
   back_to_back?: boolean;
+  goal?: Goal;
+  target?: { done: Vol3; planned: Vol3; totals: Vol3 } | null;
   race_type?: "mountain" | "road" | "hundred" | "multiday";
   options: { smaller: { factor: number; distance_mi: number; gain_ft: number; loss_ft: number } | null; later: string | null };
-  now: ReadinessEval;
+  now: ReadinessEval | null;
   changes: { start: string; before: WeekBrief | null; after: WeekBrief }[];
 }
 

@@ -93,6 +93,7 @@ Workout analysis: you get one activity with its segments, its four loads against
 Plan: you get an objective (a race or mountain day with a date), the athlete's readiness for it now and projected at the start of the taper, and the engine's week-by-week plan. The engine built the plan and checked every week against the load limits; you explain it and never change it. Readiness has five dimensions, each read as ready, close or gap against its rule.
 - verdict: two or three sentences: which dimensions are ready, close or a gap now, and how they project. Readiness covers fitness only.
 - limiter: one or two sentences on the dimension furthest behind and what in the plan closes it, such as the long days or the peak weeks.
+- When objective.event is false, the plan is a block with no race or event (build base, maintain, come back from a break, get faster, a yearly target, or an ongoing plan): there is no readiness, no taper and no race day, so never mention them. verdict says where recent weeks stand against the weekly targets (or the year's totals); limiter names what holds the plan back (a load or time limit) or says nothing does; plan explains the build, hold and recovery weeks.
 - plan: three or four sentences on the plan's shape: build weeks, recovery weeks, the peak and the taper, and any week the engine held back for a load limit or a time limit. If reachable is false, say plainly that the objective can't be reached inside the limits and name the options given. If changes are listed, say what changed and why.
 
 Load read: you get the four loads, weekly totals, the run of training days, the 28-day intensity split, readiness, overnight signals and "next_7_days": what is scheduled and, per load, "room" ("hold" keeps the athlete's normal, "limit" is the most before ramping too fast; hours for cardio, miles for distance, feet for climb and descent). Answer four questions, one or two sentences each, distance and vert together:
@@ -613,7 +614,18 @@ def _dim_name(ev: dict, key: str | None) -> str | None:
 
 def _objective(plan: dict, today: date) -> dict:
     obj, dem = plan["objective"], plan["demand"]
-    return {"date": obj["day"], "days_to_go": (date.fromisoformat(obj["day"]) - today).days,
+    goal = obj.get("goal", "race")
+    if goal not in ("race", "trip"):
+        # A block with no event: its goal and weekly targets (a yearly target's totals and what's done).
+        from .plan import GOAL_KINDS
+        out = {"goal": GOAL_KINDS.get(goal, goal), "event": False, "block_ends": obj["day"],
+               "weekly_targets": {"distance_mi": _r(plan["peak"]["miles"], 1), "gain_ft": _r(plan["peak"]["gain_ft"]),
+                                  "loss_ft": _r(plan["peak"]["loss_ft"])}}
+        if t := plan.get("target"):
+            out["year_totals_target"] = {"distance_mi": _r(t["totals"]["miles"]), "gain_ft": _r(t["totals"]["gain_ft"])}
+            out["year_done_so_far"] = {"distance_mi": _r(t["done"]["miles"]), "gain_ft": _r(t["done"]["gain_ft"])}
+        return out
+    return {"goal": "Race" if goal == "race" else "Mountain objective", "event": True,"date": obj["day"], "days_to_go": (date.fromisoformat(obj["day"]) - today).days,
             "distance_mi": _r(obj["distance_mi"], 1), "gain_ft": _r(obj["gain_ft"]), "loss_ft": _r(obj["loss_ft"]),
             "effort_mi": _r(dem["effort_mi"], 1), "longest_descent_ft": _r(obj["longest_descent_ft"]),
             "high_point_ft": _r(obj["high_point_ft"]),
@@ -624,11 +636,12 @@ def plan_packet(plan: dict, now: dict, today: date, reason: str, changes: list[d
     """Context for explaining a plan. The objective's name is left out: it is the athlete's text."""
     opts = plan.get("options") or {}
     smaller = opts.get("smaller")
+    proj = plan.get("projected")
     return {
         "objective": _objective(plan, today),
-        "readiness_now": _dims(now), "limiter_now": _dim_name(now, now["limiter"]),
-        "readiness_projected_at_taper": _dims(plan["projected"]),
-        "limiter_projected": _dim_name(plan["projected"], plan["projected"]["limiter"]),
+        "readiness_now": _dims(now) if now else [], "limiter_now": _dim_name(now, now["limiter"]) if now else None,
+        "readiness_projected_at_taper": _dims(proj) if proj else [],
+        "limiter_projected": _dim_name(proj, proj["limiter"]) if proj else None,
         "reachable": plan["reachable"],
         "options": {"smaller_version": None if not smaller else {
                         "distance_mi": _r(smaller["distance_mi"], 1), "gain_ft": _r(smaller["gain_ft"], -2),
@@ -716,6 +729,8 @@ def chat_packet(question: str, history: list[dict], today: dict | None, plan: di
 
 def rules_plan(packet: dict) -> dict:
     """The plan explained from engine numbers alone."""
+    if not packet["objective"].get("event", True):
+        return _rules_block(packet)
     now = packet["readiness_now"]
     ready = [d["dimension"].lower() for d in now if d["status"] == "ready"]
     behind = [d["dimension"].lower() for d in now if d["status"] in ("close", "gap")]
@@ -744,6 +759,22 @@ def rules_plan(packet: dict) -> dict:
         if packet["options"]["later_date"]:
             later = date.fromisoformat(packet["options"]["later_date"])
             text += f" It can be by {later:%B} {later.day}, {later.year}."
+    return {"verdict": verdict, "limiter": limiter, "plan": text}
+
+
+def _rules_block(packet: dict) -> dict:
+    """A block with no event, explained from engine numbers alone."""
+    o, recent, weeks = packet["objective"], packet["recent_per_week"], packet["weeks"]
+    t = o["weekly_targets"]
+    verdict = (f"You've averaged {recent['distance_mi']} mi and {recent['gain_ft']:,} ft up a week over the last four "
+               f"weeks; the plan's weekly target is {t['distance_mi']} mi and {t['gain_ft']:,} ft up.")
+    held = [w for w in weeks if w["held_back_by_load_limit"]]
+    limiter = ("Some weeks are held back to stay inside the load limits." if held
+               else "Nothing holds the plan back: every week fits the load limits.")
+    text = (f"{o['goal']}: {len(weeks)} weeks of building toward the target and holding it, with a recovery week "
+            "every few weeks.")
+    if o.get("year_totals_target") and not packet["reachable"]:
+        text += " At this pace the year's target isn't reached inside the load limits."
     return {"verdict": verdict, "limiter": limiter, "plan": text}
 
 

@@ -596,3 +596,34 @@ def test_hundred_plans_train_with_smaller_pairs_nights_and_a_longer_taper():
          "night": True}
     how = planner.session_text(s, 150)["how"]
     assert "250 kcal an hour" in how and "in the dark" in how and "sleep stop" in how
+
+
+def test_blocks_with_no_race_day():
+    acts = _acts(miles=(6, 16), gain=(600, 3500))
+    hist = _history(acts)
+    c = planner.Constraints(days=[1, 2, 3, 5, 6], weekend_min=480)
+    base = planner.baseline(acts, TODAY)
+
+    def block(goal, miles, gain, weeks=12):
+        return planner.build(_obj(weeks, name=goal, distance_mi=miles, gain_ft=gain, loss_ft=gain, goal=goal,
+                                  longest_descent_ft=None, high_point_ft=None), acts, hist, c, TODAY)
+
+    hold = block("maintain", base["miles"], base["gain_ft"])
+    assert hold["projected"] is None and hold["reachable"] and hold["goal"] == "maintain"
+    assert {w["focus"] for w in hold["weeks"]} <= {"build", "hold", "recovery"}
+    assert [w["focus"] for w in hold["weeks"]][3] == "recovery"
+    assert all(abs(w["miles"] - base["miles"]) < base["miles"] * 0.05 for w in hold["weeks"][1:] if w["focus"] == "hold")
+    grow = block("base", base["miles"] * 1.3, base["gain_ft"] * 1.3)
+    assert max(w["miles"] for w in grow["weeks"]) > base["miles"] * 1.2
+    back = block("comeback", 60, 9000)
+    assert [w["focus"] for w in back["weeks"]][2] == "recovery"  # every third week
+    assert back["weeks"][1]["miles"] < back["weeks"][-1]["miles"]
+    fast = block("faster", base["miles"], base["gain_ft"] * 0.8)
+    assert {w["workout"] for w in fast["weeks"] if w["focus"] != "recovery"} == {"tempo"}
+    # A yearly target spreads what's left over the weeks left.
+    year_end = date(TODAY.year, 12, 31)
+    done = planner.year_done(acts, TODAY)
+    t = planner.build(planner.Objective("1M ft", year_end, 0, done["gain_ft"] + 12 * 7000, 0, goal="target"),
+                      acts, hist, c, TODAY)
+    assert 6000 < t["peak"]["gain_ft"] < 8000 and t["peak"]["miles"] == base["miles"]
+    assert t["target"]["totals"]["gain_ft"] > 0

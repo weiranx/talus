@@ -93,6 +93,49 @@ NIGHT_EVERY = 3  # hundreds and multi-day races: a night long day every third bu
 TAPERS = {1: (0.70,), 2: (0.80, 0.60)}
 
 
+# Goals. A race or a trip has a day to be ready for; the rest are blocks of weekly targets.
+GOAL_KINDS = {"race": "Race", "trip": "Mountain objective", "base": "Build base", "maintain": "Maintain fitness",
+              "comeback": "Come back from a break", "faster": "Get faster", "target": "Yearly target",
+              "rolling": "Ongoing plan"}
+EVENT_GOALS = ("race", "trip")
+BLOCK_WEEKS = 12  # a block with no end of its own
+ROLLING_WEEKS = 8  # an ongoing plan looks this far ahead and is redrawn each week
+COMEBACK_EVERY = 3  # coming back: a recovery week after every two build weeks
+COMEBACK_START = 0.30  # coming back from little or nothing: the first week is 30% of the target
+BASE_GROWTH = 1.30  # build base: 30% past the last four weeks
+ROLLING_GROWTH = 1.10
+FASTER_VERT = 0.80  # get faster: a little less vert, to make room for the speed session
+
+
+def is_event(obj: Objective | dict) -> bool:
+    goal = obj.get("goal", "race") if isinstance(obj, dict) else obj.goal
+    return goal in EVENT_GOALS
+
+
+def block_kinds(n: int, every: int = RECOVERY_EVERY) -> list[str]:
+    """Build and recovery weeks for a block with no event: a recovery week every `every` weeks."""
+    return ["recovery" if i > 0 and (i + 1) % every == 0 else "build" for i in range(n)]
+
+
+def year_done(acts: list[dict], today: date) -> dict:
+    """Miles, gain and loss on foot so far this calendar year, through yesterday."""
+    first = date(today.year, 1, 1).isoformat()
+    year = [a for a in acts if first <= a["day"] < today.isoformat() and is_foot(a["sport"])]
+    return {"miles": sum(a["distance_mi"] for a in year), "gain_ft": sum(a["gain_ft"] for a in year),
+            "loss_ft": sum(a["loss_ft"] for a in year)}
+
+
+def block_weekly(obj: Objective, acts: list[dict], base: dict, today: date) -> dict:
+    """A block's weekly targets. A yearly target spreads what's left of it over the weeks left;
+    a total not set holds the last four weeks."""
+    weekly = {"miles": obj.distance_mi, "gain_ft": obj.gain_ft, "loss_ft": obj.loss_ft}
+    if obj.goal != "target":
+        return weekly
+    done = year_done(acts, today)
+    weeks_left = max(1.0, ((obj.day - today).days + 1) / 7)
+    return {k: max(0.0, weekly[k] - done[k]) / weeks_left if weekly[k] else base[k] for k in DIMS}
+
+
 def race_type(distance_mi: float, gain_ft: float) -> str:
     if distance_mi >= MULTIDAY_MI:
         return "multiday"
@@ -152,6 +195,10 @@ class Objective:
     high_point_ft: float | None = None
     source: str = "manual"  # or "gpx"
     id: int | None = None
+    # What the plan is for: a race or a mountain objective on a day (EVENT_GOALS), or a block with
+    # no event in it. For a block, day is the block's last day; distance_mi, gain_ft and loss_ft are
+    # weekly targets, except for "target", where they are the year's totals (0 for one not set).
+    goal: str = "race"
 
     def json(self) -> dict:
         return asdict(self) | {"day": self.day.isoformat()}
@@ -523,9 +570,11 @@ def build(obj: Objective, acts: list[dict], history: list[LedgerDay], c: Constra
     r = rates(acts, today)
     week0 = today - timedelta(days=today.weekday())
     n = (obj.day - week0).days // 7 + 1
-    rtype = dem["race_type"]
-    kinds = week_kinds(n, taper_weeks(rtype, obj.distance_mi))
-    pairs = b2b_sized(dem)
+    event = is_event(obj)
+    rtype = dem["race_type"] if event else "mountain"
+    kinds = (week_kinds(n, taper_weeks(rtype, obj.distance_mi)) if event
+             else block_kinds(n, COMEBACK_EVERY if obj.goal == "comeback" else RECOVERY_EVERY))
+    pairs = b2b_sized(dem) if event else False
     b2b = pairs and c.back_to_back
     lt = LONG_TARGET_BY_TYPE.get(rtype, LONG_TARGET)
     volume = VOLUME_TARGET_BY_TYPE.get(rtype, VOLUME_TARGET)
@@ -550,6 +599,11 @@ def build(obj: Objective, acts: list[dict], history: list[LedgerDay], c: Constra
     # Build to what the objective needs. Already past it, hold no more than HOLD_ABOVE of it:
     # more volume than the day calls for only makes the long day oversized.
     peak = {k: max(need[k], min(base[k], need[k] * HOLD_ABOVE)) for k in DIMS}
+    if not event:
+        # A block builds to (or steps down to) its weekly targets and holds them.
+        peak = block_weekly(obj, acts, base, today)
+        if obj.goal == "faster":
+            default_speed = "tempo"
     road_long = road_long_mi(obj.distance_mi) if rtype == "road" else None
     if road_long:
         peak["miles"] = max(need["miles"], base["miles"])  # more miles never hurt a road race; only vert steps down
@@ -562,6 +616,8 @@ def build(obj: Objective, acts: list[dict], history: list[LedgerDay], c: Constra
     proj = _Projector([d for d in history if d.day < first_planned])  # the plan takes over from there
     descent_now = _Projector(history).fitness("descent")
     level = {k: base[k] for k in DIMS}
+    if obj.goal == "comeback":
+        level = {k: max(base[k], peak[k] * COMEBACK_START) for k in DIMS}
     weeks: list[dict] = []
     descent_fitness_at: dict[int, float] = {}
     for i, kind in enumerate(kinds):
@@ -583,7 +639,7 @@ def build(obj: Objective, acts: list[dict], history: list[LedgerDay], c: Constra
             for k in DIMS:
                 if ("miles" if k == "miles" else "vert") in a.get("dims", []):
                     planned[k] *= f
-        race = _in_week(obj.day, start)
+        race = event and _in_week(obj.day, start)
         speed = (c.workout if c.workout in WORKOUTS else default_speed) if kind in ("build", "taper") else None
         sessions, notes = sessions_for_week(planned, start, first, _before(c, obj.day) if race else c, pace_min,
                                             b2b and not race, speed, road_long)
@@ -635,7 +691,8 @@ def build(obj: Objective, acts: list[dict], history: list[LedgerDay], c: Constra
             else:
                 # A week you asked to change doesn't move the build: the next week carries on.
                 level = {k: total[k] for k in DIMS} if limited and not asked else want
-        focus = "peak" if kind == "build" and i > 0 and all(level[k] >= peak[k] * 0.98 for k in DIMS) else kind
+        focus = ("peak" if event else "hold") if kind == "build" and i > 0 and all(
+            level[k] >= peak[k] * 0.98 for k in DIMS) else kind
         builds += kind == "build"
         # Hundreds and multi-day races: every third build week's long day runs into the night.
         night = (rtype in ("hundred", "multiday") and kind == "build" and long is not None
@@ -660,6 +717,19 @@ def build(obj: Objective, acts: list[dict], history: list[LedgerDay], c: Constra
             "workout": next((s["kind"] for s in sessions if s["kind"] in WORKOUTS), None),
             "night": night,
         })
+    common = {"objective": obj.json(), "built_on": today.isoformat(), "constraints": asdict(c),
+              "back_to_back": b2b, "race_type": rtype, "goal": obj.goal,
+              "baseline": base, "rates": r, "pace": p, "demand": dem, "peak": peak, "weeks": weeks}
+    if not event:
+        # No event to be ready for. A yearly target is reachable when the weeks planned cover what's left of it.
+        reachable = True
+        if obj.goal == "target":
+            done = year_done(acts, today)
+            planned = {k: sum(w[k] for w in weeks) for k in DIMS}
+            totals = {"miles": obj.distance_mi, "gain_ft": obj.gain_ft, "loss_ft": obj.loss_ft}
+            reachable = all(done[k] + planned[k] >= totals[k] * 0.97 for k in DIMS if totals[k])
+            common["target"] = {"done": done, "planned": planned, "totals": totals}
+        return common | {"projected": None, "reachable": reachable}
     # Projected readiness, read at the start of the taper (or the race week): the last 4 weeks
     # before it and the biggest long day in the 8 weeks before it.
     cut = next(i for i, k in enumerate(kinds) if k in ("taper", "race"))
@@ -685,17 +755,14 @@ def build(obj: Objective, acts: list[dict], history: list[LedgerDay], c: Constra
         "altitude": current["altitude"],
     }
     projected = evaluate(dem, proj_cap, pairs)
-    return {"objective": obj.json(), "built_on": today.isoformat(), "constraints": asdict(c),
-            "back_to_back": b2b, "race_type": rtype,
-            "baseline": base, "rates": r, "pace": p, "demand": dem, "peak": peak, "weeks": weeks,
-            "projected": {"capacity": proj_cap, **projected}, "reachable": projected["verdict"] != "gap"}
+    return common | {"projected": {"capacity": proj_cap, **projected}, "reachable": projected["verdict"] != "gap"}
 
 
 def options(obj: Objective, acts: list[dict], history: list[LedgerDay], c: Constraints, today: date,
             plan: dict) -> dict:
     """When the objective is out of reach: a smaller version on the same date, and the earliest
     later date with no gap. Neither loosens a limit."""
-    if plan["reachable"]:
+    if plan["reachable"] or not is_event(obj):
         return {"smaller": None, "later": None}
     factor = 1.0
     for d in plan["projected"]["dims"]:
@@ -765,6 +832,7 @@ def upcoming_sessions(plan: dict, acts: list[dict], today: date, days: int = 7,
     c = Constraints.from_json(plan["constraints"])
     obj = plan["objective"]
     obj_day = date.fromisoformat(obj["day"])
+    event = is_event(obj)
     pace_min = plan["pace"]["min_per_effort_mi"]
     b2b = bool(plan.get("back_to_back"))
     road_long = road_long_mi(obj["distance_mi"]) if plan.get("race_type") == "road" else None
@@ -785,7 +853,7 @@ def upcoming_sessions(plan: dict, acts: list[dict], today: date, days: int = 7,
                     if _in_week(date.fromisoformat(d), start) and d >= first.isoformat() and d != obj["day"]}
             left = {d: max(0.0, w[d] - sum(a[{"miles": "distance_mi"}.get(d, d)] for a in done)
                            - sum(r[d] for r in mine.values())) for d in DIMS}
-            race = _in_week(obj_day, start)
+            race = event and _in_week(obj_day, start)
             cw = _around_own(_before(c, obj_day) if race else c, mine, w)
             # The week as it would run from Monday around your own runs, with nothing missed: the
             # sizes a session ahead may grow to, by kind.
@@ -823,7 +891,7 @@ def upcoming_sessions(plan: dict, acts: list[dict], today: date, days: int = 7,
                         s["longest_descent_ft"] = min(s["loss_ft"], w["long"]["longest_descent_ft"])
             weeks[w["start"]] = {s["day"]: s for s in ss}
         s = dict(weeks[w["start"]][day.isoformat()])
-        if day == obj_day:
+        if day == obj_day and event:
             s = {"day": day.isoformat(), "kind": "objective", "miles": obj["distance_mi"],
                  "gain_ft": obj["gain_ft"], "loss_ft": obj["loss_ft"],
                  "minutes": plan["demand"]["time"]["mid_h"] * 60}
@@ -959,6 +1027,7 @@ REPLAN_TEXT = {
     "constraints": "Your training days or time limits changed",
     "new": "New objective",
     "request": "You asked for a fresh plan",
+    "rolling": "A new week: your ongoing plan moved on with your latest training",
 }
 
 

@@ -1,13 +1,20 @@
 import type { Metadata, Viewport } from "next";
-import { DM_Mono, Figtree } from "next/font/google";
+import localFont from "next/font/local";
 import AccountMenu from "@/components/AccountMenu";
 import Nav from "@/components/Nav";
 import { STALE_RELOAD_SCRIPT } from "@/lib/stale";
 import { THEME_SCRIPT } from "@/lib/theme";
 import "./globals.css";
 
-const sans = Figtree({ subsets: ["latin"], variable: "--font-sans", weight: ["400", "500", "600", "700"] });
-const mono = DM_Mono({ subsets: ["latin"], variable: "--font-mono", weight: ["400", "500"] });
+// Fonts ship with the app so builds never fetch from Google Fonts (a failed fetch broke CI).
+const sans = localFont({ src: "./fonts/figtree-latin-wght-normal.woff2", variable: "--font-sans", weight: "300 900" });
+const mono = localFont({
+  src: [
+    { path: "./fonts/dm-mono-latin-400-normal.woff2", weight: "400" },
+    { path: "./fonts/dm-mono-latin-500-normal.woff2", weight: "500" },
+  ],
+  variable: "--font-mono",
+});
 
 export const metadata: Metadata = { title: "Talus", description: "Mountain training load" };
 export const viewport: Viewport = {

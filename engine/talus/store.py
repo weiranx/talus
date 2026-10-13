@@ -144,6 +144,16 @@ CREATE TABLE IF NOT EXISTS chat (
     source TEXT,
     log_id INTEGER
 );
+CREATE TABLE IF NOT EXISTS activity_name (
+    activity_id INTEGER PRIMARY KEY,
+    ai_name TEXT,
+    custom_name TEXT,  -- typed in Talus; always wins
+    updated_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS place_cache (
+    key TEXT PRIMARY KEY,
+    value TEXT NOT NULL  -- empty: asked, nothing found
+);
 CREATE TABLE IF NOT EXISTS coach_action (
     id INTEGER PRIMARY KEY,
     chat_id INTEGER,
@@ -597,6 +607,29 @@ class Store:
     def clear_chat(self) -> None:
         self.db.execute("DELETE FROM chat")
         self.db.execute("DELETE FROM coach_action WHERE status = 'proposed'")
+
+    # Activity names: the coach's and the athlete's own, beside the device's name on the activity.
+    def activity_names(self) -> dict[int, dict]:
+        return {r["activity_id"]: dict(r) for r in self.db.execute("SELECT * FROM activity_name")}
+
+    @_writes
+    def set_activity_name(self, activity_id: int, **values) -> None:
+        """Set ai_name and/or custom_name (None clears custom_name)."""
+        now = datetime.now().isoformat(timespec="seconds")
+        self.db.execute("INSERT INTO activity_name (activity_id, updated_at) VALUES (?, ?) "
+                        "ON CONFLICT(activity_id) DO NOTHING", (activity_id, now))
+        for k, v in values.items():
+            if k in ("ai_name", "custom_name"):
+                self.db.execute(f"UPDATE activity_name SET {k} = ?, updated_at = ? WHERE activity_id = ?",
+                                (v, now, activity_id))
+
+    def place(self, key: str) -> str | None:
+        r = self.db.execute("SELECT value FROM place_cache WHERE key = ?", (key,)).fetchone()
+        return None if r is None else r["value"]
+
+    @_writes
+    def save_place(self, key: str, value: str) -> None:
+        self.db.execute("INSERT OR REPLACE INTO place_cache (key, value) VALUES (?, ?)", (key, value))
 
     # Actions the coach proposed in chat. Each runs only when the athlete confirms it; the row is
     # the log of what was proposed, and what came of it.

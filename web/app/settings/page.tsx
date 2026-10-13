@@ -2,6 +2,7 @@ import Link from "next/link";
 import AccountCard from "@/components/AccountCard";
 import AppearanceCard from "@/components/AppearanceCard";
 import CoachSettings from "@/components/CoachSettings";
+import NamesCard from "@/components/NamesCard";
 import EngineDown from "@/components/EngineDown";
 import GarminCard from "@/components/GarminCard";
 import ReadinessSettings from "@/components/ReadinessSettings";
@@ -60,6 +61,7 @@ export default async function SettingsPage() {
         </div>
         <div style={{ flex: "1 1 380px", minWidth: 0, display: "flex", flexDirection: "column", gap: 16 }}>
           <CoachSettings coach={s.coach} />
+          <NamesCard />
           <AccountCard account={account} />
         </div>
       </div>

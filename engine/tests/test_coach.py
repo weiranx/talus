@@ -216,7 +216,8 @@ def test_style_is_saved_in_settings_and_drives_the_coach(tmp_path, monkeypatch):
 def test_import_writes_the_coach_right_away(tmp_path, monkeypatch, capsys):
     monkeypatch.setenv("TALUS_DATA_DIR", str(tmp_path / "data"))
     analysis = {k: "Fine." for k in coach.ANALYSIS_FIELDS}
-    fake = FakeClient({"call": "rest", "why": "Rest."}, analysis, analysis)
+    names = [{"name": "Easy loop"}] * 3  # file names like "run02" are generic, so the coach names them
+    fake = FakeClient({"call": "rest", "why": "Rest."}, *names, analysis, analysis)
     monkeypatch.setattr(api, "coach_client", lambda: fake)
     cli.main(["thresholds", "--resting", "45", "--aet", "150", "--ant", "172", "--max", "190"])
     files = []
@@ -228,13 +229,14 @@ def test_import_writes_the_coach_right_away(tmp_path, monkeypatch, capsys):
     cli.main(["import", *files])
     out = capsys.readouterr().out
     assert "Coach brief: rest (coach)" in out and out.count("Coach read for activity") == 2
-    assert [c["model"] for c in fake.calls] == ["claude-haiku-5-5", "claude-opus-5-5", "claude-opus-5-5"]
+    assert out.count("Named activity") == 3
+    assert [c["model"] for c in fake.calls] == ["claude-haiku-5-5"] * 4 + ["claude-opus-5-5"] * 2
     # Opening the pages reuses what the import wrote.
     client = sign_in()
     assert client.get("/api/coach/brief").json()["source"] == "coach"
     for a in client.get("/api/activities").json()[:2]:
         assert client.get(f"/api/coach/activity/{a['id']}").json()["source"] == "coach"
-    assert len(fake.calls) == 3
+    assert len(fake.calls) == 6
     cli.main(["import", "--no-coach", files[0]])
     assert "Coach" not in capsys.readouterr().out
 

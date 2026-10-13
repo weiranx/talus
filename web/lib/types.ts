@@ -23,6 +23,8 @@ export interface ActivitySummary {
   day: string;
   start_time: string;
   name: string | null;
+  source_name?: string | null;
+  name_by?: "you" | "ai" | "source";
   sport: string | null;
   source: string;
   device_name: string | null;

@@ -16,6 +16,7 @@ import threading
 import time
 import zipfile
 from collections import OrderedDict
+import contextvars
 from contextvars import ContextVar
 from dataclasses import asdict
 from datetime import date, datetime, timedelta
@@ -28,7 +29,7 @@ from fastapi import BackgroundTasks, FastAPI, HTTPException, Request, Response
 from fastapi.responses import JSONResponse, RedirectResponse, StreamingResponse
 from pydantic import BaseModel, ConfigDict, Field
 
-from . import MODEL_VERSION, admin, cli, coach, explain, google_auth, interview, intervals_auth, ledger, readiness_score, status, wellness, zones
+from . import MODEL_VERSION, admin, cli, coach, explain, google_auth, interview, intervals_auth, ledger, naming, readiness_score, status, wellness, zones
 from . import plan as planner
 from . import schedule
 from . import settings as app_settings
@@ -167,13 +168,29 @@ def _summary(text: str, zm: dict | None) -> tuple[dict, dict | None]:
     return hit
 
 
+def _names_on(store: Store) -> bool:
+    return bool(store.settings().get("ai_names", True))
+
+
+def _name(row, names: dict[int, dict], on: bool) -> dict:
+    """The name shown for an activity: one typed in Talus, else the coach's when the device's name
+    is generic (and AI names are on), else the device's."""
+    n = names.get(row["id"]) or {}
+    if n.get("custom_name"):
+        return {"name": n["custom_name"], "source_name": row["name"], "name_by": "you"}
+    if on and n.get("ai_name") and naming.is_generic(row["name"]):
+        return {"name": n["ai_name"], "source_name": row["name"], "name_by": "ai"}
+    return {"name": row["name"], "source_name": row["name"], "name_by": "source"}
+
+
 def _activities(store: Store, since: date | None = None, limit: int | None = None) -> list[dict]:
     zm = _zone_model(store)
+    names, on = store.activity_names(), _names_on(store)
     out = []
     for row in store.scored_activities(since and since.isoformat(), limit):
         m, hr_zone_minutes = _summary(row["summary"], zm)
         out.append({"id": row["id"], "day": row["start_time"][:10], "start_time": row["start_time"],
-                    "name": row["name"], "sport": row["sport"], "source": row["source"],
+                    **_name(row, names, on), "sport": row["sport"], "source": row["source"],
                     "device_name": row["device_name"], **{k: m[k] for k in (
                         "distance_mi", "gain_ft", "loss_ft", "effort_mi", "moving_time_s", "elapsed_time_s",
                         "cardio_load", "climb_load", "descent_load", "cardio_estimated", "zone_minutes",
@@ -626,7 +643,8 @@ def activity(activity_id: int) -> dict:
                 "times_usual_day": None if value is None else ledger.times_usual_day(value, before.get(name, 0.0)),
                 "six_week_high": value is not None and bool(others) and value > max(others)}
 
-    return {"id": activity_id, "name": row["name"], "day": day.isoformat(), "start_time": row["start_time"],
+    return {"id": activity_id, **_name(row, store.activity_names(), _names_on(store)), "day": day.isoformat(),
+            "start_time": row["start_time"],
             "source": row["source"], "device_name": row["device_name"], **core,
             "loads": {name: usual(name, load_values[name]) for name in ledger.ACTIVITY_KEY}}
 
@@ -2356,6 +2374,109 @@ def watch_files() -> dict:
 WARM_ANALYSIS_DAYS = 14
 
 
+# Activity names. The coach names an activity from its peak or place and the kind of day; a name
+# typed in Talus always wins, and a name the device or platform didn't make up is kept.
+
+def _ai_name(store: Store, row, refresh: bool = False) -> dict:
+    th = store.thresholds()
+    detail = _detail_core(store, row, th, zones.model(th, store.settings().get("hr_zones")))
+    shape, start, high = naming.features(detail)
+    place = naming.places(store, *(start or (None, None)), high)
+    packet = naming.packet(row, detail, place, shape)
+    out = _coach(store, "name", str(row["id"]), packet, naming.rules_name(packet), refresh)
+    name = naming.clean(str(out["reply"].get("name") or "")) or naming.rules_name(packet)["name"]
+    if name and (out["source"] == "coach" or place["peak"] or place["area"]):
+        store.set_activity_name(row["id"], ai_name=name)
+    return {"name": name, "source": out["source"], "fallback_reason": out["fallback_reason"], "cost": out["cost"]}
+
+
+class NameIn(BaseModel):
+    name: str | None = Field(default=None, max_length=naming.NAME_MAX)
+
+
+@app.put("/api/activities/{activity_id}/name")
+def rename_activity(activity_id: int, body: NameIn) -> dict:
+    """Name an activity yourself; an empty name goes back to the coach's or the device's."""
+    store = get_store()
+    row = store.activity(activity_id)
+    if row is None:
+        raise HTTPException(404, "No such activity.")
+    store.set_activity_name(activity_id, custom_name=(body.name or "").strip() or None)
+    return _name(row, store.activity_names(), _names_on(store))
+
+
+@app.post("/api/activities/{activity_id}/name/suggest")
+def suggest_activity_name(activity_id: int) -> dict:
+    """A fresh name from the coach, to use or edit. It becomes the coach's name for the activity;
+    a name you typed stays until you save the suggestion."""
+    store = get_store()
+    row = store.activity(activity_id)
+    if row is None or store.thresholds() is None:
+        raise HTTPException(404, "No such activity.")
+    return _ai_name(store, row, refresh=True)
+
+
+NAME_COST_USD = 0.0002  # one Haiku call of about 700 tokens in, 30 out, rounded up
+_naming: dict[str, dict] = {}
+_naming_guard = threading.Lock()
+
+
+def _unnamed(store: Store) -> list:
+    names = store.activity_names()
+    return [r for r in store.scored_activities() if naming.is_generic(r["name"])
+            and not (names.get(r["id"]) or {}).get("ai_name")]
+
+
+@app.get("/api/names/backfill")
+def names_backfill_status() -> dict:
+    store = get_store()
+    pending = len(_unnamed(store))
+    with _naming_guard:
+        job = dict(_naming.get(str(store.dir)) or {})
+    return {"enabled": _names_on(store), "pending": pending, "estimate_usd": round(pending * NAME_COST_USD, 2),
+            "running": bool(job.get("running")), "named": job.get("named", 0), "total": job.get("total", 0)}
+
+
+@app.post("/api/names/backfill")
+def names_backfill() -> dict:
+    """Name every past activity that has a generic name, in the background, oldest first."""
+    store = get_store()
+    key = str(store.dir)
+    rows = sorted(_unnamed(store), key=lambda r: r["start_time"])
+    with _naming_guard:
+        if (_naming.get(key) or {}).get("running"):
+            return names_backfill_status()
+        _naming[key] = {"running": True, "named": 0, "total": len(rows)}
+
+    def run() -> None:
+        own = Store(store.dir)  # a SQLite connection belongs to the thread that opened it
+        try:
+            for r in rows:
+                try:
+                    _ai_name(own, r)
+                except Exception:  # an unreadable file keeps its name
+                    pass
+                with _naming_guard:
+                    _naming[key]["named"] += 1
+        finally:
+            with _naming_guard:
+                _naming[key]["running"] = False
+
+    ctx = contextvars.copy_context()  # the account, for the coach's settings and spending cap
+    threading.Thread(target=ctx.run, args=(run,), name=f"names {key}", daemon=True).start()
+    return names_backfill_status()
+
+
+class NamesIn(BaseModel):
+    enabled: bool
+
+
+@app.put("/api/settings/names")
+def put_names(body: NamesIn) -> dict:
+    get_store().save_settings({"ai_names": body.enabled})
+    return {"ok": True}
+
+
 def warm_coach(activity_ids: list[int]) -> list[str]:
     """Write today's brief and each new recent activity's read right after a sync, so the pages
     open with them ready. Replies are cached as usual, so opening a page doesn't pay again."""
@@ -2368,6 +2489,14 @@ def warm_coach(activity_ids: list[int]) -> list[str]:
         return ["Coach skipped: " + ("no ANTHROPIC_API_KEY" if b["fallback_reason"] == "no_key" else "turned off in Settings")]
     lines = [f"Coach brief: {b['reply']['call']} ({b['source']})"]
     store = get_store()
+    if _names_on(store):
+        for aid in dict.fromkeys(activity_ids):
+            row = store.activity(aid)
+            if row is not None and row["start_time"] and naming.is_generic(row["name"]):
+                try:
+                    lines.append(f"Named activity {aid}: {_ai_name(store, row)['name']}")
+                except (HTTPException, ValueError, OSError):
+                    pass
     recent = (date.today() - timedelta(days=WARM_ANALYSIS_DAYS)).isoformat()
     for aid in dict.fromkeys(activity_ids):
         row = store.activity(aid)

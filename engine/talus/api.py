@@ -19,7 +19,7 @@ from collections import OrderedDict
 import contextvars
 from contextvars import ContextVar
 from dataclasses import asdict
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, timedelta, timezone
 from http.cookies import SimpleCookie
 from typing import Literal
 
@@ -2439,9 +2439,32 @@ def remember_watch_file(store: Store, key: str) -> None:
 @app.get("/api/import/watch")
 def watch_files() -> dict:
     """Files already pulled off the watch, so the apps download only what is new."""
-    saved = get_store().settings()
+    store = get_store()
+    saved = store.settings()
     return {"files": saved.get("watch_files", []), "last_sync": saved.get("last_sync_watch"),
-            "last_attempt": saved.get("watch_sync")}
+            "last_attempt": saved.get("watch_sync"), "taken": taken_spans(store)}
+
+
+WATCH_TAKEN_DAYS = 60
+UNSCORED_SPAN_S = 1800
+
+
+def taken_spans(store: Store) -> list[list[str]]:
+    """When each recent activity ran, from any source, as [start, end] in UTC. The apps skip a
+    watch activity that falls inside one, so a run intervals.icu or Apple Health already brought in
+    isn't downloaded off the watch only to be dropped as a duplicate. Starts are stored as local
+    wall-clock time and read in the engine's zone, like every file without one."""
+    since = (date.today() - timedelta(days=WATCH_TAKEN_DAYS)).isoformat()
+    rows = store.db.execute(
+        """SELECT a.start_time, s.summary FROM activity a LEFT JOIN activity_score s ON s.activity_id = a.id
+           WHERE a.start_time >= ?""", (since,)).fetchall()
+    out = []
+    for r in rows:
+        start = datetime.fromisoformat(r["start_time"])
+        start = (start if start.tzinfo else start.astimezone()).astimezone(timezone.utc)
+        elapsed = (json.loads(r["summary"]).get("elapsed_time_s") if r["summary"] else None) or UNSCORED_SPAN_S
+        out.append([start.isoformat(timespec="seconds"), (start + timedelta(seconds=elapsed)).isoformat(timespec="seconds")])
+    return sorted(out)
 
 
 class WatchSyncIn(BaseModel):

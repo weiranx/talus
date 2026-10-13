@@ -4,7 +4,7 @@ import { useRouter } from "next/navigation";
 import { useState } from "react";
 import Link from "next/link";
 import Pill from "@/components/Pill";
-import type { CostEstimate, Settings } from "@/lib/types";
+import type { Settings } from "@/lib/types";
 
 function money(v: number | null): string {
   if (v == null) return "–";
@@ -12,21 +12,9 @@ function money(v: number | null): string {
   return v < 1 ? `${Math.round(v * 100)}¢` : `$${v.toFixed(2)}`;
 }
 
-function costLine(e: CostEstimate | undefined): string {
-  if (!e) return "";
-  const call = money(e.per_call);
-  return `${call.startsWith("under") ? "Under 1¢" : `About ${call}`} a call, ${money(e.per_month)} a month at ${e.calls_per_month} calls${e.from_log ? "" : ", from a typical reply size until the coach has run"}`;
-}
-
-const MODES = [
-  { key: "brief_model", mode: "brief", label: "Daily brief", when: "after each sync and after your check-in" },
-  { key: "analysis_model", mode: "analysis", label: "Workout analysis", when: "once per activity, right after it syncs" },
-] as const;
-
 export default function CoachSettings({ coach }: { coach: Settings["coach"] }) {
   const router = useRouter();
   const [enabled, setEnabled] = useState(coach.enabled);
-  const [models, setModels] = useState({ brief_model: coach.brief_model, analysis_model: coach.analysis_model });
   const [style, setStyle] = useState(coach.style);
   const [cap, setCap] = useState(coach.cap.limit == null ? "" : String(coach.cap.limit));
   const [saving, setSaving] = useState(false);
@@ -34,10 +22,8 @@ export default function CoachSettings({ coach }: { coach: Settings["coach"] }) {
   const capValue = cap.trim() === "" ? null : Number(cap);
   const capDirty = capValue !== coach.cap.limit;
   const capValid = capValue == null || (Number.isFinite(capValue) && capValue >= 0 && capValue <= 1000);
-  const dirty = capDirty || enabled !== coach.enabled || style !== coach.style ||
-    models.brief_model !== coach.brief_model || models.analysis_model !== coach.analysis_model;
+  const dirty = capDirty || enabled !== coach.enabled || style !== coach.style;
   const capped = coach.cap.limit != null && coach.cap.spent >= coach.cap.limit;
-  const haiku = coach.models.find((m) => m.id.startsWith("claude-haiku"));
 
   async function save() {
     if (!capValid) return setMessage({ ok: false, text: "The cap is a dollar amount from 0 to 1000, or blank." });
@@ -46,7 +32,7 @@ export default function CoachSettings({ coach }: { coach: Settings["coach"] }) {
     const res = await fetch("/api/settings/coach", {
       method: "PUT",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ enabled, ...models, style, ...(capDirty ? { monthly_cap_usd: capValue } : {}) }),
+      body: JSON.stringify({ enabled, style, ...(capDirty ? { monthly_cap_usd: capValue } : {}) }),
     }).catch(() => null);
     setSaving(false);
     if (!res) return setMessage({ ok: false, text: "Could not save. Is the engine running?" });
@@ -92,25 +78,7 @@ export default function CoachSettings({ coach }: { coach: Settings["coach"] }) {
             {coach.styles.find((o) => o.key === style)?.description} Style changes the voice only: the call, the session and the number check stay the same.
           </span>
         </label>
-        {MODES.map((m) => {
-          const est = coach.estimate[m.mode][models[m.key]];
-          return (
-            <label key={m.key} className="field">
-              <span className="field-label">{m.label} model</span>
-              <select value={models[m.key]} disabled={!enabled} onChange={(e) => setModels({ ...models, [m.key]: e.target.value })}>
-                {coach.models.map((o) => <option key={o.id} value={o.id}>{o.label}</option>)}
-              </select>
-              <span className="muted">Runs {m.when}. {costLine(est)}.</span>
-            </label>
-          );
-        })}
       </div>
-      {haiku && models.brief_model !== haiku.id ? (
-        <div className="muted">
-          The brief is a short reply, so it could run on {haiku.label} for about {money(coach.estimate.brief[haiku.id]?.per_month ?? null)} a month.
-          Every reply still goes through the same number check.
-        </div>
-      ) : null}
 
       <label className="field">
         <span className="field-label">Monthly spending cap</span>

@@ -162,3 +162,22 @@ def test_show_ai_cost_flag_adds_each_calls_cost(tmp_path, monkeypatch):
     owner.put("/api/admin/features/show_ai_cost", json={"on": False})
     assert owner.get("/api/coach/brief").json()["cost"] is None
     assert "cost" not in owner.get("/api/coach/chat").json()["messages"][1]
+
+
+def test_the_admin_sets_the_coach_models_for_everyone():
+    owner = sign_in()
+    # The owner's old per-account picks carry over until the admin chooses.
+    api.get_store().save_settings({"brief_model": "claude-sonnet-5-5", "analysis_model": "claude-haiku-5-5"})
+    admin = sign_in(**ADMIN)
+    friend = sign_in(**FRIEND)
+    m = admin.get("/api/admin").json()["coach_models"]
+    assert (m["brief_model"], m["analysis_model"], m["chosen"]) == ("claude-sonnet-5-5", "claude-haiku-5-5", True)
+    assert set(m["estimate"]["brief"]) == {x["id"] for x in m["models"]}
+    body = {"brief_model": "claude-haiku-5-5", "analysis_model": "claude-opus-5-5"}
+    assert friend.put("/api/admin/coach-models", json=body).status_code == 404
+    assert admin.put("/api/admin/coach-models", json={**body, "brief_model": "gpt"}).status_code == 422
+    assert admin.put("/api/admin/coach-models", json=body).json() == body
+    for c in (owner, friend):
+        coach = c.get("/api/settings").json()["coach"]
+        assert (coach["brief_model"], coach["analysis_model"]) == ("claude-haiku-5-5", "claude-opus-5-5")
+    assert admin.get("/api/admin").json()["log"][0]["action"] == "coach_models"

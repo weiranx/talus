@@ -669,9 +669,28 @@ def activity(activity_id: int) -> dict:
             "loads": {name: usual(name, load_values[name]) for name in ledger.ACTIVITY_KEY}}
 
 
+MODEL_KEYS = ("brief_model", "analysis_model")
+
+
+def coach_models(accounts: Accounts | None = None) -> dict:
+    """The coach's models: one choice for every account, made on the admin page. Before the admin
+    first picks, the owner's old per-account picks carry over as that choice; with neither,
+    TALUS_COACH_MODEL or the built-in defaults."""
+    accounts = accounts or get_accounts()
+    chosen = accounts.config("coach_models")
+    if chosen is None:
+        owner = accounts.owner()
+        saved = Store(accounts.user_dir(owner.id)).settings() if owner else {}
+        chosen = {k: saved[k] for k in MODEL_KEYS if saved.get(k) in app_settings.MODELS}
+        if chosen:
+            accounts.set_config("coach_models", chosen)
+    return {k: chosen.get(k) if chosen.get(k) in app_settings.MODELS else coach.default_model(k.removesuffix("_model"))
+            for k in MODEL_KEYS}
+
+
 def _coach_settings(store: Store) -> dict:
     saved = store.settings()
-    return {k: saved.get(k, v) for k, v in app_settings.defaults().items()}
+    return {k: saved.get(k, v) for k, v in app_settings.defaults().items()} | coach_models()
 
 
 def _is_owner() -> bool:
@@ -1984,21 +2003,18 @@ def put_thresholds(body: ThresholdsIn) -> dict:
 
 class CoachIn(BaseModel):
     enabled: bool
-    brief_model: str
-    analysis_model: str
+    # Models are set for everyone on the admin page; older apps still send these, and they're ignored.
+    brief_model: str | None = None
+    analysis_model: str | None = None
     monthly_cap_usd: float | None = Field(default=None, ge=0, le=1000)
     style: str | None = None  # left out keeps the saved style
 
 
 @app.put("/api/settings/coach")
 def put_coach(body: CoachIn) -> dict:
-    for m in (body.brief_model, body.analysis_model):
-        if m not in app_settings.MODELS:
-            raise HTTPException(422, f"Unknown model {m}")
     if body.style is not None and body.style not in coach.STYLES:
         raise HTTPException(422, f"Unknown style {body.style}")
-    values = {"coach_enabled": body.enabled, "brief_model": body.brief_model,
-              "analysis_model": body.analysis_model}
+    values = {"coach_enabled": body.enabled}
     if body.style is not None:
         values["coach_style"] = body.style
     if "monthly_cap_usd" in body.model_fields_set:
@@ -3042,7 +3058,8 @@ def admin_overview() -> dict:
             "signup": {"open": _signup_open(accounts), "chosen": accounts.config("signup_open"),
                        "env": os.environ.get("TALUS_SIGNUP", "open").lower() != "closed"},
             "features": {k: bool(accounts.config(k)) for k in FEATURES},
-            "system": admin.system(accounts), "log": log}
+            "coach_models": _admin_models(accounts),
+            "system": _system(accounts), "log": log}
 
 
 # Feature flags the admin turns on for everyone. All off by default.
@@ -3061,6 +3078,44 @@ def admin_feature(name: str, body: FeatureIn) -> dict:
     accounts.set_config(name, body.on)
     accounts.log_admin(me.id, "feature_on" if body.on else "feature_off", None, {"feature": name})
     return {name: body.on}
+
+
+def _system(accounts: Accounts) -> dict:
+    out = admin.system(accounts)
+    out["coach"] |= coach_models(accounts)
+    return out
+
+
+def _admin_models(accounts: Accounts) -> dict:
+    store = get_store()
+    month_ago = (date.today() - timedelta(days=30)).isoformat()
+    analyses = sum(1 for r in store.activities() if (r["start_time"] or "")[:10] >= month_ago)
+    return coach_models(accounts) | {
+        "chosen": accounts.config("coach_models") is not None,
+        "env": os.environ.get("TALUS_COACH_MODEL") or None,
+        "models": [{"id": k, "label": v["label"], "input": v["input"], "output": v["output"]}
+                   for k, v in app_settings.MODELS.items()],
+        # What each model would cost on the admin's own account, the same estimate Settings used to show.
+        "estimate": {mode: {m: _usage_estimate(store, mode, m, calls) for m in app_settings.MODELS}
+                     for mode, calls in (("brief", 60), ("analysis", analyses))},
+    }
+
+
+class ModelsIn(BaseModel):
+    brief_model: str
+    analysis_model: str
+
+
+@app.put("/api/admin/coach-models")
+def admin_coach_models(body: ModelsIn) -> dict:
+    accounts, me = _admin()
+    values = body.model_dump()
+    for m in values.values():
+        if m not in app_settings.MODELS:
+            raise HTTPException(422, f"Unknown model {m}")
+    accounts.set_config("coach_models", values)
+    accounts.log_admin(me.id, "coach_models", None, values)
+    return coach_models(accounts)
 
 
 class SignupIn(BaseModel):

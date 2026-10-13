@@ -77,8 +77,8 @@ def test_coach_uses_the_chosen_model_per_mode(tmp_path, monkeypatch):
                       {"call": "rest", "why": f"Your {t['readiness']['legs']['limiter']} load is high."})
     monkeypatch.setattr(api, "coach_client", lambda: fake)
     client.get("/api/coach/brief")  # the brief runs on Haiku unless changed
-    client.put("/api/settings/coach", json={"enabled": True, "brief_model": "claude-opus-5-5",
-                                            "analysis_model": "claude-opus-5-5"})
+    # Models are one choice for every account, set on the admin page.
+    api.get_accounts().set_config("coach_models", {"brief_model": "claude-opus-5-5", "analysis_model": "claude-opus-5-5"})
     client.get("/api/coach/brief")  # a new model is a new reply, not the cached one
     assert [c["model"] for c in fake.calls] == ["claude-haiku-5-5", "claude-opus-5-5"]
     assert "fallbacks" not in fake.calls[0] and "fallbacks" in fake.calls[1]  # Haiku has no fallback
@@ -86,8 +86,10 @@ def test_coach_uses_the_chosen_model_per_mode(tmp_path, monkeypatch):
     haiku, opus = est["brief"]["claude-haiku-5-5"], est["brief"]["claude-opus-5-5"]
     assert haiku["from_log"] and haiku["per_call"] < opus["per_call"] / 30 and haiku["calls_per_month"] == 60
     assert est["analysis"]["claude-opus-5-5"]["calls_per_month"] == 30 and not est["analysis"]["claude-opus-5-5"]["from_log"]
+    # Older apps still send models with the coach settings; they're ignored.
     assert client.put("/api/settings/coach", json={"enabled": True, "brief_model": "gpt",
-                                                   "analysis_model": "claude-opus-5-5"}).status_code == 422
+                                                   "analysis_model": "claude-haiku-5-5"}).status_code == 200
+    assert client.get("/api/settings").json()["coach"]["brief_model"] == "claude-opus-5-5"
 
 
 def test_sync_now_records_the_last_sync(tmp_path, monkeypatch):

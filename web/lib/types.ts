@@ -560,6 +560,14 @@ export interface AdminOverview {
   month: string;
   signup: { open: boolean; chosen: boolean | null; env: boolean };
   features: { show_ai_cost: boolean };
+  coach_models: {
+    brief_model: string;
+    analysis_model: string;
+    chosen: boolean;
+    env: string | null;
+    models: { id: string; label: string; input: number; output: number }[];
+    estimate: Record<"brief" | "analysis", Record<string, CostEstimate>>;
+  };
   system: {
     revision: string | null;
     model_version: string;

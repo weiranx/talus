@@ -513,7 +513,7 @@ def rules_edits(text: str) -> list[dict]:
     return edits
 
 
-SPEED_WORDS = r"(?:track|intervals?|speed ?work|speed|repeats|reps|tempo|threshold|workouts?|quality|(?:race|goal|marathon) pace)"
+SPEED_WORDS = r"(?:track|intervals?|speed ?work|speed|repeats|reps|tempo|threshold|fartlek|progression|workouts?|quality|(?:race|goal|marathon) pace)"
 
 
 def rules_workout(t: str) -> str | None:
@@ -526,7 +526,13 @@ def rules_workout(t: str) -> str | None:
         return "hill_repeats"
     if re.search(r"(?:race|goal|marathon) pace", t):
         return "race_pace"
-    if re.search(r"tempo|threshold", t):
+    if re.search(r"fartlek", t):
+        return "fartlek"
+    if re.search(r"progression", t):
+        return "progression"
+    if re.search(r"threshold|cruise", t):
+        return "threshold"
+    if re.search(r"tempo", t):
         return "tempo"
     return "track"
 

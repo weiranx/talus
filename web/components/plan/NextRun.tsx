@@ -39,7 +39,14 @@ export default function NextRun({ sessions, today }: { sessions: PlanSession[]; 
       <div className="mono" style={{ fontSize: 18 }}>
         {mi(next.miles)} mi · {n0(next.gain_ft)} ft up · {n0(next.loss_ft)} ft down
       </div>
-      <div style={{ color: "#d5ddd9" }}>{minutesText(next.minutes)}. {next.how}</div>
+      {next.steps && next.steps.length > 1 ? (
+        <div style={{ color: "#d5ddd9", display: "flex", flexDirection: "column", gap: 4 }}>
+          <span>{minutesText(next.minutes)}.</span>
+          <ol style={{ margin: 0, paddingLeft: 20, display: "flex", flexDirection: "column", gap: 4 }}>
+            {next.steps.map((t, i) => <li key={i}>{t}</li>)}
+          </ol>
+        </div>
+      ) : <div style={{ color: "#d5ddd9" }}>{minutesText(next.minutes)}. {next.how}</div>}
       {runs.length > 1 ? (
         <div style={{ borderTop: "1px solid #34433d", paddingTop: 10, display: "flex", flexDirection: "column", gap: 4 }}>
           {runs.slice(1, 4).map((s) => (

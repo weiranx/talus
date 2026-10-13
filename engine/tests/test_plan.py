@@ -715,3 +715,48 @@ def test_the_coach_builds_after_the_draft_is_saved_and_the_chat_says_when(tmp_pa
     r = client.get("/api/plan/talk").json()
     assert not r["building"] and r["messages"][-1]["text"].startswith("The AI coach's version is ready.")
     assert [a["id"] for a in r["messages"][-1]["actions"]] == ["accept"]
+
+
+def test_weeks_rotate_mountain_sessions_and_days_get_detailed_workouts():
+    acts = _acts()
+    obj = _obj(weeks=20, distance_mi=100, gain_ft=22000, loss_ft=22000)
+    p = planner.build(obj, acts, _history(acts), planner.Constraints(), TODAY)
+    hills = [w["hill_session"] for w in p["weeks"] if w["focus"] == "build"]
+    assert {"vert_climb", "power_hike", "downhill", "muscular_endurance"} <= set(hills)
+    assert all(w["hill_session"] == "vert_climb" for w in p["weeks"] if w["focus"] in ("recovery", "taper"))
+    p["status"] = "accepted"
+    day = date.fromisoformat(next(w["start"] for w in p["weeks"][2:] if w["focus"] == "build"))
+    ss = planner.upcoming_sessions(p, acts, day, 7)
+    kinds = {s["type"] for s in ss if s["kind"] != "rest"}
+    assert {"long", "long2", "strides"} <= kinds and sum(bool(s.get("strength")) for s in ss) == 2
+    # The day after the long pair is rest or a recovery run, never strides or hills.
+    after = max(date.fromisoformat(s["day"]) for s in ss if s["kind"] in ("long", "long2")) + timedelta(days=1)
+    nxt = next((s for s in ss if s["day"] == after.isoformat()), None)
+    assert nxt is None or nxt["kind"] == "rest" or nxt["type"] == "recovery"
+    hill = next(s for s in ss if s["kind"] == "hills")
+    t = planner.session_text(hill, 165, obj.name, 187)
+    assert t["title"] == planner.HILL_SESSIONS[hill["type"]] and len(t["steps"]) >= 2
+    assert " mi, " in t["detail"] and " ft up" in t["detail"]  # distance and vert with every session
+    strength = next(s for s in ss if s.get("strength"))
+    assert planner.session_text(strength, 165, obj.name, 187)["title"].endswith("+ strength")
+
+
+def test_workouts_carry_heart_rate_targets_from_the_athletes_thresholds():
+    z = planner.hr_zones(165, 187)
+    assert z["aerobic"] == "zone 2, 155 to 165 bpm" and z["threshold"].startswith("182 to 187 bpm")
+    assert "comfortably hard" in planner.hr_zones(150, None)["tempo"]  # no AnT: by feel
+    base = {"day": "2026-10-14", "miles": 7.0, "gain_ft": 600.0, "loss_ft": 600.0, "minutes": 70.0, "focus": "build"}
+    for kind in planner.WORKOUTS:
+        t = planner.session_text(base | {"kind": kind}, 165, "X", 187)
+        assert t["title"] == planner.WORKOUTS[kind] and "bpm" in t["how"], kind
+    for kind in planner.HILL_SESSIONS:
+        t = planner.session_text(base | {"kind": "hills", "type": kind}, 165, "X", 187)
+        assert t["title"] == planner.HILL_SESSIONS[kind] and "bpm" in t["how"], kind
+    assert "bpm" in planner.session_text(base | {"kind": "rest"}, 165, "X", 187)["how"]  # cross-training zone
+
+
+def test_road_plans_do_hill_sprints():
+    acts = _acts()
+    p = planner.build(_obj(weeks=12, distance_mi=13.1, gain_ft=300, loss_ft=300), acts, _history(acts),
+                      planner.Constraints(), TODAY)
+    assert {w["hill_session"] for w in p["weeks"] if w["focus"] == "build"} == {"hill_sprints"}

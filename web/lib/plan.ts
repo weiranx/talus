@@ -1,5 +1,5 @@
 import { dayLabel, mi, n0 } from "@/lib/format";
-import type { Dim, DimStatus, Focus, Goal, Objective, SessionKind, WeekProgress, Workout } from "@/lib/types";
+import type { Dim, DimStatus, Focus, Goal, HillSession, Objective, SessionKind, WeekProgress, Workout } from "@/lib/types";
 
 export const DAY_NAMES = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"];
 export const DAY_SHORT = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
@@ -15,6 +15,7 @@ export const STATUS_TONE: Record<DimStatus, "good" | "warn" | "bad" | "neutral">
 export const KIND_COLOR: Record<SessionKind, string> = {
   long: "var(--climb)", long2: "var(--climb)", hills: "var(--descent)", easy: "var(--cardio)", rest: "var(--line)",
   track: "var(--target)", tempo: "var(--target)", hill_repeats: "var(--descent)", race_pace: "var(--target)",
+  threshold: "var(--target)", fartlek: "var(--target)", progression: "var(--target)",
   objective: "var(--ink)", done: "var(--z1)",
 };
 
@@ -28,6 +29,12 @@ export function dimValue(d: Dim, v: number | null): string {
 
 export const WORKOUT_TEXT: Record<Workout, string> = {
   none: "Default", track: "Track intervals", tempo: "Tempo", hill_repeats: "Hill repeats", race_pace: "Race pace",
+  threshold: "Threshold intervals", fartlek: "Fartlek", progression: "Progression run",
+};
+
+export const HILL_TEXT: Record<HillSession, string> = {
+  vert_climb: "Long climb", power_hike: "Power-hike intervals", downhill: "Downhill durability",
+  muscular_endurance: "Muscular endurance", hill_sprints: "Hill sprints",
 };
 
 export function hours(h: number): string {

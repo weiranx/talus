@@ -25,7 +25,14 @@ export default function DayCards({ sessions, today }: { sessions: PlanSession[];
               </div>
             )}
             {off ? null : <div className="muted" style={{ color: objective ? "var(--feature-muted)" : undefined }}>{minutesText(s.minutes)}</div>}
-            <div style={{ fontSize: 12, color: objective ? "var(--feature-soft)" : "var(--muted)" }}>{s.how}</div>
+            {s.steps && s.steps.length > 1 ? (
+              <details style={{ fontSize: 12, color: "var(--muted)" }}>
+                <summary style={{ cursor: "pointer" }}>{s.steps[0]}</summary>
+                <ol style={{ margin: "6px 0 0", paddingLeft: 16, display: "flex", flexDirection: "column", gap: 4 }}>
+                  {s.steps.slice(1).map((t, i) => <li key={i}>{t}</li>)}
+                </ol>
+              </details>
+            ) : <div style={{ fontSize: 12, color: objective ? "var(--feature-soft)" : "var(--muted)" }}>{s.how}</div>}
           </div>
         );
       })}

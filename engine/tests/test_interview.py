@@ -53,6 +53,8 @@ def test_speed_work_can_be_asked_for_in_plain_words():
     assert interview.rules_edits("I'd like a tempo run each week") == [{"kind": "workout", "workout": "tempo"}]
     assert interview.rules_edits("hill repeats please") == [{"kind": "workout", "workout": "hill_repeats"}]
     assert interview.rules_edits("no more speed work") == [{"kind": "workout", "workout": "none"}]
+    assert interview.rules_edits("add a fartlek") == [{"kind": "workout", "workout": "fartlek"}]
+    assert interview.rules_edits("threshold intervals on tuesdays") == [{"kind": "workout", "workout": "threshold"}]
     c, done, _ = interview.apply_edits([{"kind": "workout", "workout": "track"}], asdict(planner.Constraints()), [])
     assert c["workout"] == "track" and "track intervals once a week" in done[0]
     assert interview.from_edits([{"kind": "workout", "workout": "tempo"}, {"kind": "workout", "workout": "sprint"}]) == [

@@ -43,6 +43,7 @@
   --hover-bg: rgba(21, 33, 29, 0.04);
   --shadow: rgba(21, 33, 29, 0.14);
   --highlight: #f0b25a;
+  --heat: #e0400f;
   --map-icon: none;
   color-scheme: light;
   --mono: var(--font-sans), system-ui, sans-serif;
@@ -95,6 +96,7 @@
   --card-shadow: none;
     --card-shadow: none;
     --highlight: #f0b25a;
+    --heat: #ffa53d;
     --map-icon: invert(0.9);
     color-scheme: dark;
   }
@@ -143,6 +145,7 @@
   --shadow: rgba(0, 0, 0, 0.5);
   --card-shadow: none;
   --highlight: #f0b25a;
+  --heat: #ffa53d;
   --map-icon: invert(0.9);
   color-scheme: dark;
 }
@@ -220,6 +223,8 @@ tr.hl td { background: var(--row-hl); }
 .seg-tabs { display: flex; gap: 4px; background: var(--bg); border-radius: 10px; padding: 3px; }
 .seg-tabs a { padding: 6px 12px; border-radius: 8px; text-decoration: none; color: var(--ink); font-size: 13px; font-weight: 500; min-height: 32px; display: flex; align-items: center; }
 .seg-tabs a[aria-current="true"] { background: var(--raised); font-weight: 600; }
+.seg-tabs button { padding: 6px 12px; border-radius: 8px; border: 0; background: transparent; color: var(--ink); font: inherit; font-size: 13px; font-weight: 500; min-height: 32px; cursor: pointer; }
+.seg-tabs button[aria-pressed="true"] { background: var(--raised); font-weight: 600; }
 
 .stat-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 12px; }
 .stat .v { font-size: 24px; font-weight: 700; font-family: var(--mono); font-variant-numeric: tabular-nums; letter-spacing: -0.02em; }
@@ -438,3 +443,26 @@ code { font-family: var(--code); font-size: 13px; background: var(--bg); padding
 /* Load: the four ledger charts sit two by two when there's room. */
 .ledger-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(420px, 1fr)); gap: 16px; }
 @media (max-width: 560px) { .ledger-grid { grid-template-columns: 1fr; } }
+
+/* Heatmap (Activities > Heatmap): every route on one map, and a calendar of days. */
+.heat-controls { display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: center; justify-content: space-between; }
+.heat-controls .seg-tabs { flex-wrap: wrap; }
+.map.heat { height: min(68vh, 620px); position: relative; }
+@media (max-width: 640px) { .map.heat { height: 60vh; } }
+.heat-picked { position: absolute; left: 10px; bottom: 30px; z-index: 2; max-width: min(340px, calc(100% - 20px)); max-height: calc(100% - 60px); overflow-y: auto;
+  background: var(--surface); border: 1px solid var(--line); border-radius: 12px; box-shadow: 0 4px 16px var(--shadow); padding: 10px 12px; display: flex; flex-direction: column; gap: 6px; font-size: 13px; }
+.heat-picked a { display: flex; flex-direction: column; text-decoration: none; color: var(--ink); }
+.heat-picked a:hover .act-name { text-decoration: underline; }
+.heat-picked .act-name { font-weight: 600; }
+.heat-cal { overflow-x: auto; padding-bottom: 4px; }
+.heat-cal-grid { display: grid; grid-auto-flow: column; grid-template-rows: 14px repeat(7, 13px); gap: 3px; width: max-content; font-size: 11px; color: var(--muted); }
+.heat-cal-grid .m { grid-row: 1; white-space: nowrap; overflow: visible; width: 13px; }
+.heat-cal-grid .d { width: 13px; height: 13px; border-radius: 3px; background: var(--line); }
+.heat-cal-grid .d.out { background: transparent; }
+.heat-cal-grid .d[data-l="1"] { background: color-mix(in srgb, var(--heat) 28%, var(--line)); }
+.heat-cal-grid .d[data-l="2"] { background: color-mix(in srgb, var(--heat) 50%, var(--line)); }
+.heat-cal-grid .d[data-l="3"] { background: color-mix(in srgb, var(--heat) 75%, var(--line)); }
+.heat-cal-grid .d[data-l="4"] { background: var(--heat); }
+.heat-cal-grid .d.sel { outline: 2px solid var(--ink); outline-offset: 1px; }
+.heat-legend { display: flex; align-items: center; gap: 3px; font-size: 12px; color: var(--muted); }
+.heat-legend .d { width: 11px; height: 11px; border-radius: 3px; display: inline-block; }

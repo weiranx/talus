@@ -30,6 +30,7 @@ from fastapi.responses import JSONResponse, RedirectResponse, StreamingResponse
 from pydantic import BaseModel, ConfigDict, Field
 
 from . import MODEL_VERSION, admin, cli, coach, explain, google_auth, interview, intervals_auth, ledger, naming, readiness_score, status, wellness, zones
+from . import heatmap
 from . import plan as planner
 from . import schedule
 from . import settings as app_settings
@@ -406,6 +407,25 @@ def activities(limit: int = 50) -> list[dict]:
     store = get_store()
     warm_details(store)
     return _activities(store, limit=limit)
+
+
+@app.get("/api/heatmap")
+def heatmap_routes() -> dict:
+    """Every scored activity with its route as an encoded polyline (null without GPS), for the
+    heatmap and its calendar. Lines not worked out yet are read in the background; `pending`
+    counts them, and the page asks again until it is 0."""
+    store = get_store()
+    rows = store.scored_activities()
+    tracks = heatmap.Tracks(store.dir)
+    lines, missing = tracks.lines(rows)
+    tracks.build(missing, lambda row: _streams(store, row))
+    pending = {r["id"] for r in missing}
+    return {"pending": len(pending),
+            "activities": [{**{k: a[k] for k in ("id", "day", "start_time", "name", "sport", "distance_mi", "gain_ft",
+                                                  "loss_ft", "effort_mi", "moving_time_s")},
+                            "kind": heatmap.kind(a["sport"]), "line": lines.get(a["id"]),
+                            "pending": a["id"] in pending}
+                           for a in _activities(store)]}
 
 
 # Recently read activity files. Reading a FIT file takes about a second, and an activity page

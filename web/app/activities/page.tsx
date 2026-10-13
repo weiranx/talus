@@ -1,4 +1,5 @@
 import Link from "next/link";
+import ActivitiesTabs from "@/components/ActivitiesTabs";
 import EngineDown from "@/components/EngineDown";
 import { engine, engineFailed } from "@/lib/api";
 import { dayLabel, duration, mi, n0 } from "@/lib/format";
@@ -43,8 +44,11 @@ export default async function ActivitiesPage() {
   return (
     <>
       <header className="page-head">
-        <h1 className="title">Activities</h1>
-        {acts.length ? <div className="muted" style={{ paddingBottom: 6 }}>Last {acts.length}, grouped by week</div> : null}
+        <div>
+          <h1 className="title">Activities</h1>
+          {acts.length ? <div className="muted" style={{ paddingBottom: 6 }}>Last {acts.length}, grouped by week</div> : null}
+        </div>
+        <ActivitiesTabs current="list" />
       </header>
       <section className="card">
         {acts.length === 0 ? <div className="muted">No scored activities yet.</div> : (

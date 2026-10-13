@@ -524,9 +524,13 @@ function withTimeout<T>(p: Promise<T>, ms: number, message: string): Promise<T> 
 
 /** Which files to pull: overnight files not imported yet, and activities not imported yet that
  * are newer than `activitiesSince` (the first sync doesn't spend half an hour on old runs). */
-export function pick(files: WatchFile[], imported: Set<string>, activitiesSince: Date): WatchFile[] {
+// An activity Talus already has from another source (intervals.icu, Apple Health) isn't downloaded
+// again: a watch file's time is near its run's start or end, so allow a few minutes either side.
+export function pick(files: WatchFile[], imported: Set<string>, activitiesSince: Date, taken: [string, string][] = []): WatchFile[] {
+  const windows = taken.map(([a, b]) => [Date.parse(a) - 5 * 60e3, Date.parse(b) + 15 * 60e3]);
+  const inTaken = (t: Date) => windows.some(([a, b]) => t.getTime() >= a && t.getTime() <= b);
   const fresh = files.filter((f) => f.size > 0 && !imported.has(f.key));
   const health = fresh.filter((f) => HEALTH_KINDS.includes(f.kind));
-  const acts = fresh.filter((f) => f.kind === ACTIVITY_KIND && f.time && f.time >= activitiesSince);
+  const acts = fresh.filter((f) => f.kind === ACTIVITY_KIND && f.time && f.time >= activitiesSince && !inTaken(f.time));
   return [...health, ...acts].sort((a, b) => (a.time?.getTime() ?? 0) - (b.time?.getTime() ?? 0));
 }

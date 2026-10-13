@@ -36,7 +36,20 @@ final class WatchSync: ObservableObject {
     /// ...and no sync was tried in the last few minutes (a failing watch isn't retried on every open).
     static let autoRetryAfter: TimeInterval = 15 * 60
 
-    struct Imported: Decodable { let files: [String]; let lastSync: String? }
+    struct Imported: Decodable {
+        let files: [String]
+        let lastSync: String?
+        /// [start, end] in UTC of each recent activity Talus has from any source.
+        let taken: [[String]]?
+
+        var spans: [ClosedRange<Date>] {
+            let f = ISO8601DateFormatter()
+            return (taken ?? []).compactMap { pair in
+                guard pair.count == 2, let a = f.date(from: pair[0]), let b = f.date(from: pair[1]), a <= b else { return nil }
+                return a...b
+            }
+        }
+    }
 
     /// Syncs when the app opens, if this account syncs from the watch and the last sync is old.
     func syncIfDue(_ api: API) async {
@@ -75,8 +88,10 @@ final class WatchSync: ObservableObject {
 
             phase = "Listing files on the watch"
             let files = try await link.listFiles()
-            let todo = Self.select(files, imported: Set(imported.files), lastSync: imported.lastSync.flatMap(Self.date))
-            note("Watch has \(files.count) files; \(todo.count) new for Talus")
+            let todo = Self.select(files, imported: Set(imported.files), lastSync: imported.lastSync.flatMap(Self.date),
+                                   taken: imported.spans)
+            let already = Self.select(files, imported: Set(imported.files), lastSync: imported.lastSync.flatMap(Self.date)).count - todo.count
+            note("Watch has \(files.count) files; \(todo.count) new for Talus" + (already > 0 ? ", \(already) already in Talus from another source" : ""))
             phase = todo.isEmpty ? nil : "Downloading"
 
             for (i, f) in todo.enumerated() {
@@ -240,11 +255,19 @@ final class WatchSync: ObservableObject {
     /// Same rule as the web app: health files whenever not yet imported; activities not yet
     /// imported from the last two weeks, or from two days before the last sync if that is earlier,
     /// so a sync cut short still picks up the rest. Activities first, newest first.
-    static func select(_ files: [WatchFile], imported: Set<String>, lastSync: Date?, now: Date = .now) -> [WatchFile] {
+    /// The new activity files worth downloading. One that falls inside an activity Talus already
+    /// has from another source (intervals.icu, Apple Health) is skipped: the watch file's time is
+    /// near the run's start or end, so the window allows a few minutes either side.
+    static func select(_ files: [WatchFile], imported: Set<String>, lastSync: Date?, taken: [ClosedRange<Date>] = [],
+                       now: Date = .now) -> [WatchFile] {
         let fresh = files.filter { $0.size > 0 && !imported.contains($0.key) }
         let twoWeeks = now.addingTimeInterval(-Double(firstSyncDays) * 86400)
         let cutoff = min(lastSync.map { $0.addingTimeInterval(-2 * 86400) } ?? twoWeeks, twoWeeks)
-        let activities = fresh.filter { $0.kind == activityKind && ($0.date ?? .distantPast) > cutoff }
+        let windows = taken.map { $0.lowerBound.addingTimeInterval(-5 * 60)...$0.upperBound.addingTimeInterval(15 * 60) }
+        let activities = fresh.filter { f in
+            guard f.kind == activityKind, let d = f.date, d > cutoff else { return false }
+            return !windows.contains { $0.contains(d) }
+        }
         let health = fresh.filter { healthKinds.contains($0.kind) }
         return activities.sorted { $0.timestamp > $1.timestamp } + health.sorted { $0.timestamp > $1.timestamp }
     }

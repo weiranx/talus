@@ -16,7 +16,7 @@ from pathlib import Path
 
 import numpy as np
 
-VERSION = 1
+VERSION = 2  # 2: segment distance keeps out-and-back turnarounds
 TOLERANCE_M = 6.0  # a point closer than this to the line through its neighbours is dropped
 MAX_POINTS = 800  # the same thinning as the activity page's map
 
@@ -55,10 +55,13 @@ def simplify(lat: np.ndarray, lon: np.ndarray, tol_m: float = TOLERANCE_M) -> li
         a, b = stack.pop()
         if b - a < 2:
             continue
+        # Distance to the segment a-b, not the line through it: an out-and-back that finishes short of
+        # its turnaround has the turnaround on that line, beyond b.
         dx, dy = x[b] - x[a], y[b] - y[a]
         px, py = x[a + 1:b] - x[a], y[a + 1:b] - y[a]
-        seg = np.hypot(dx, dy)
-        d = np.abs(px * dy - py * dx) / seg if seg > 0 else np.hypot(px, py)
+        seg2 = dx * dx + dy * dy
+        t = np.clip((px * dx + py * dy) / seg2, 0.0, 1.0) if seg2 > 0 else np.zeros(len(px))
+        d = np.hypot(px - t * dx, py - t * dy)
         i = int(np.argmax(d))
         if d[i] > tol_m:
             m = a + 1 + i
@@ -119,6 +122,7 @@ class Tracks:
     """An account's cache/tracks.json: {activity id: {"f": file key, "p": line or null}}."""
 
     _guards: dict[str, threading.Lock] = {}
+    _memory: dict[str, dict[str, dict]] = {}  # the last tracks per folder, for when the file can't be written
     _building: set[str] = set()
     _meta = threading.Lock()
 
@@ -131,18 +135,21 @@ class Tracks:
     def load(self) -> dict[str, dict]:
         try:
             body = json.loads(self.path.read_text())
-            return body["tracks"] if body.get("v") == VERSION else {}
+            if body.get("v") == VERSION:
+                return {**body["tracks"], **Tracks._memory.get(str(self.dir), {})}
         except (OSError, ValueError, KeyError, TypeError):
-            return {}
+            pass
+        return dict(Tracks._memory.get(str(self.dir), {}))
 
     def save(self, tracks: dict[str, dict]) -> None:
+        Tracks._memory[str(self.dir)] = tracks
         try:
             self.path.parent.mkdir(exist_ok=True)
             tmp = self.path.with_suffix(f".{threading.get_ident()}.tmp")
             tmp.write_text(json.dumps({"v": VERSION, "tracks": tracks}, separators=(",", ":")))
             tmp.replace(self.path)
         except OSError:
-            pass  # a full or read-only disk only costs the next view a re-read
+            pass  # a full or read-only disk: kept in memory until a restart
 
     def file_key(self, row) -> list | None:
         try:

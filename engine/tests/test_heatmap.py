@@ -15,6 +15,14 @@ def test_simplify_keeps_corners_and_drops_straight_points():
     assert pts[1] == (37.01, -118.0)
 
 
+def test_simplify_keeps_the_turnaround_of_an_out_and_back():
+    # Out 1 km north, back to 500 m: the turnaround lies on the line through start and finish.
+    lat = np.concatenate([np.linspace(37, 37.009, 100), np.linspace(37.009, 37.0045, 50)])
+    lon = np.full(150, -118.0)
+    pts = heatmap.simplify(lat, lon)
+    assert max(p[0] for p in pts) == 37.009
+
+
 def test_simplify_skips_missing_and_null_island_points():
     lat = np.array([np.nan, 0.0, 37.0, 37.001, 37.002])
     lon = np.array([np.nan, 0.0, -118.0, -118.0, -118.0])

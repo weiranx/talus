@@ -2,7 +2,7 @@
 
 import dynamic from "next/dynamic";
 import Link from "next/link";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Skel, Spinner } from "@/components/Loading";
 import { dayLabel, duration, mi, n0 } from "@/lib/format";
 import { decodePolyline } from "@/lib/polyline";
@@ -153,7 +153,11 @@ function Calendar({ acts, from, today }: { acts: HeatActivity[]; from: string; t
 
   const weeks: string[] = [];
   for (let w = mondayOf(from); w <= today; w = addDays(w, 7)) weeks.push(w);
-  const scroller = (el: HTMLDivElement | null) => { if (el) el.scrollLeft = el.scrollWidth; }; // newest weeks in view
+  const scroller = useRef<HTMLDivElement>(null);
+  // Newest weeks in view when the calendar opens or its range changes, not after every click.
+  useEffect(() => {
+    if (scroller.current) scroller.current.scrollLeft = scroller.current.scrollWidth;
+  }, [from]);
   const pickedActs = picked ? byDay.get(picked) ?? [] : [];
 
   return (

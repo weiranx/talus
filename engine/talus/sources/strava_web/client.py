@@ -8,9 +8,9 @@ keep it to your own account.
 
 Talus never signs in with a password. Strava's sign-in page is an email-first app now (no
 authenticity_token, no form posting to /session), and posting a password from a server is what
-gets an account flagged. Instead `talus strava-web setup` takes the Cookie header from a browser
-that is signed in, checks it, and saves it encrypted like the Garmin tokens. STRAVA_SESSION_COOKIE
-in .env overrides it.
+gets an account flagged. Instead the Strava card in Settings > Data sources (or `talus strava-web
+setup`) takes the Cookie header from a browser that is signed in, checks it, and saves it
+encrypted like the Garmin tokens. STRAVA_SESSION_COOKIE in .env overrides it.
 
 The session's cookies, as Strava refreshes them, are kept in the account's folder
 (strava_web_cookies.json, mode 0600, outside raw/ so an export leaves them out) and reused across

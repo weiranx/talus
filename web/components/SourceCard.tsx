@@ -20,7 +20,7 @@ export function syncLine(s: LastSync): string {
 }
 
 /** Run a sync for one source and turn the answer into a status line. */
-export async function runSync(source: "intervals" | "garmin" | "coros", days: number): Promise<{ ok: boolean; text: string }> {
+export async function runSync(source: "intervals" | "garmin" | "coros" | "strava_web", days: number): Promise<{ ok: boolean; text: string }> {
   const res = await fetch("/api/sync", {
     method: "POST",
     headers: { "content-type": "application/json" },

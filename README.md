@@ -148,3 +148,16 @@ Other commands: `talus import <files>` for FIT/GPX/TCX, `talus rescore` after ch
 ## Data source notes
 
 intervals.icu connects with OAuth when `INTERVALS_CLIENT_ID` and `INTERVALS_CLIENT_SECRET` are set (an app applied for at intervals.icu/oauth/apply and approved by intervals.icu, redirect URI `TALUS_PUBLIC_URL` + `/api/auth/intervals/callback`). Talus asks for `ACTIVITY:READ,WELLNESS:READ` only. intervals.icu issues no refresh tokens; a token lasts until the person disconnects. Disconnecting in Settings also calls intervals.icu's disconnect-app. A personal API key still works as the fallback, and the owner still falls back to `INTERVALS_API_KEY` in `.env` while nothing is saved. Limits: 100 requests per user per day, 500 users by default. Strava-sourced activities are skipped. intervals.icu said on 2026-10-09 that Garmin data via its API will likely be blocked soon; if that happens, switch to `--source garmin` or file import.
+
+### Strava website (owner's personal fallback)
+
+`engine/talus/sources/strava_web/` signs in to strava.com the way the website does and pulls the owner's own activities. It exists for one reason: when Garmin rate-limits or blocks intervals.icu, the owner's runs still arrive. Strava's public API is deliberately not used.
+
+- **Personal only, never a source in the apps.** It runs only for the owner account, and only with `strava_web_enabled` set on that account in `data/accounts.db`, which defaults to off and has no setting in the apps: `sqlite3 data/accounts.db "UPDATE account SET strava_web_enabled = 1 WHERE is_owner = 1"`.
+- **Terms of service:** scraping strava.com is against Strava's terms. Keep it to your own account; Strava can change the site, or lock the account, at any time.
+- **When it runs:** after each intervals.icu sync (`talus sync`, **Sync now**), even one that failed. From the web it runs after the response.
+- **Sign-in:** `STRAVA_EMAIL` and `STRAVA_PASSWORD` in `.env`, or `STRAVA_SESSION_COOKIE` (a whole `Cookie` header from a signed-in browser). Cookies are kept in the account's folder (`strava_web_cookies.json`, mode 0600, left out of exports) and reused; it signs in again only when Strava sends it to `/login` or answers 401 or 403. A captcha or a refused sign-in stops the run and is never retried. One request at a time, at most one a second.
+- **Duplicates:** an activity starting within 60 s of one already stored, with the same distance within 1%, is not downloaded; its Strava id is kept as an alias of the stored record (preferring one kept as an original FIT). Anything near enough for the engine's usual check (180 s, 15%) is skipped too, so nothing counts twice. New ones are downloaded with `export_original` and scored like any file.
+- **Strava's own numbers** (Relative Effort, Fitness and Freshness) go to the `external_metrics` table, for display and for checking Talus's loads. The coach never sees them; `tests/test_strava_web.py` checks that.
+- **Not done yet:** the activity list and Strava's own numbers wait on a recorded session (`reverse-engineering/activity-read.har`), so a run currently stops at the list with `not_mapped`. Each run's outcome is kept as `last_sync_strava_web`.
+- **Live check:** `STRAVA_LIVE_TESTS=1 uv run pytest tests/test_strava_web_live.py` signs in for real (and with `STRAVA_LIVE_ACTIVITY_ID`, downloads one of your files).

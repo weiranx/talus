@@ -261,12 +261,32 @@ def cmd_sync(store: Store, args) -> None:
     if args.account:
         def save(values: dict) -> None:
             args.accounts.set_credential(args.account.id, args.source, "tokens", values)
-    result = sync(store, args.source, since, credential=credential, save_credential=save)
+    try:
+        result = sync(store, args.source, since, credential=credential, save_credential=save)
+    finally:
+        # Runs even when intervals.icu fails: that is when the Strava fallback matters.
+        strava = strava_web_after(args.accounts, args.account, store, args.source, since)
     if not args.no_coach and store.thresholds() is not None:
-        warm_coach(result["added_ids"])
+        warm_coach(result["added_ids"] + (strava["added_ids"] if strava else []))
 
 
 SOURCES = ("intervals", "garmin")
+
+
+def strava_web_after(accounts: Accounts, account: Account | None, store: Store, source_name: str, since: date,
+                     log=print) -> dict | None:
+    """After an intervals.icu sync, also pull from Strava's website (sources/strava_web): a
+    personal fallback, only for the owner account with strava_web_enabled set. Its failures are
+    logged and kept as last_sync_strava_web, never raised into the sync it follows."""
+    if source_name != "intervals" or account is None or not account.is_owner \
+            or not accounts.strava_web_enabled(account.id):
+        return None
+    from .sources.strava_web import puller
+    try:
+        return puller.sync(store, since, log=log)
+    except Exception as e:
+        log(f"Strava (personal fallback) not synced: {type(e).__name__}: {e}")
+        return None
 
 
 def open_source(source_name: str, credential: dict | None):

@@ -176,6 +176,24 @@ CREATE TABLE IF NOT EXISTS setting (
     value TEXT NOT NULL,
     updated_at TEXT NOT NULL
 );
+-- Another source's id for an activity already stored from elsewhere, so that source never adds it twice.
+CREATE TABLE IF NOT EXISTS activity_alias (
+    source TEXT NOT NULL,
+    source_id TEXT NOT NULL,
+    activity_id INTEGER NOT NULL REFERENCES activity(id),
+    added_at TEXT NOT NULL,
+    PRIMARY KEY (source, source_id)
+);
+-- A platform's own numbers for an activity (Strava's Relative Effort, say). For display and for
+-- checking Talus's loads against: no coach packet reads this table.
+CREATE TABLE IF NOT EXISTS external_metrics (
+    activity_id INTEGER NOT NULL REFERENCES activity(id),
+    source TEXT NOT NULL,
+    metric TEXT NOT NULL,
+    value REAL,
+    fetched_at TEXT NOT NULL,
+    PRIMARY KEY (activity_id, source, metric)
+);
 """
 
 EXT = {"fit": "fit", "gpx": "gpx", "tcx": "tcx", "icu-streams": "json"}
@@ -267,29 +285,71 @@ class Store:
 
     # Activities
     def has(self, source: str, source_id: str) -> bool:
-        return self.db.execute("SELECT 1 FROM activity WHERE source = ? AND source_id = ?",
-                               (source, source_id)).fetchone() is not None
+        """Stored from this source, or kept as another activity's alias."""
+        return self.db.execute(
+            """SELECT 1 FROM activity WHERE source = ? AND source_id = ?
+               UNION ALL SELECT 1 FROM activity_alias WHERE source = ? AND source_id = ?""",
+            (source, source_id, source, source_id)).fetchone() is not None
+
+    def _near(self, start_time: datetime | None, distance_m: float | None, start_s: float, distance: float,
+              need_distance: bool = False) -> list[sqlite3.Row]:
+        """Stored activities starting within start_s of this one, with the same distance within a
+        `distance` share when both know it (or, with need_distance, only when both know it)."""
+        if start_time is None:
+            return []
+        start = local_naive(start_time)
+        lo, hi = (start - timedelta(days=1)).date().isoformat(), (start + timedelta(days=2)).date().isoformat()
+        rows = self.db.execute(
+            "SELECT id, start_time, platform_distance_m, raw_fmt FROM activity WHERE start_time BETWEEN ? AND ?",
+            (lo, hi)).fetchall()
+        out = []
+        for r in rows:
+            other = local_naive(datetime.fromisoformat(r["start_time"]))
+            if abs((other - start).total_seconds()) > start_s:
+                continue
+            d = r["platform_distance_m"]
+            if need_distance and not (distance_m and d):
+                continue
+            if distance_m and d and abs(distance_m - d) > distance * max(distance_m, d):
+                continue
+            out.append(r)
+        return out
 
     def duplicate_of(self, start_time: datetime | None, distance_m: float | None = None) -> int | None:
         """The stored activity this one repeats, if any: the same workout reaching Talus from a
         second source (Garmin and intervals.icu, or a file you also synced). Same start within
         DUP_START_S, and the same distance within DUP_DISTANCE when both know it."""
-        if start_time is None:
-            return None
-        start = local_naive(start_time)
-        lo, hi = (start - timedelta(days=1)).date().isoformat(), (start + timedelta(days=2)).date().isoformat()
-        rows = self.db.execute(
-            "SELECT id, start_time, platform_distance_m FROM activity WHERE start_time BETWEEN ? AND ?",
-            (lo, hi)).fetchall()
-        for r in rows:
-            other = local_naive(datetime.fromisoformat(r["start_time"]))
-            if abs((other - start).total_seconds()) > DUP_START_S:
-                continue
-            d = r["platform_distance_m"]
-            if distance_m and d and abs(distance_m - d) > DUP_DISTANCE * max(distance_m, d):
-                continue
-            return r["id"]
-        return None
+        rows = self._near(start_time, distance_m, DUP_START_S, DUP_DISTANCE)
+        return rows[0]["id"] if rows else None
+
+    def alias_target(self, start_time: datetime | None, distance_m: float | None, start_s: float,
+                     distance: float) -> int | None:
+        """The stored activity a second copy of a workout should point at: a close match on start
+        and distance (both must be known), preferring one already kept as an original FIT."""
+        rows = self._near(start_time, distance_m, start_s, distance, need_distance=True)
+        rows.sort(key=lambda r: r["raw_fmt"] != "fit")
+        return rows[0]["id"] if rows else None
+
+    @_writes
+    def add_alias(self, activity_id: int, source: str, source_id: str) -> None:
+        self.db.execute("INSERT OR IGNORE INTO activity_alias VALUES (?, ?, ?, ?)",
+                        (source, source_id, activity_id, datetime.now().isoformat(timespec="seconds")))
+
+    def aliases(self, activity_id: int) -> dict[str, str]:
+        return {r["source"]: r["source_id"] for r in self.db.execute(
+            "SELECT source, source_id FROM activity_alias WHERE activity_id = ?", (activity_id,))}
+
+    # Platform metrics (external_metrics): display and validation only, never coach input.
+    @_writes
+    def save_external_metrics(self, activity_id: int, source: str, values: dict[str, float | None]) -> None:
+        now = datetime.now().isoformat(timespec="seconds")
+        self.db.executemany("INSERT OR REPLACE INTO external_metrics VALUES (?, ?, ?, ?, ?)",
+                            [(activity_id, source, k, v, now) for k, v in values.items()])
+
+    def external_metrics(self, activity_id: int, source: str) -> dict[str, float | None]:
+        return {r["metric"]: r["value"] for r in self.db.execute(
+            "SELECT metric, value FROM external_metrics WHERE activity_id = ? AND source = ?",
+            (activity_id, source))}
 
     @_writes
     def add(self, act: RemoteActivity, raw: RawFile) -> int:

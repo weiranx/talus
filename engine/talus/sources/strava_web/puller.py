@@ -116,6 +116,44 @@ def open_client(folder: Path, saved_cookie: str | None = None, cookie_file: Path
                            saved_cookie=saved_cookie, **kwargs)
 
 
+def check_session(folder: Path, header: str) -> dict:
+    """Try a pasted Cookie header before anything is saved, against a scratch jar so a cookie
+    that doesn't work leaves the saved session alone. Returns the account's activity count and
+    latest activity; raises StravaWebError (with a reason a person can act on) otherwise."""
+    from .client import clean_cookie_header
+    header = clean_cookie_header(header)
+    if not header:
+        raise StravaWebError("Nothing was pasted.")
+    scratch = cookie_path(folder).with_name("strava_web_cookies.check.json")
+    client = open_client(folder, cookie_file=scratch, session_cookie=header)
+    try:
+        client.get("/dashboard")  # sends a dead session to /login, where the list just answers 500
+        page = list_page(client, 1)
+    finally:
+        client.close()
+        scratch.unlink(missing_ok=True)
+    latest = to_activity(page["models"][0]) if page["models"] else None
+    return {"cookie": header, "total": page.get("total", len(page["models"])),
+            "latest": latest and {"name": latest.name, "start_time": latest.start_time.isoformat()}}
+
+
+def connect(accounts, account_id: int, folder: Path, header: str) -> dict:
+    """Check a pasted session, then save it encrypted (like the Garmin tokens), drop the old
+    session's jar and turn the sync on. What check_session found is returned."""
+    found = check_session(folder, header)
+    accounts.set_credential(account_id, SOURCE, "cookie", {"cookie": found["cookie"]})
+    cookie_path(folder).unlink(missing_ok=True)
+    accounts.set_strava_web_enabled(account_id, True)
+    return {k: v for k, v in found.items() if k != "cookie"}
+
+
+def disconnect(accounts, account_id: int, folder: Path) -> None:
+    """Turn the sync off and forget the session: the saved cookie and the jar. Activities stay."""
+    accounts.set_strava_web_enabled(account_id, False)
+    accounts.clear_credential(account_id, SOURCE)
+    cookie_path(folder).unlink(missing_ok=True)
+
+
 @contextmanager
 def _one_at_a_time(folder: Path):
     """One Strava sync per account across the server and the CLI; a second one skips."""

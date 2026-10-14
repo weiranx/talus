@@ -2277,6 +2277,7 @@ def _sources(saved: dict) -> dict:
     accounts, account = get_accounts(), _account.get()
     garmin = accounts.credential(account.id, "garmin") if account else None
     coros = accounts.credential(account.id, "coros") if account else None
+    strava = accounts.credential(account.id, "strava_web") if account else None
     return {
         "intervals": {"connected": _intervals_credential() is not None,
                       "last_sync": saved.get("last_sync_intervals")
@@ -2288,6 +2289,12 @@ def _sources(saved: dict) -> dict:
         "coros": {"available": _is_owner(), "connected": coros is not None,
                   "updated_at": coros and coros["updated_at"], "region": coros and coros.get("region"),
                   "last_sync": saved.get("last_sync_coros")},
+        # The owner's personal fallback, never offered to anyone else (sources/strava_web).
+        "strava_web": {"available": _is_owner(), "connected": strava is not None,
+                       "enabled": bool(account) and accounts.strava_web_enabled(account.id),
+                       "updated_at": strava and strava["updated_at"],
+                       "env_override": _is_owner() and bool(os.environ.get("STRAVA_SESSION_COOKIE")),
+                       "last_sync": saved.get("last_sync_strava_web")},
         "upload": {"last_import": saved.get("last_import"), "max_mb": MAX_UPLOAD_MB},
         "healthkit": {"last_sync": saved.get("last_sync_healthkit")},
         "watch": {"last_sync": saved.get("last_sync_watch")},
@@ -2320,12 +2327,14 @@ def _owner_source(source: str):
 
 class SyncIn(BaseModel):
     days: int = Field(default=30, ge=1, le=730)
-    source: str = Field(default="intervals", pattern="^(intervals|garmin|coros)$")
+    source: str = Field(default="intervals", pattern="^(intervals|garmin|coros|strava_web)$")
 
 
 @app.post("/api/sync")
 def sync_now(body: SyncIn, background: BackgroundTasks) -> dict:
     store = get_store()
+    if body.source == "strava_web":
+        return _strava_web_now(store, body.days, background)
     save = None
     if body.source == "intervals":
         cred = _intervals_credential()
@@ -2347,6 +2356,28 @@ def sync_now(body: SyncIn, background: BackgroundTasks) -> dict:
     background.add_task(warm_coach, added)
     background.add_task(start_inferring, store.dir)
     return result | {"added": added_activities(store, added), "log": lines}
+
+
+def _strava_web_now(store: Store, days: int, background: BackgroundTasks) -> dict:
+    """Pull from Strava now, from its card. Owner only, and only once a session is saved."""
+    account = _strava_owner()
+    accounts = get_accounts()
+    cred = accounts.credential(account.id, cli.STRAVA_WEB)
+    if cred is None and not os.environ.get("STRAVA_SESSION_COOKIE"):
+        raise HTTPException(409, "Save a Strava session first.")
+    from .sources.strava_web import puller
+    lines: list[str] = []
+    try:
+        result = puller.sync(store, date.today() - timedelta(days=days), log=lines.append,
+                             saved_cookie=cred and cred.get("cookie"))
+    except Exception:
+        return store.settings()[f"last_sync_{cli.STRAVA_WEB}"] | {"log": lines}
+    added = result.pop("added_ids")
+    background.add_task(warm_coach, added)
+    background.add_task(start_inferring, store.dir)
+    # aliased are already here too, under their other source's record
+    return result | {"duplicates": result["duplicates"] + result["aliased"],
+                     "added": added_activities(store, added), "log": lines}
 
 
 def _strava_web_after(folder: Path, account: Account | None, source_name: str, since: date) -> None:
@@ -2487,7 +2518,7 @@ def put_onboarding(body: OnboardingIn) -> dict:
 
 
 class ImportIn(BaseModel):
-    source: str = Field(default="intervals", pattern="^(intervals|garmin|coros)$")
+    source: str = Field(default="intervals", pattern="^(intervals|garmin|coros|strava_web)$")
     range: str = Field(default="6m", pattern="^(6w|6m|all)$")
 
 
@@ -2612,6 +2643,41 @@ def connect_coros(body: CorosIn) -> dict:
 def disconnect_coros() -> dict:
     """Forget the COROS token. Activities already synced stay."""
     get_accounts().clear_credential(current_account().id, "coros")
+    return {"ok": True}
+
+
+class StravaWebIn(BaseModel):
+    cookie: str = Field(min_length=3, max_length=20000)  # a whole Cookie header runs a few KB
+
+
+def _strava_owner() -> Account:
+    account = current_account()
+    if not account.is_owner:
+        raise HTTPException(403, "Strava is for the owner account only.")
+    return account
+
+
+@app.post("/api/sources/strava-web")
+def connect_strava_web(body: StravaWebIn) -> dict:
+    """Owner only: check a Cookie header copied from a browser signed in to Strava, then save it
+    encrypted and turn on the Strava pull after each intervals.icu sync. Nothing is saved when
+    Strava doesn't accept it. The cookie is never sent back."""
+    account = _strava_owner()
+    from .sources.strava_web import client, puller
+    try:
+        found = puller.connect(get_accounts(), account.id, get_store().dir, body.cookie)
+    except client.StravaWebError as e:
+        reason = str(e).replace(" " + client.SETUP, "")  # the CLI's hint; the card says what to do
+        raise HTTPException(400, f"That cookie didn't work: {reason} Nothing was saved.")
+    return {"status": "connected"} | found
+
+
+@app.delete("/api/sources/strava-web")
+def disconnect_strava_web() -> dict:
+    """Turn the Strava pull off and forget its session. Activities already synced stay."""
+    account = _strava_owner()
+    from .sources.strava_web import puller
+    puller.disconnect(get_accounts(), account.id, get_store().dir)
     return {"ok": True}
 
 

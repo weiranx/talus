@@ -424,16 +424,14 @@ def _ask(prompt: str) -> str:
 
 def cmd_strava_web(store: Store, args) -> None:
     """Guided setup, status and off switch for sources/strava_web, the owner's personal fallback.
-    No app shows it; this is the only way to turn it on."""
+    Settings > Data sources does the same from the web app."""
     from .sources.strava_web import client as strava, puller
 
     accounts, account = args.accounts, args.account
     if account is None or not account.is_owner:
         sys.exit("The Strava website fallback is for the owner account only.")
     if args.action == "off":
-        accounts.set_strava_web_enabled(account.id, False)
-        accounts.clear_credential(account.id, STRAVA_WEB)
-        strava.cookie_path(store.dir).unlink(missing_ok=True)
+        puller.disconnect(accounts, account.id, store.dir)
         print("Strava website sync is off, and its saved session is deleted.")
         return
     if args.action == "status":
@@ -449,28 +447,18 @@ def cmd_strava_web(store: Store, args) -> None:
 
     print("Strava website sync: a personal fallback for when intervals.icu can't get your runs.\n"
           "It reads your own Strava account through the website, which Strava's terms don't allow.\n"
-          "Only this owner account uses it, and no app shows it.\n")
+          "Only this owner account can use it.\n")
     print(STRAVA_COOKIE_STEPS)
-    header = strava.clean_cookie_header(_paste_cookie())
-    if not header:
+    pasted = _paste_cookie()
+    if not strava.clean_cookie_header(pasted):
         sys.exit("Nothing pasted. Nothing was saved.")
-    # Checked against a scratch jar, so a cookie that doesn't work leaves the saved session alone.
-    scratch = strava.cookie_path(store.dir).with_name("strava_web_cookies.check.json")
-    client = puller.open_client(store.dir, cookie_file=scratch, session_cookie=header)
     try:
-        client.get("/dashboard")  # sends a dead session to /login, where the list just answers 500
-        page = puller.list_page(client, 1)
+        found = puller.connect(accounts, account.id, store.dir, pasted)
     except strava.StravaWebError as e:
         sys.exit(f"That cookie didn't work: {e}\nNothing was saved.")
-    finally:
-        client.close()
-        scratch.unlink(missing_ok=True)
-    latest = page["models"][0] if page["models"] else None
-    print(f"Signed in: {page.get('total', len(page['models']))} activities on Strava"
-          + (f", the latest {puller.to_activity(latest).start_time:%a %b %-d} \"{latest.get('name')}\"." if latest else "."))
-    accounts.set_credential(account.id, STRAVA_WEB, "cookie", {"cookie": header})
-    strava.cookie_path(store.dir).unlink(missing_ok=True)  # the old session's jar
-    accounts.set_strava_web_enabled(account.id, True)
+    latest = found["latest"]
+    print(f"Signed in: {found['total']} activities on Strava"
+          + (f", the latest {datetime.fromisoformat(latest['start_time']):%a %b %-d} \"{latest['name']}\"." if latest else "."))
     print("Saved. Talus now also syncs from Strava after each intervals.icu sync.\n"
           "The cookie may still be on your clipboard: copy something else over it.")
     if _ask("Pull the last 30 days from Strava now? [y/N] ") in ("y", "yes"):

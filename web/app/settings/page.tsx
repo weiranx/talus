@@ -6,6 +6,7 @@ import NamesCard from "@/components/NamesCard";
 import EngineDown from "@/components/EngineDown";
 import CorosCard from "@/components/CorosCard";
 import GarminCard from "@/components/GarminCard";
+import StravaCard from "@/components/StravaCard";
 import ReadinessSettings from "@/components/ReadinessSettings";
 import SourceCard from "@/components/SourceCard";
 import SyncMethodCard from "@/components/SyncMethodCard";
@@ -47,6 +48,7 @@ export default async function SettingsPage() {
             : <SourceCard source={s.source} lastSync={s.sources.intervals.last_sync} />}
           {s.sources.garmin.available ? <GarminCard garmin={s.sources.garmin} /> : null}
           {s.sources.coros.available ? <CorosCard coros={s.sources.coros} /> : null}
+          {s.sources.strava_web?.available ? <StravaCard strava={s.sources.strava_web} /> : null}
           <UploadCard upload={s.sources.upload} />
           <ReadinessSettings readiness={s.readiness} />
           <section className="card">

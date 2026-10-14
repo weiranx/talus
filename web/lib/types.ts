@@ -341,6 +341,12 @@ export interface Settings {
     garmin: { available: boolean; connected: boolean; updated_at: string | null; mfa_pending: boolean; last_sync: LastSync | null };
     // COROS direct (Training Hub's API) is unofficial and offered to the owner account only too.
     coros: { available: boolean; connected: boolean; updated_at: string | null; region: string | null; last_sync: LastSync | null };
+    // The owner's own Strava activities through the website, with a session copied from a browser.
+    // A personal fallback for when intervals.icu can't get them; no other account sees it.
+    strava_web: {
+      available: boolean; connected: boolean; enabled: boolean; updated_at: string | null; env_override: boolean;
+      last_sync: (LastSync & { aliased?: number; error_code?: string | null }) | null;
+    };
     upload: { last_import: LastImport | null; max_mb: number };
     // Posted by the Talus iOS app to /api/import/healthkit.
     healthkit: { last_sync: { at: string; workouts_added: number; workouts_skipped: number; wellness_days: number } | null };

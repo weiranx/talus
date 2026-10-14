@@ -486,3 +486,64 @@ def test_only_the_store_and_the_strava_puller_touch_external_metrics():
     users = sorted(str(p.relative_to(root)) for p in root.rglob("*.py")
                    if "external_metrics" in p.read_text())
     assert users == ["sources/strava_web/puller.py", "store.py"]
+
+
+# Settings > Data sources: the Strava card's endpoints
+
+def _web(tmp_path, monkeypatch):
+    from tests.conftest import sign_in
+    monkeypatch.setenv("TALUS_DATA_DIR", str(tmp_path / "data"))
+    monkeypatch.delenv("STRAVA_SESSION_COOKIE", raising=False)
+    real = puller.open_client
+    monkeypatch.setattr(puller, "open_client",
+                        lambda folder, *a, **k: real(folder, *a, transport=httpx.MockTransport(FakeStrava()),
+                                                     clock=Clock(), sleep=lambda s: None, **k))
+    return sign_in()
+
+
+def test_the_card_saves_a_working_cookie_and_shows_it_without_the_cookie(tmp_path, monkeypatch):
+    c = _web(tmp_path, monkeypatch)
+    assert c.get("/api/settings").json()["sources"]["strava_web"] == {
+        "available": True, "connected": False, "enabled": False, "updated_at": None, "env_override": False,
+        "last_sync": None}
+    r = c.post("/api/sources/strava-web", json={"cookie": "Cookie: _strava4_session=good; sp=abc"})
+    assert r.status_code == 200, r.text
+    assert r.json()["total"] == 3 and r.json()["latest"]["name"] == "Afternoon Trail Run"
+    assert "good" not in r.text
+    shown = c.get("/api/settings").json()["sources"]["strava_web"]
+    assert shown["connected"] and shown["enabled"] and shown["updated_at"]
+    assert "good" not in c.get("/api/settings").text  # the session never goes back to the browser
+    owner = api.get_accounts().owner()
+    assert api.get_accounts().credential(owner.id, "strava_web")["cookie"] == "_strava4_session=good; sp=abc"
+
+
+def test_the_card_saves_nothing_when_strava_refuses_the_cookie(tmp_path, monkeypatch):
+    c = _web(tmp_path, monkeypatch)
+    r = c.post("/api/sources/strava-web", json={"cookie": "_strava4_session=ended"})
+    assert r.status_code == 400 and "session has ended" in r.json()["detail"] and "Nothing was saved" in r.json()["detail"]
+    assert c.get("/api/settings").json()["sources"]["strava_web"]["connected"] is False
+
+
+def test_pull_now_and_turn_off(tmp_path, monkeypatch):
+    c = _web(tmp_path, monkeypatch)
+    assert c.post("/api/sync", json={"days": 30, "source": "strava_web"}).status_code == 409  # nothing saved yet
+    c.post("/api/sources/strava-web", json={"cookie": "_strava4_session=good"})
+    calls = []
+    monkeypatch.setattr(puller, "sync", lambda store, since, log=print, **k: calls.append(k) or {
+        "listed": 3, "new": 1, "saved": 1, "aliased": 2, "duplicates": 0, "error": None, "added_ids": []})
+    r = c.post("/api/sync", json={"days": 30, "source": "strava_web"}).json()
+    assert calls == [{"saved_cookie": "_strava4_session=good"}]
+    assert r["saved"] == 1 and r["duplicates"] == 2  # aliased count as already here
+    assert c.delete("/api/sources/strava-web").json() == {"ok": True}
+    shown = c.get("/api/settings").json()["sources"]["strava_web"]
+    assert not shown["connected"] and not shown["enabled"]
+
+
+def test_the_card_is_the_owners_only(tmp_path, monkeypatch):
+    from tests.conftest import sign_in
+    _web(tmp_path, monkeypatch)
+    friend = sign_in("friend@example.com", "correct horse battery")
+    assert friend.get("/api/settings").json()["sources"]["strava_web"]["available"] is False
+    assert friend.post("/api/sources/strava-web", json={"cookie": "_strava4_session=good"}).status_code == 403
+    assert friend.delete("/api/sources/strava-web").status_code == 403
+    assert friend.post("/api/sync", json={"days": 30, "source": "strava_web"}).status_code == 403

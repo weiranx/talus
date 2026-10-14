@@ -18,7 +18,7 @@ from dataclasses import dataclass, field
 from datetime import date, timedelta
 from typing import Any, Protocol
 
-PROMPT_VERSION = "coach-v0.9"
+PROMPT_VERSION = "coach-v1.0"
 # The daily brief is short and mostly explains the engine's call, so it runs on Haiku; the
 # workout analysis has more to read and judge, so it stays on Opus. Both can be changed in
 # Settings, and TALUS_COACH_MODEL overrides both defaults.
@@ -74,18 +74,19 @@ Your reader is the athlete. They use miles and feet, never km or meters, and the
 Rules:
 1. Every number you write must come from the data you are given, rounded no more finely than it appears there. Do not compute new numbers (no sums, differences, ratios, paces or conversions) and do not invent targets. If you want a number the data lacks, describe it in words instead. Write counts as words ("two days", "three climbs").
 2. Never quote GPS, names or anything not in the data.
-3. Plain language. Short sentences. Talk to the athlete as "you". No hype, no exclamation marks, no emoji.
+3. Plain language. Short sentences, about twenty words at most. Talk to the athlete as "you". No hype, no exclamation marks, no emoji.
 4. Ground every claim in a load, a state, a flag, a segment or the check-in, and name it.
 5. Be specific to this athlete. Compare with their own history (weeks, bests, similar activities) instead of general advice, and skip lines that would fit anyone, like "listen to your body" or "stay consistent".
 6. Pain above 3 of 5 means rest and, if it persists, see a clinician. Never talk an athlete into training through pain.
+7. Make every prose field easy to skim on a phone. Open it with the takeaway in one short sentence, then give the reason. Bold, with **double asterisks**, the one or two numbers or short phrases the athlete should remember from that field, such as a load against normal, a verdict or a day; never bold a whole sentence. No headings, tables, links or other markdown. Don't repeat what another field already says. Names, notes in the athlete's voice and other fields that aren't prose stay plain text.
 
 Daily brief: you get today's readiness, the overnight signals, the four loads, the last 14 days of activities, this week's totals, 28-day intensity and the rule-based call. The engine sets the session; you make the call and explain it:
 - call: go, modify or rest. Keep rule_call's call unless something in the data argues for more caution; never be less cautious. If you keep it, the athlete gets rule_call's session; if you choose a more cautious call, they get an easier one.
-- why: two or three sentences on what in the data drives the call, naming the loads, states or check-in behind it. When it matters, set today against the recent weeks or the run of training days in "rest". Do not prescribe a different session.
+- why: two or three short sentences on what in the data drives the call, leading with the main reason (the athlete already sees the call and the session above it), naming the loads, states or check-in behind it. When it matters, set today against the recent weeks or the run of training days in "rest". Do not prescribe a different session.
 
-Workout analysis: you get one activity with its segments, its four loads against a usual day, the athlete's current state, "similar_recent" (up to three earlier activities of the same sport with the closest effort miles) and "biggest_in_90_days" (the dimensions where it was the athlete's biggest day). Use the similar activities to say whether this one went better or worse than its peers: time in each zone, min_per_effort_mi and cardio_load_per_hour. Answer five questions, one or two sentences each:
+Workout analysis: you get one activity with its segments, its four loads against a usual day, the athlete's current state, "similar_recent" (up to three earlier activities of the same sport with the closest effort miles) and "biggest_in_90_days" (the dimensions where it was the athlete's biggest day). Use the similar activities to say whether this one went better or worse than its peers: time in each zone, min_per_effort_mi and cardio_load_per_hour. "grades" has the climbing and descending rate (vertical ft per hour) on each band of grade with "usual_90d", the athlete's own median on the same grade; "hike_vs_run_on_climbs" says what running a climb bought over hiking it, in speed and beats; "durability" sets the second half against the first on grade-adjusted pace, so an out-and-back is fair, and decoupling_pct is how much heart rate drifted against that pace (under 5% held, over 10% faded). These are the read Garmin and Strava can't give, so use them when they say something: a grade climbed or descended well faster or slower than usual, running a steep grade for little gain at a high heart-rate cost, or a fade. Answer five questions, one or two sentences each:
 - job: did it do its job? Judge from time in each zone, where the vert came from and the hike share.
-- off: where did it go off? Name the segment (as labeled) where heart rate or effort drifted, or say nothing stood out.
+- off: where did it go off? Name the segment (as labeled) or grade where heart rate or effort drifted, or the half that faded, or say nothing stood out.
 - cost: what did it cost? Name the loads, especially any 6-week high or any load well above a usual day.
 - changes: what does it change for the next few days? Point to the ledger it pushed hardest.
 - takeaway: one thing to keep or change next time.
@@ -93,6 +94,7 @@ Workout analysis: you get one activity with its segments, its four loads against
 Plan: you get an objective (a race or mountain day with a date), the athlete's readiness for it now and projected at the start of the taper, and the engine's week-by-week plan. The engine built the plan and checked every week against the load limits; you explain it and never change it. Readiness has five dimensions, each read as ready, close or gap against its rule.
 - verdict: two or three sentences: which dimensions are ready, close or a gap now, and how they project. Readiness covers fitness only.
 - limiter: one or two sentences on the dimension furthest behind and what in the plan closes it, such as the long days or the peak weeks.
+- When objective.event is false, the plan is a block with no race or event (build base, maintain, come back from a break, get faster, a yearly target, or an ongoing plan): there is no readiness, no taper and no race day, so never mention them. verdict says where recent weeks stand against the weekly targets (or the year's totals); limiter names what holds the plan back (a load or time limit) or says nothing does; plan explains the build, hold and recovery weeks.
 - plan: three or four sentences on the plan's shape: build weeks, recovery weeks, the peak and the taper, and any week the engine held back for a load limit or a time limit. If reachable is false, say plainly that the objective can't be reached inside the limits and name the options given. If changes are listed, say what changed and why.
 
 Load read: you get the four loads, weekly totals, the run of training days, the 28-day intensity split, readiness, overnight signals and "next_7_days": what is scheduled and, per load, "room" ("hold" keeps the athlete's normal, "limit" is the most before ramping too fast; hours for cardio, miles for distance, feet for climb and descent). Answer four questions, one or two sentences each, distance and vert together:
@@ -105,8 +107,8 @@ Weekly review: you get last week against its plan targets, the flags it raised a
 - week: two or three sentences on how the week went against its targets, naming miles and feet together, time below AeT and any flag.
 - next: one or two sentences on what next week asks for, or why a new plan is suggested.
 
-Chat: the athlete asks a question about their training. Answer the question they asked first, then back it with the data in two to five sentences, naming the numbers you use. For trends (mileage, vert, consistency, intensity) use "weeks"; for "biggest" or "longest" use "bests_90d". If the data can't answer it, say what is missing. You can't change the plan or its targets: to change them, the athlete edits the objective or training days, or asks for a new plan on the Plan page. When they ask for a kind of workout the plan doesn't hold (track, tempo, intervals, strength, a specific session), give a coach's view of whether it fits their objective and their recent intensity split, and tell them they can add it as their own run on the Plan page calendar (kinds: easy, long, hills, tempo, intervals, hike, race), where the plan fills the rest of the week around it. Never reply with only a list of what you can't do. If the athlete mentions pain above 3 of 5, illness or chest symptoms, recommend rest and a clinician, and do not diagnose. No weight-loss or fueling-restriction advice. You don't judge weather, snow, route conditions or technical skill.
-- actions: things you can do for the athlete. Each shows as a card the athlete confirms before it runs, so propose one only when they asked for it or clearly agreed, at most three, and say in the answer what you're proposing. Leave it empty when you are only answering. Kinds: schedule_run (day as YYYY-MM-DD, run_kind, miles, gain_ft, minutes) adds a run to their calendar; move_run (run_id from scheduled_runs, day) moves one of their own runs; delete_run (run_id) removes one; set_note (note: the whole new training goals note, in their voice) replaces athlete_note; sync pulls new activities from their data source; apply_thresholds switches their heart-rate thresholds to "suggested_thresholds". Leave fields a kind doesn't use null. Sizes you pick for a new run must fit their history and the room in their loads; plan changes still go through the Plan page.
+Chat: the athlete asks a question about their training. Answer the question they asked in the first sentence, then back it with the data, naming the numbers you use, in under about a hundred and twenty words. When you list three or more parallel things (days, options, steps), put each on its own line as a "- " bullet; split a longer answer into short paragraphs with a blank line between them. For trends (mileage, vert, consistency, intensity) use "weeks"; for "biggest" or "longest" use "bests_90d". If the data can't answer it, say what is missing. You can't change the plan or its targets: to change them, the athlete edits the objective or training days, or asks for a new plan on the Plan page. When they ask for a kind of workout the plan doesn't hold (track, tempo, intervals, strength, a specific session), give a coach's view of whether it fits their objective and their recent intensity split, and tell them they can add it as their own run on the Plan page calendar (kinds: easy, long, hills, tempo, intervals, hike, race), where the plan fills the rest of the week around it. Never reply with only a list of what you can't do. If the athlete mentions pain above 3 of 5, illness or chest symptoms, recommend rest and a clinician, and do not diagnose. No weight-loss or fueling-restriction advice. You don't judge weather, snow, route conditions or technical skill.
+- actions: things you can do for the athlete. Each shows as a card the athlete confirms before it runs, so propose one only when they asked for it or clearly agreed, at most three, and say in the answer what you're proposing. Leave it empty when you are only answering. Kinds: schedule_run (day as YYYY-MM-DD, run_kind, miles, gain_ft, minutes) adds a run to their calendar; move_run (run_id from scheduled_runs, day) moves one of their own runs; delete_run (run_id) removes one; set_note (note: the whole new training goals note, in their voice) replaces athlete_note; sync pulls new activities from their data source; apply_thresholds switches their heart-rate thresholds to "suggested_thresholds". Leave fields a kind doesn't use null. Sizes you pick for a new run must fit their history and the room in their loads; plan changes still go through the Plan page. When the packet has no "scheduled_runs" (the Plan page's chat), you can't do things from there: leave actions empty and don't offer any.
 - used: the names of the data fields your answer relies on.
 """
 
@@ -180,7 +182,8 @@ EDIT_SCHEMA = {
                        "minutes": _maybe("integer"), "week": _maybe("integer"),
                        "dims": {"type": "array", "items": {"type": "string", "enum": ["miles", "vert"]}},
                        "direction": {"anyOf": [{"type": "string", "enum": ["less", "more"]}, {"type": "null"}]},
-                       "workout": {"anyOf": [{"type": "string", "enum": ["none", "track", "tempo", "hill_repeats", "race_pace"]},
+                       "workout": {"anyOf": [{"type": "string", "enum": ["none", "track", "tempo", "hill_repeats", "race_pace",
+                                                                              "threshold", "fartlek", "progression"]},
                                              {"type": "null"}]}},
         "required": ["kind", "day", "minutes", "week", "dims", "direction", "workout"], "additionalProperties": False}},
         "cannot": _maybe("string")},
@@ -191,7 +194,7 @@ EDIT_SCHEMA = {
 # Reading the athlete's own words into fields. These replies hold no prose, so the number check
 # doesn't apply; the engine checks every field before using it.
 INTAKE_PROMPT = """Read the athlete's text, which describes the race or mountain day they are training for, into fields. Use null for anything the text doesn't say; never guess. Put a distance in kilometers in distance_km and climbing in meters in gain_m or loss_m, unconverted. A "50k" is a distance of 50 km. date is YYYY-MM-DD: when the text gives no year, use the first such date after today (in the data). name is the event or route name as written, without the date or numbers. athlete_note, when present, is the athlete's own training note: when the text points at a race or day the note names (like "my race" or "the 100"), read that one from the note; never fill a field from the note otherwise."""
-EDIT_PROMPT = """Read the athlete's request to change their training plan into edits. Days are 0 (Monday) to 6 (Sunday). Kinds: long_day (move the long day to day), add_day or drop_day (a training day), weekday_minutes or weekend_minutes (the most time on one such day, in minutes), week (week number counted from this week as week 1, with dims miles and/or vert and direction less or more), workout (a weekly speed session: track for track or interval work, tempo for tempo or threshold runs, hill_repeats for hill repeats or uphill intervals, race_pace for miles at goal race or marathon pace, none to drop speed work). Leave unused fields null and dims empty when not a week edit. Anything else, such as a new objective, a pace or a session on one date, can't be done: return no edits for it and put what was asked in cannot, in a few plain words (like "a long run on Nov 3"); otherwise cannot is null. athlete_note, when present, is the athlete's own training note: use it to read a vague request (like "more of what my note says" or "less of the thing I want to cut"), but never add an edit the request doesn't ask for."""
+EDIT_PROMPT = """Read the athlete's request to change their training plan into edits. Days are 0 (Monday) to 6 (Sunday). Kinds: long_day (move the long day to day), add_day or drop_day (a training day), weekday_minutes or weekend_minutes (the most time on one such day, in minutes), week (week number counted from this week as week 1, with dims miles and/or vert and direction less or more), workout (a weekly speed session: track for track or interval work, tempo for tempo runs, threshold for threshold or cruise intervals, fartlek for fartlek, progression for progression runs, hill_repeats for hill repeats or uphill intervals, race_pace for miles at goal race or marathon pace, none to drop speed work). Leave unused fields null and dims empty when not a week edit. Anything else, such as a new objective, a pace or a session on one date, can't be done: return no edits for it and put what was asked in cannot, in a few plain words (like "a long run on Nov 3"); otherwise cannot is null. athlete_note, when present, is the athlete's own training note: use it to read a vague request (like "more of what my note says" or "less of the thing I want to cut"), but never add an edit the request doesn't ask for."""
 
 # Looking up a named race: the analysis model with web search, for the date, distance and vert of
 # the next edition. Its numbers are shown for the athlete to confirm before anything uses them.
@@ -231,7 +234,7 @@ def lookup_race(client: Client, text: str, today: str, model_id: str, note: str 
 
 NOTE_FIELDS = ("note",)
 NOTE_MAX = 1500
-NOTE_PROMPT = """Write the athlete's training note: the kind of training they want, which the coach will read before every answer. Write it in their voice ("I ..."), as three to six short sentences, from their answers and their recent training. Keep every goal and limit they gave. Add what their history shows that matters for those goals, such as how much they run and climb a week now, how often they rest or how much of their time is below AeT. Do not invent goals, races, dates, injuries or preferences they didn't give. Miles and feet."""
+NOTE_PROMPT = """Write the athlete's training note: the kind of training they want, which the coach will read before every answer. Write it in their voice ("I ..."), as three to six short sentences, from their answers and their recent training. Keep every goal and limit they gave. Add what their history shows that matters for those goals, such as how much they run and climb a week now, how often they rest or how much of their time is below AeT. Do not invent goals, races, dates, injuries or preferences they didn't give. Miles and feet. Plain text, no markdown."""
 
 
 def note_packet(answers: dict, acts: list[dict], day: date) -> dict:
@@ -302,7 +305,27 @@ def rules_load(packet: dict) -> dict:
     return {"last_week": last_week, "trend": trend, "watch": watch, "next": nxt}
 
 
-NAME_PROMPT = """Name this activity the way a runner would title it: two to six words, leading with the peak or place when the data has one, then the route or the kind of day, for example "Mt Baldy via the Bowl", "Easy loop at Griffith Park", "Hill repeats on Mt Wilson Trail", "Long steep hike". Use only place names that appear in the data, never invent one; name_from_device often holds the town. Pick the kind of day from the numbers: a big climb, a long day, an easy run, a hike when most of it was hiking, hard when much of it was above AnT. No numbers, dates, emoji or quotes."""
+NAME_PROMPT = """Name this activity the way a runner would title it: two to six words, leading with the peak or place when the data has one, then the route or the kind of day, for example "Mt Baldy via the Bowl", "Easy loop at Griffith Park", "Hill repeats on Mt Wilson Trail", "Long steep hike". Use only place names that appear in the data, never invent one; name_from_device often holds the town. Pick the kind of day from the numbers: a big climb, a long day, an easy run, a hike when most of it was hiking, hard when much of it was above AnT. No numbers, dates, emoji, quotes or markdown."""
+
+BUILD_FOCUS = ("build", "peak", "hold", "recovery", "taper", "race")
+BUILD_WORKOUTS = ("none", "track", "tempo", "threshold", "fartlek", "progression", "hill_repeats", "race_pace")
+BUILD_HILLS = ("vert_climb", "power_hike", "downhill", "muscular_endurance", "hill_sprints")
+BUILD_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "approach": {"type": "string"},
+        "weeks": {"type": "array", "items": {
+            "type": "object",
+            "properties": {"start": {"type": "string"}, "focus": {"type": "string", "enum": list(BUILD_FOCUS)},
+                           "miles": {"type": "number"}, "gain_ft": {"type": "number"}, "loss_ft": {"type": "number"},
+                           "workout": {"type": "string", "enum": list(BUILD_WORKOUTS)},
+                           "hill_session": {"type": "string", "enum": list(BUILD_HILLS)}, "note": {"type": "string"}},
+            "required": ["start", "focus", "miles", "gain_ft", "loss_ft", "workout", "hill_session", "note"],
+            "additionalProperties": False}},
+    },
+    "required": ["approach", "weeks"], "additionalProperties": False,
+}
+BUILD_PROMPT = """Build this athlete's training plan, week by week, as their coach. The data holds the objective or goal (objective.event false means a block with no race day: no taper and no race week), the athlete's training days and time limits, their last 12 weeks and biggest days, athlete_note and athlete_answers when they gave them, and engine_draft: the engine's own plan, one entry per week, as a safe reference. Write exactly one entry per engine_draft week, in the same order with the same start. For each week choose the focus, the week's miles, gain_ft and loss_ft, the one speed session (or none), the hill day's session, and a note of one short sentence for the athlete on the week's purpose and its key sessions. Speed sessions: track (800 m repeats over AnT), threshold (6 min repeats at AnT), tempo (blocks just under AnT), fartlek (mixed surges on rolling trail), progression (easy building to tempo), hill_repeats (2 min hard uphill), race_pace (miles at goal pace). Hill day sessions: vert_climb (a long zone 2 climb, also the easy option for recovery and taper weeks), power_hike (6 min steep power-hike intervals), downhill (downhill repeats for quad durability), muscular_endurance (weighted-pack hiking on the steepest climb, best in the last build and peak weeks), hill_sprints (10 to 15 s uphill sprints, for road races). Vary them through the build so the athlete trains climbing, hiking, descending and leg strength; the engine also adds strides, recovery runs after long days and two strength sessions a week on its own. Shape the plan the way a good mountain coach would for this athlete and this goal: how fast to build, where the recovery weeks fall, when to peak, how long to taper, when to lean on vert or on miles, and which speed work fits (none for most ultra and mountain builds; track or tempo for road races and getting faster; hill repeats for steep objectives). Respect the note and answers: an injury or niggle, tired lately, little vert near home, a preference they state. The engine checks every week and holds anything that breaks its limits: no week may add more than 10% in any of miles, gain or loss over the last build week, and a week that would ramp a load too fast or overreach is cut. So plan within those limits; a week you ask for above them is cut back. Recovery weeks run about 60 to 75% of the build level. For an event, the last week is the race week (focus race) and the weeks before it taper. Miles and feet only. approach is two or three sentences on how you shaped the plan and why, for the athlete."""
 
 # Reads that run on the brief's cheaper model: short, once a day or once an activity.
 CHEAP_MODES = {"load", "name"}
@@ -322,6 +345,9 @@ MODES = {
     "load": {"label": "load read", "schema": _schema(LOAD_FIELDS), "effort": "low", "max_tokens": 6000},
     "name": {"label": "activity name", "schema": _schema(("name",)), "effort": "low", "max_tokens": 1000,
              "prompt": NAME_PROMPT},
+    # Building the plan's weeks; the engine checks them. Its numbers are new by design.
+    "build": {"label": "plan builder", "schema": BUILD_SCHEMA, "effort": "medium", "max_tokens": 20000,
+              "prompt": BUILD_PROMPT, "free_numbers": True},
     # Drafting the athlete's training note from a few answers and their history.
     "note": {"label": "training note", "schema": _schema(NOTE_FIELDS), "effort": "low", "max_tokens": 4000,
              "prompt": NOTE_PROMPT},
@@ -581,7 +607,51 @@ def analysis_packet(a: dict, thresholds: dict, ledgers_now: dict, today: date,
                       "descent_load": _r(s["descent_load"])}
                      for label, s in zip(segment_labels(segs), segs)],
         "ledgers_now": {name: _ledger(d, name) for name, d in ledgers_now.items()},
+        **terrain_packet(a.get("terrain")),
     }
+
+
+def _pace_text(min_per_mi: float | None) -> str | None:
+    if not min_per_mi:
+        return None
+    m = int(round(min_per_mi * 60))
+    return f"{m // 60}:{m % 60:02d}/mi"
+
+
+def terrain_packet(t: dict | None) -> dict:
+    """The activity's climbing and descending by grade against the athlete's usual on the same
+    grades, hiking against running on the climbs, and how the second half held up."""
+    if not t:
+        return {}
+    grades = []
+    for b in t["bands"]:
+        u = b["usual"]
+        grades.append({
+            "grade": f"{b['kind']} {b['label']}", "vert_ft": b["vert_ft"], "time": _hm(b["time_s"]),
+            "vert_rate_ft_per_hour": b["vert_rate_ft_h"],
+            "pace": _pace_text(b["pace_min_mi"]) if b["kind"] == "descent" else None,
+            "hike_share_pct": _r(b["hike_share"] * 100), "avg_hr": _r(b["avg_hr"]),
+            "usual_90d": None if not u else {
+                "earlier_activities": u["runs"], "vert_rate_ft_per_hour": u["vert_rate_ft_h"], "avg_hr": u["avg_hr"],
+                "rate_vs_usual_pct": u["rate_change_pct"], "hr_vs_usual_bpm": u["hr_change_bpm"],
+                "fastest_in_90_days": u["fastest"]}})
+    d = t["durability"]
+    out = {"grades": grades, "hike_vs_run_on_climbs": [
+        {"grade": h["label"], "hiking_ft_per_hour": h["hike_rate_ft_h"], "running_ft_per_hour": h["run_rate_ft_h"],
+         "running_faster_pct": h["run_rate_gain_pct"], "hiking_hr": _r(h["hike_hr"]), "running_hr": _r(h["run_hr"]),
+         "running_costs_bpm": h["run_hr_cost_bpm"]} for h in t["hike_or_run"]]}
+    if d:
+        half = lambda h: {"distance_mi": h["distance_mi"], "gain_ft": h["gain_ft"], "time": _hm(h["time_s"]),
+                          "grade_adjusted_pace": _pace_text(h["flat_pace_min_mi"]),
+                          "steep_climb_ft_per_hour": h["climb_rate_ft_h"], "avg_hr": _r(h["avg_hr"])}
+        out["durability"] = {
+            "first_half": half(d["first"]), "second_half": half(d["second"]),
+            "grade_adjusted_pace": _pace_text(d["flat_pace_min_mi"]),
+            "grade_adjusted_pace_change_pct": d["pace_change_pct"],
+            "steep_climb_rate_change_pct": d["climb_rate_change_pct"],
+            "decoupling_pct": d["decoupling_pct"], "usual_decoupling_pct": d["usual_decoupling_pct"],
+            "verdict": d["verdict"]}
+    return out
 
 
 def _week(w: dict) -> dict:
@@ -617,7 +687,18 @@ def _dim_name(ev: dict, key: str | None) -> str | None:
 
 def _objective(plan: dict, today: date) -> dict:
     obj, dem = plan["objective"], plan["demand"]
-    return {"date": obj["day"], "days_to_go": (date.fromisoformat(obj["day"]) - today).days,
+    goal = obj.get("goal", "race")
+    if goal not in ("race", "trip"):
+        # A block with no event: its goal and weekly targets (a yearly target's totals and what's done).
+        from .plan import GOAL_KINDS
+        out = {"goal": GOAL_KINDS.get(goal, goal), "event": False, "block_ends": obj["day"],
+               "weekly_targets": {"distance_mi": _r(plan["peak"]["miles"], 1), "gain_ft": _r(plan["peak"]["gain_ft"]),
+                                  "loss_ft": _r(plan["peak"]["loss_ft"])}}
+        if t := plan.get("target"):
+            out["year_totals_target"] = {"distance_mi": _r(t["totals"]["miles"]), "gain_ft": _r(t["totals"]["gain_ft"])}
+            out["year_done_so_far"] = {"distance_mi": _r(t["done"]["miles"]), "gain_ft": _r(t["done"]["gain_ft"])}
+        return out
+    return {"goal": "Race" if goal == "race" else "Mountain objective", "event": True,"date": obj["day"], "days_to_go": (date.fromisoformat(obj["day"]) - today).days,
             "distance_mi": _r(obj["distance_mi"], 1), "gain_ft": _r(obj["gain_ft"]), "loss_ft": _r(obj["loss_ft"]),
             "effort_mi": _r(dem["effort_mi"], 1), "longest_descent_ft": _r(obj["longest_descent_ft"]),
             "high_point_ft": _r(obj["high_point_ft"]),
@@ -628,11 +709,12 @@ def plan_packet(plan: dict, now: dict, today: date, reason: str, changes: list[d
     """Context for explaining a plan. The objective's name is left out: it is the athlete's text."""
     opts = plan.get("options") or {}
     smaller = opts.get("smaller")
+    proj = plan.get("projected")
     return {
         "objective": _objective(plan, today),
-        "readiness_now": _dims(now), "limiter_now": _dim_name(now, now["limiter"]),
-        "readiness_projected_at_taper": _dims(plan["projected"]),
-        "limiter_projected": _dim_name(plan["projected"], plan["projected"]["limiter"]),
+        "readiness_now": _dims(now) if now else [], "limiter_now": _dim_name(now, now["limiter"]) if now else None,
+        "readiness_projected_at_taper": _dims(proj) if proj else [],
+        "limiter_projected": _dim_name(proj, proj["limiter"]) if proj else None,
         "reachable": plan["reachable"],
         "options": {"smaller_version": None if not smaller else {
                         "distance_mi": _r(smaller["distance_mi"], 1), "gain_ft": _r(smaller["gain_ft"], -2),
@@ -645,6 +727,29 @@ def plan_packet(plan: dict, now: dict, today: date, reason: str, changes: list[d
         "changes_from_accepted_plan": [{"week": c["start"], "before": _brief_week(c["before"]),
                                         "after": _brief_week(c["after"])} for c in changes],
         "weeks": [_week(w) for w in plan["weeks"]],
+    }
+
+
+def build_packet(plan: dict, acts: list[dict], today: date) -> dict:
+    """Context for building a plan: the goal, the athlete's limits and history, and the engine's
+    draft of the same weeks as a reference."""
+    from .plan import DAY_NAMES
+
+    c = plan["constraints"]
+    return {
+        "objective": _objective(plan, today),
+        "race_type": plan.get("race_type"),
+        "training_days": [DAY_NAMES[d] for d in c["days"]], "long_day": DAY_NAMES[c["long_day"]],
+        "weekday_max_minutes": c["weekday_min"], "weekend_max_minutes": c["weekend_min"],
+        "speed_work_asked_for": c.get("workout") if c.get("workout") not in (None, "none") else None,
+        "back_to_back_long_days": plan.get("back_to_back"),
+        "recent_per_week": {"distance_mi": _r(plan["baseline"]["miles"], 1), "gain_ft": _r(plan["baseline"]["gain_ft"]),
+                            "loss_ft": _r(plan["baseline"]["loss_ft"]), "hours": _r(plan["baseline"]["hours"], 1)},
+        "weeks_history": weekly_history(acts, today, HISTORY_WEEKS),
+        "bests_90d": bests(acts, today),
+        "engine_draft": [{"start": w["start"], "focus": w["focus"], "miles": _r(w["miles"], 1),
+                          "gain_ft": _r(w["gain_ft"]), "loss_ft": _r(w["loss_ft"]), "workout": w.get("workout") or "none",
+                          "hill_session": w.get("hill_session"), "held_back_by": w["limited_by"]} for w in plan["weeks"]],
     }
 
 
@@ -720,6 +825,8 @@ def chat_packet(question: str, history: list[dict], today: dict | None, plan: di
 
 def rules_plan(packet: dict) -> dict:
     """The plan explained from engine numbers alone."""
+    if not packet["objective"].get("event", True):
+        return _rules_block(packet)
     now = packet["readiness_now"]
     ready = [d["dimension"].lower() for d in now if d["status"] == "ready"]
     behind = [d["dimension"].lower() for d in now if d["status"] in ("close", "gap")]
@@ -748,6 +855,22 @@ def rules_plan(packet: dict) -> dict:
         if packet["options"]["later_date"]:
             later = date.fromisoformat(packet["options"]["later_date"])
             text += f" It can be by {later:%B} {later.day}, {later.year}."
+    return {"verdict": verdict, "limiter": limiter, "plan": text}
+
+
+def _rules_block(packet: dict) -> dict:
+    """A block with no event, explained from engine numbers alone."""
+    o, recent, weeks = packet["objective"], packet["recent_per_week"], packet["weeks"]
+    t = o["weekly_targets"]
+    verdict = (f"You've averaged {recent['distance_mi']} mi and {recent['gain_ft']:,} ft up a week over the last four "
+               f"weeks; the plan's weekly target is {t['distance_mi']} mi and {t['gain_ft']:,} ft up.")
+    held = [w for w in weeks if w["held_back_by_load_limit"]]
+    limiter = ("Some weeks are held back to stay inside the load limits." if held
+               else "Nothing holds the plan back: every week fits the load limits.")
+    text = (f"{o['goal']}: {len(weeks)} weeks of building toward the target and holding it, with a recovery week "
+            "every few weeks.")
+    if o.get("year_totals_target") and not packet["reachable"]:
+        text += " At this pace the year's target isn't reached inside the load limits."
     return {"verdict": verdict, "limiter": limiter, "plan": text}
 
 
@@ -844,15 +967,30 @@ def traceable(token: str, allowed: set[float]) -> bool:
 PROMPT_NUMBERS = {x for x in allowed_numbers(SYSTEM) if x >= 10}
 
 
+def _plausible_run(a: Any) -> bool:
+    """A schedule_run whose size is inside the limits the engine holds its cards to."""
+    if not isinstance(a, dict) or a.get("kind") != "schedule_run":
+        return False
+    miles, gain, minutes = a.get("miles") or 0, a.get("gain_ft") or 0, a.get("minutes")
+    try:
+        return (0 <= miles <= 100 and 0 <= gain <= 30000 and bool(miles or minutes)
+                and (minutes is None or 0 < minutes <= 2880))
+    except TypeError:
+        return False
+
+
 def check(reply: dict, packet: dict, mode: str) -> list[str]:
     """Problems with a reply, as sentences the model can act on. Empty means it passes."""
-    if mode in FIELD_MODES:
+    if mode in FIELD_MODES or MODES[mode].get("free_numbers"):
         return []
     allowed = allowed_numbers(packet) | PROMPT_NUMBERS
-    # A proposed action carries new numbers (a run's size), which the athlete confirms on its card;
-    # the answer may quote them, and every other number still has to come from the data.
-    allowed |= allowed_numbers([{k: a.get(k) for k in ("miles", "gain_ft", "minutes", "day")}
-                                for a in reply.get("actions") or []])
+    # A proposed run carries new numbers (its size), which the athlete confirms on its card; the
+    # answer may quote them, and every other number still has to come from the data. Only where
+    # actions can be proposed (the packet lists scheduled_runs), and only a run whose size could
+    # become a card, so an action can't carry an invented number past the check.
+    if "scheduled_runs" in packet:
+        allowed |= allowed_numbers([{k: a.get(k) for k in ("miles", "gain_ft", "minutes", "day")}
+                                    for a in reply.get("actions") or [] if _plausible_run(a)])
     bad = []
     for key, value in reply.items():
         if key == "actions":
@@ -902,6 +1040,21 @@ def rules_analysis(packet: dict) -> dict:
         takeaway = f"Most of the climbing came on {band_name.get(band, band)} grades: {gain[band]:,} ft."
     else:
         takeaway = "A flat day: no climbing to speak of."
+    dur = packet.get("durability")
+    if dur and dur["verdict"] == "faded":
+        drift = (f"heart rate drifted {dur['decoupling_pct']}% against grade-adjusted pace"
+                 if dur["decoupling_pct"] is not None else
+                 f"grade-adjusted pace slowed {dur['grade_adjusted_pace_change_pct']}%")
+        off = f"The second half faded: {drift}. " + off
+    moved = [g for g in packet.get("grades", []) if g["usual_90d"] and g["usual_90d"]["rate_vs_usual_pct"] is not None
+             and abs(g["usual_90d"]["rate_vs_usual_pct"]) >= 8]
+    if moved:
+        g = max(moved, key=lambda g: g["vert_ft"])  # the grade that carried the most vert
+        u = g["usual_90d"]
+        verb = "climbed" if g["grade"].startswith("climb") else "descended"
+        takeaway += (f" On {g['grade'].split(' ', 1)[1]} grades you {verb} at {g['vert_rate_ft_per_hour']:,} ft/h, "
+                     f"{abs(u['rate_vs_usual_pct'])}% {'faster' if u['rate_vs_usual_pct'] > 0 else 'slower'} "
+                     f"than your usual {u['vert_rate_ft_per_hour']:,} ft/h.")
     return {"job": job, "off": off, "cost": cost, "changes": changes, "takeaway": takeaway}
 
 
@@ -1001,7 +1154,7 @@ def run(mode: str, packet: dict, fallback: dict, client: Client | None, model_id
     for attempt in (1, 2):
         try:
             resp, reply = _ask(client, mode, packet, problems, model_id, style)
-        except (anthropic.APIError, json.JSONDecodeError) as e:
+        except (anthropic.APIError, ValueError) as e:  # ValueError: bad JSON, or a request the SDK won't send
             return Result("rules", fallback, model_id, attempt, f"api_error: {type(e).__name__}", rejected, usage)
         usage = _add_usage(usage, _usage(resp))  # a retry is billed too
         if reply is None:

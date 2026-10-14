@@ -60,7 +60,7 @@ export default function WatchCard({ lastSync }: { lastSync: string | null }) {
     const say = (ok: boolean, text: string) => { out.push({ ok, text }); setLines([...out]); };
     const session = new WatchSession(setProgress);
     try {
-      const state = await fetch("/api/import/watch").then((r) => r.json()) as { files: string[]; last_sync: string | null };
+      const state = await fetch("/api/import/watch").then((r) => r.json()) as { files: string[]; last_sync: string | null; taken?: [string, string][] };
       await session.connect();
       say(true, `Connected to ${session.info.model || "your watch"} (software ${session.info.firmware}).`);
       const files = await session.list();
@@ -68,8 +68,9 @@ export default function WatchCard({ lastSync }: { lastSync: string | null }) {
       // earlier. Files already imported are skipped by key, so an interrupted sync resumes.
       const twoWeeks = Date.now() - FIRST_SYNC_DAYS * 86400e3;
       const since = new Date(state.last_sync ? Math.min(twoWeeks, new Date(state.last_sync).getTime() - 2 * 86400e3) : twoWeeks);
-      const todo = pick(files, new Set(state.files), since);
-      if (!todo.length) say(true, `${files.length} files on the watch, nothing new.`);
+      const todo = pick(files, new Set(state.files), since, state.taken ?? []);
+      const already = pick(files, new Set(state.files), since).length - todo.length;
+      if (!todo.length) say(true, `${files.length} files on the watch, nothing new${already ? ` (${already} already in Talus from another source)` : ""}.`);
       let failed = 0;
       for (const [i, f] of todo.entries()) {
         setProgress({ phase: `Downloading ${label(f)}`, done: i, total: todo.length, bytes: 0 });

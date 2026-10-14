@@ -4,10 +4,12 @@ import { useEffect, useState } from "react";
 
 interface Status { account: { email: string } | null; has_accounts: boolean; signup_open: boolean; existing_data: boolean; google: boolean }
 
-// Only same-site paths, so a crafted ?next= can't send someone elsewhere after signing in.
+// Only same-site paths, so a crafted ?next= can't send someone elsewhere after signing in. Browsers
+// read "\\" as "/", so "/\\evil.com" is another site too.
 function nextPath(): string {
   const next = new URLSearchParams(window.location.search).get("next");
-  return next && next.startsWith("/") && !next.startsWith("//") ? next : "/";
+  if (!next || !next.startsWith("/") || next.startsWith("//") || next.includes("\\")) return "/";
+  return new URL(next, window.location.origin).origin === window.location.origin ? next : "/";
 }
 
 export default function LoginForm() {

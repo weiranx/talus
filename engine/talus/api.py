@@ -6,6 +6,7 @@ miles and all vert is feet.
 
 from __future__ import annotations
 
+import functools
 import hashlib
 import io
 import json
@@ -19,7 +20,7 @@ from collections import OrderedDict
 import contextvars
 from contextvars import ContextVar
 from dataclasses import asdict
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, timedelta, timezone
 from http.cookies import SimpleCookie
 from pathlib import Path
 from typing import Literal
@@ -31,6 +32,7 @@ from fastapi.responses import JSONResponse, RedirectResponse, StreamingResponse
 from pydantic import BaseModel, ConfigDict, Field
 
 from . import MODEL_VERSION, admin, cli, coach, explain, google_auth, interview, intervals_auth, ledger, naming, readiness_score, status, wellness, zones
+from . import heatmap, terrain
 from . import plan as planner
 from . import schedule
 from . import settings as app_settings
@@ -40,7 +42,7 @@ from .models import Thresholds
 from .parse import parse
 from .readiness import daily_call, readiness
 from .route import route_numbers
-from .score import MAX_DT_S, score
+from .score import MAX_DT_S, MOVING_MPS, _hiking, score
 from .store import Store
 from .units import ft, mi
 
@@ -409,6 +411,25 @@ def activities(limit: int = 50) -> list[dict]:
     return _activities(store, limit=limit)
 
 
+@app.get("/api/heatmap")
+def heatmap_routes() -> dict:
+    """Every scored activity with its route as an encoded polyline (null without GPS), for the
+    heatmap and its calendar. Lines not worked out yet are read in the background; `pending`
+    counts them, and the page asks again until it is 0."""
+    store = get_store()
+    rows = store.scored_activities()
+    tracks = heatmap.Tracks(store.dir)
+    lines, missing = tracks.lines(rows)
+    tracks.build(missing, lambda row: _streams(store, row))
+    pending = {r["id"] for r in missing}
+    return {"pending": len(pending),
+            "activities": [{**{k: a[k] for k in ("id", "day", "start_time", "name", "sport", "distance_mi", "gain_ft",
+                                                  "loss_ft", "effort_mi", "moving_time_s")},
+                            "kind": heatmap.kind(a["sport"]), "line": lines.get(a["id"]),
+                            "pending": a["id"] in pending}
+                           for a in _activities(store)]}
+
+
 # Recently read activity files. Reading a FIT file takes about a second, and an activity page
 # reads it twice (the page, then the coach's read), so keep the last few parsed.
 _parsed: OrderedDict[tuple, object] = OrderedDict()
@@ -455,7 +476,7 @@ def _detail_key(store: Store, row, th: Thresholds, zm: dict) -> str:
     st = (store.dir / row["raw_path"]).stat()
     return json.dumps({"file": [row["raw_path"], st.st_mtime_ns, st.st_size, row["raw_fmt"], row["sport"]],
                        "th": asdict(th), "zones": [zm["zones"], zm["floors"]], "model": MODEL_VERSION,
-                       "points": MAX_POINTS}, sort_keys=True)
+                       "points": MAX_POINTS, "terrain": terrain.VERSION}, sort_keys=True)
 
 
 def _detail_path(store: Store, row, key: str):
@@ -496,12 +517,68 @@ def _detail_from_disk_or_file(store: Store, row, th: Thresholds, zm: dict, key: 
         path.parent.mkdir(exist_ok=True)
         for old in path.parent.glob(f"activity-{row['id']}-*.json"):  # from older thresholds or zones
             old.unlink(missing_ok=True)
-        tmp = path.with_suffix(f".{threading.get_ident()}.tmp")
-        tmp.write_text(json.dumps(hit))
-        tmp.replace(path)
+        _write_json(path, hit)
+        _save_terrain(store, row, hit["terrain"])
     except (OSError, TypeError):
         pass  # a read-only or full disk only costs the next view a re-read
     return hit
+
+
+def _write_json(path, data) -> None:
+    tmp = path.with_suffix(f".{threading.get_ident()}.tmp")
+    tmp.write_text(json.dumps(data))
+    tmp.replace(path)
+
+
+# Each activity's grade and durability numbers are also kept on their own, keyed on the file only,
+# so comparing an activity with the athlete's earlier ones reads a few small files, and survives a
+# change of thresholds or zones.
+_terrains: dict[str, dict | None] = {}
+_terrains_guard = threading.Lock()
+
+
+def _terrain_path(store: Store, row):
+    st = (store.dir / row["raw_path"]).stat()
+    key = json.dumps([row["raw_path"], st.st_mtime_ns, st.st_size, row["raw_fmt"], row["sport"], terrain.VERSION])
+    return store.dir / "cache" / f"terrain-{row['id']}-{hashlib.sha1(key.encode()).hexdigest()[:16]}.json"
+
+
+def _save_terrain(store: Store, row, data: dict | None) -> None:
+    path = _terrain_path(store, row)
+    if path.exists():
+        return
+    for old in path.parent.glob(f"terrain-{row['id']}-*.json"):
+        old.unlink(missing_ok=True)
+    _write_json(path, {"terrain": data})
+
+
+def _terrain_of(store: Store, row) -> dict | None:
+    """An activity's saved grade and durability numbers, or None until its file has been read
+    (the background read-ahead gets to every activity)."""
+    try:
+        path = str(_terrain_path(store, row))
+    except OSError:
+        return None
+    with _terrains_guard:
+        if path in _terrains:
+            return _terrains[path]
+    try:
+        data = json.loads(open(path).read())["terrain"]
+    except (OSError, ValueError, KeyError):
+        return None
+    with _terrains_guard:
+        _terrains[path] = data
+    return data
+
+
+def _terrain_history(store: Store, row) -> list[dict]:
+    """Grade and durability numbers of the same kind of activity in the 90 days before this one."""
+    start = row["start_time"]
+    since = (date.fromisoformat(start[:10]) - timedelta(days=terrain.HISTORY_DAYS)).isoformat()
+    k = heatmap.kind(row["sport"])
+    return [t for r in store.scored_activities(since)
+            if r["start_time"] < start and r["id"] != row["id"] and heatmap.kind(r["sport"]) == k
+            and (t := _terrain_of(store, r))]
 
 
 def _score_detail(store: Store, row, th: Thresholds, zm: dict) -> dict:
@@ -516,19 +593,28 @@ def _score_detail(store: Store, row, th: Thresholds, zm: dict) -> dict:
     def pick(arr, f=lambda x: x, nd=1):
         return None if arr is None else [round(float(f(v)), nd) for v in arr[idx]]
 
-    dt = np.minimum(np.diff(streams.time, prepend=streams.time[0]), MAX_DT_S)
+    raw_dt = np.diff(streams.time, prepend=streams.time[0])
+    dt = np.minimum(raw_dt, MAX_DT_S)
+    with np.errstate(divide="ignore", invalid="ignore"):
+        speed = np.where(raw_dt > 0, np.diff(streams.distance, prepend=streams.distance[0]) / raw_dt, 0.0)
+    hiking = _hiking(streams, speed)
+    moving = speed > MOVING_MPS
     segments = []
     for n, seg in enumerate(result.segments):
         sl = (streams.time >= seg.start_s) & (streams.time <= seg.end_s)
         z = None if split is None else {f"z{k}": float(np.sum(dt[sl & (split == k)]) / 60) for k in (1, 2, 3)}
         hz = None if zone is None else {f"z{k}": float(np.sum(dt[sl & (zone == k)]) / 60)
                                         for k in range(1, zm["zones"] + 1)}
+        mt = float(np.sum(dt[sl & moving]))
+        vert_m = seg.gain_m if seg.kind == "climb" else seg.loss_m if seg.kind == "descent" else 0.0
+        seg_hr = None if hr is None or mt <= 0 else round(float(np.sum((hr * dt)[sl & moving]) / mt), 1)
         segments.append({"index": n, "kind": seg.kind, "distance_mi": mi(seg.distance_m),
                          "gain_ft": ft(seg.gain_m), "loss_ft": ft(seg.loss_m), "avg_grade": seg.avg_grade,
                          "grade_band": seg.grade_band, "hike_share": seg.hike_share,
                          "time_s": seg.end_s - seg.start_s, "start_s": seg.start_s, "end_s": seg.end_s,
                          "zone_minutes": z, "hr_zone_minutes": hz, "climb_load": seg.climb_load,
-                         "descent_load": seg.descent_load})
+                         "descent_load": seg.descent_load, "avg_hr": seg_hr,
+                         "vert_rate_ft_h": round(ft(vert_m) / mt * 3600) if mt >= 60 and vert_m else None})
     return {
         "sport": streams.sport,
         "distance_mi": result.distance_mi, "gain_ft": result.gain_ft, "loss_ft": result.loss_ft,
@@ -542,6 +628,7 @@ def _score_detail(store: Store, row, th: Thresholds, zm: dict) -> dict:
         "cardio_estimated": result.cardio_estimated, "notes": result.notes,
         "load_values": {name: getattr(result, key) for name, key in ledger.ACTIVITY_KEY.items()},
         "segments": segments,
+        "terrain": terrain.analyze(streams, hiking),
         "streams": {"time_s": pick(streams.time, nd=0), "distance_mi": pick(streams.distance, mi, 3),
                     "altitude_ft": pick(streams.altitude, ft, 0), "heart_rate": pick(hr, nd=0),
                     "zone": None if zone is None else [int(v) for v in zone[idx]],
@@ -633,6 +720,7 @@ def activity(activity_id: int) -> dict:
     zm = zones.model(th, store.settings().get("hr_zones"))
     core = dict(_detail_core(store, row, th, zm))
     load_values = core.pop("load_values")
+    core["terrain"] = terrain.compare(core.get("terrain"), _terrain_history(store, row))
     day = date.fromisoformat(row["start_time"][:10])
     before = {d.ledger: d.fitness for d in store.ledgers(day - timedelta(days=1))
               if d.day == day - timedelta(days=1)}
@@ -650,9 +738,28 @@ def activity(activity_id: int) -> dict:
             "loads": {name: usual(name, load_values[name]) for name in ledger.ACTIVITY_KEY}}
 
 
+MODEL_KEYS = ("brief_model", "analysis_model")
+
+
+def coach_models(accounts: Accounts | None = None) -> dict:
+    """The coach's models: one choice for every account, made on the admin page. Before the admin
+    first picks, the owner's old per-account picks carry over as that choice; with neither,
+    TALUS_COACH_MODEL or the built-in defaults."""
+    accounts = accounts or get_accounts()
+    chosen = accounts.config("coach_models")
+    if chosen is None:
+        owner = accounts.owner()
+        saved = Store(accounts.user_dir(owner.id)).settings() if owner else {}
+        chosen = {k: saved[k] for k in MODEL_KEYS if saved.get(k) in app_settings.MODELS}
+        if chosen:
+            accounts.set_config("coach_models", chosen)
+    return {k: chosen.get(k) if chosen.get(k) in app_settings.MODELS else coach.default_model(k.removesuffix("_model"))
+            for k in MODEL_KEYS}
+
+
 def _coach_settings(store: Store) -> dict:
     saved = store.settings()
-    return {k: saved.get(k, v) for k, v in app_settings.defaults().items()}
+    return {k: saved.get(k, v) for k, v in app_settings.defaults().items()} | coach_models()
 
 
 def _is_owner() -> bool:
@@ -778,7 +885,7 @@ def draft_coach_note(body: NoteDraftIn) -> dict:
     day = date.today()
     packet = coach.note_packet(answers, _activities(store, day - timedelta(weeks=13)), day)
     out = _coach(store, "note", "note", packet, coach.rules_note(packet), False)
-    return {"note": out["reply"]["note"][:coach.NOTE_MAX], "source": out["source"],
+    return {"note": out["reply"]["note"].replace("**", "")[:coach.NOTE_MAX], "source": out["source"],
             "fallback_reason": out["fallback_reason"], "cost": out["cost"]}
 
 
@@ -892,6 +999,13 @@ def _planned_today(store: Store, day: date, aet: float) -> dict | None:
             "miles": it["miles"], "gain_ft": it["gain_ft"], "loss_ft": it["loss_ft"]}
 
 
+# The AI coach's build runs after the engine's draft is saved, so the request answers at once
+# (the proxy in front of the engine drops requests that run past 100 s) and the draft updates in
+# place when the coach is done. Tests run it inline.
+AI_BUILD_INLINE = False
+BUILD_STALE_S = 900  # a build this old was lost (the engine restarted); the engine's draft stands
+
+
 def _build_draft(store: Store, obj: planner.Objective, reason: str) -> dict:
     day = date.today()
     acts = _activities(store)
@@ -902,13 +1016,83 @@ def _build_draft(store: Store, obj: planner.Objective, reason: str) -> dict:
                                  "them yet. Sync your recent activities first.")
     try:
         body = planner.build(obj, acts, history, c, day)
-        body["options"] = planner.options(obj, acts, history, c, day, body)
     except planner.PlanError as e:
         raise HTTPException(422, str(e))
-    body["now"] = _readiness_json(planner.readiness_now(obj, acts, _descent_fitness(history), day))
-    body["changes"] = planner.diff(store.plan("accepted"), body)
-    store.save_draft(obj.id, reason, body)
+    body["builder"] = "engine"
+    ai = reason != "rolling" and _ai_builds(store)
+    if ai:
+        body["building"] = datetime.now().isoformat(timespec="seconds")
+    body = _draft_extras(store, obj, acts, history, c, day, body)
+    body["id"] = store.save_draft(obj.id, reason, body)
+    if ai:
+        engine_plan = {k: v for k, v in body.items() if k not in ("id", "building")}
+        job = functools.partial(_ai_build_job, store.dir, body["id"], obj, acts, history, c, day, engine_plan)
+        if AI_BUILD_INLINE:
+            job()
+        else:
+            ctx = contextvars.copy_context()  # the account, for the coach's settings and spending cap
+            threading.Thread(target=ctx.run, args=(job,), name=f"plan build {body['id']}", daemon=True).start()
     return body
+
+
+def _ai_builds(store: Store) -> bool:
+    """Whether the AI coach builds this account's drafts: on in Settings, the coach on, a key set."""
+    return bool(store.settings().get("ai_plans", True) and _coach_settings(store)["coach_enabled"]
+                and coach_client() is not None)
+
+
+def _draft_extras(store: Store, obj: planner.Objective, acts: list[dict], history: list, c: planner.Constraints,
+                  day: date, body: dict) -> dict:
+    body["options"] = planner.options(obj, acts, history, c, day, body)
+    body["now"] = (_readiness_json(planner.readiness_now(obj, acts, _descent_fitness(history), day))
+                   if planner.is_event(obj) else None)
+    body["changes"] = planner.diff(store.plan("accepted"), body)
+    return body
+
+
+def _ai_build_job(folder, draft_id: int, obj: planner.Objective, acts: list[dict], history: list,
+                  c: planner.Constraints, day: date, engine_plan: dict) -> None:
+    """Replace the saved draft with the coach's version, or mark the engine's as final. A draft
+    accepted, declined or replaced meanwhile is left alone."""
+    store = Store(folder)
+    try:
+        body = _ai_build(store, obj, acts, history, c, day, engine_plan)
+        if body.get("builder") == "coach":
+            body = _draft_extras(store, obj, acts, history, c, day, body)
+    except Exception as e:  # noqa: BLE001 - any failure leaves the engine's draft standing
+        body = engine_plan | {"builder_note": f"error: {type(e).__name__}"}
+    store.replace_draft(draft_id, body)
+
+
+def _building(p: dict) -> bool:
+    started = p.get("building")
+    if not started:
+        return False
+    try:
+        return (datetime.now() - datetime.fromisoformat(started)).total_seconds() < BUILD_STALE_S
+    except (TypeError, ValueError):
+        return False
+
+
+def _ai_build(store: Store, obj: planner.Objective, acts: list[dict], history: list, c: planner.Constraints,
+              day: date, engine_plan: dict) -> dict:
+    """The AI coach builds the weeks from the engine's draft, the athlete's history, note and
+    answers; the engine then holds every week to its rules. The engine's draft stands when the
+    coach is off, over its cap, or its plan doesn't line up."""
+    packet = coach.build_packet(engine_plan, acts, day)
+    _noted(store, packet)
+    if answers := store.settings().get("plan_context"):
+        packet["athlete_answers"] = answers
+    out = _coach(store, "build", f"build-{obj.id}", packet, {"approach": "", "weeks": []}, False)
+    if out["source"] != "coach":
+        return engine_plan | {"builder_note": out["fallback_reason"]}
+    try:
+        plan = planner.build(obj, acts, history, c, day, out["reply"]["weeks"])
+    except (planner.PlanError, KeyError, TypeError, ValueError) as e:
+        return engine_plan | {"builder_note": f"rejected: {e}"}
+    held = sum(1 for w in plan["weeks"] if any(n.startswith("The coach asked for more") for n in w["notes"]))
+    return plan | {"builder": "coach", "approach": out["reply"]["approach"][:800], "build_cost": out["cost"],
+                   "held_weeks": held}
 
 
 def _last_week_review(store: Store, accepted: dict | None, acts: list[dict], day: date) -> dict:
@@ -930,8 +1114,10 @@ def _plan_json(p: dict | None) -> dict | None:
         return None
     return {k: p.get(k) for k in ("id", "status", "reason", "created_at", "decided_at", "built_on", "constraints",
                                   "baseline", "pace", "demand", "peak", "weeks", "projected", "reachable",
-                                  "back_to_back",
-                                  "options", "now", "changes")} | {"reason_text": planner.REPLAN_TEXT.get(p["reason"], p["reason"])}
+                                  "back_to_back", "race_type", "goal", "target",
+                                  "builder", "approach", "build_cost", "held_weeks",
+                                  "options", "now", "changes")} | {"reason_text": planner.REPLAN_TEXT.get(p["reason"], p["reason"]),
+                                                                   "building": _building(p)}
 
 
 def _with_own_runs(store: Store, sessions: list[dict], acts: list[dict]) -> list[dict]:
@@ -944,7 +1130,7 @@ def _with_own_runs(store: Store, sessions: list[dict], acts: list[dict]) -> list
     for s in sessions:
         it = own.get(s["day"])
         out.append(s if it is None else s | {k: it[k] for k in ("kind", "miles", "gain_ft", "loss_ft", "minutes", "title")}
-                   | {"how": it["notes"] or "Your own run.", "detail": it["detail"], "own": True})
+                   | {"how": it["notes"] or "Your own run.", "detail": it["detail"], "steps": [], "own": True})
     return out
 
 
@@ -962,13 +1148,18 @@ def get_plan() -> dict:
            "fitness_only": planner.FITNESS_ONLY, "thresholds": _thresholds(store)}
     if obj is None:
         return out
+    if obj.goal == "rolling" and _roll(store, obj, day):
+        obj, accepted = store.objective(), store.plan("accepted")
     history = _plan_history(store, day)
-    now = planner.readiness_now(obj, acts, _descent_fitness(history), day)
+    readiness = None
+    if planner.is_event(obj):
+        now = planner.readiness_now(obj, acts, _descent_fitness(history), day)
+        readiness = {**_readiness_json(now), "demand": now["demand"], "capacity": now["capacity"], "pace": now["pace"]}
     draft = store.plan("draft")
     return out | {
-        "objective": obj.json() | {"days_to_go": (obj.day - day).days},
-        "readiness": {**_readiness_json(now), "demand": now["demand"], "capacity": now["capacity"],
-                      "pace": now["pace"]},
+        "objective": obj.json() | {"days_to_go": (obj.day - day).days, "event": planner.is_event(obj),
+                                   "goal_text": planner.GOAL_KINDS.get(obj.goal, obj.goal)},
+        "readiness": readiness,
         "accepted": _plan_json(accepted), "draft": _plan_json(draft),
         "sessions": _with_own_runs(store, _sessions(store, accepted, acts, day, th.aet if th else 150), acts),
         "review": _last_week_review(store, accepted, acts, day) if accepted else None,
@@ -980,6 +1171,23 @@ def get_plan() -> dict:
     }
 
 
+def _roll(store: Store, obj: planner.Objective, day: date) -> bool:
+    """An ongoing plan is redrawn from the latest training at the start of each week, and stays
+    accepted: it always looks ROLLING_WEEKS ahead. True when it was redrawn."""
+    accepted = store.plan("accepted")
+    monday = day - timedelta(days=day.weekday())
+    if accepted is None or accepted["built_on"] >= monday.isoformat() or store.plan("draft") is not None:
+        return False
+    obj.day = monday + timedelta(weeks=planner.ROLLING_WEEKS, days=-1)
+    store.update_objective(obj)
+    try:
+        _build_draft(store, obj, "rolling")
+    except HTTPException:
+        return False
+    draft = store.plan("draft")
+    return draft is not None and store.decide_draft(draft["id"], True)
+
+
 def _this_week(store: Store, accepted: dict | None, acts: list[dict], day: date) -> dict:
     """This week's target, done and still scheduled, as the calendar counts them."""
     start = day - timedelta(days=day.weekday())
@@ -989,13 +1197,16 @@ def _this_week(store: Store, accepted: dict | None, acts: list[dict], day: date)
 class ObjectiveIn(BaseModel):
     name: str = Field(min_length=1, max_length=80)
     day: date
-    distance_mi: float = Field(gt=0, le=300)
-    gain_ft: float = Field(ge=0, le=80000)
-    loss_ft: float = Field(ge=0, le=80000)
+    # A race or trip's own numbers; a block's weekly targets; a yearly target's totals.
+    distance_mi: float = Field(ge=0, le=20000)
+    gain_ft: float = Field(ge=0, le=5_000_000)
+    loss_ft: float = Field(ge=0, le=5_000_000)
     longest_climb_ft: float | None = Field(default=None, ge=0, le=30000)
     longest_descent_ft: float | None = Field(default=None, ge=0, le=30000)
     high_point_ft: float | None = Field(default=None, ge=-1500, le=30000)
     source: str = Field(default="manual", pattern="^(manual|gpx)$")
+    # Left out (as iOS does), an edit keeps the current goal and a new objective is a race.
+    goal: str | None = Field(default=None, pattern="^(race|trip|base|maintain|comeback|faster|target|rolling)$")
     new: bool = False  # true replaces the objective; false edits the active one
 
 
@@ -1006,9 +1217,17 @@ def put_objective(body: ObjectiveIn) -> dict:
     if body.day <= date.today():
         raise HTTPException(422, "Pick an objective date after today.")
     store = get_store()
+    current = store.objective()
+    if body.goal is None:
+        body.goal = current.goal if current is not None and not body.new else "race"
+    if body.goal in planner.EVENT_GOALS and not 0 < body.distance_mi <= 300:
+        raise HTTPException(422, "A race or objective is more than 0 and at most 300 mi.")
+    if body.goal != "target" and (body.gain_ft > 80000 or body.loss_ft > 80000 or body.distance_mi > 300):
+        raise HTTPException(422, "That's more than 300 mi or 80,000 ft; only a yearly target goes past that.")
+    if body.goal == "target" and not (body.distance_mi or body.gain_ft):
+        raise HTTPException(422, "A yearly target needs miles, feet of climbing, or both.")
     fields = body.model_dump(exclude={"new"})
     fields["name"] = fields["name"].strip()
-    current = store.objective()
     if current is None or body.new:
         obj = planner.Objective(**fields)
         obj.id = store.save_objective(obj)
@@ -1050,7 +1269,7 @@ class ConstraintsIn(BaseModel):
     long_day: int = Field(ge=0, le=6)
     notes: str = Field(default="", max_length=500)
     back_to_back: bool | None = None  # left out: keep the current setting
-    workout: str | None = Field(default=None, pattern="^(none|track|tempo|hill_repeats|race_pace)$")  # left out: keep
+    workout: str | None = Field(default=None, pattern="^(none|track|tempo|hill_repeats|race_pace|threshold|fartlek|progression)$")  # left out: keep
 
 
 @app.put("/api/plan/constraints")
@@ -1126,9 +1345,34 @@ def _talk_state(store: Store, mode: str | None = None) -> dict:
     return st
 
 
+def _talk_caught_up(store: Store, st: dict) -> bool:
+    """Once the coach's build of the draft finishes, say so in the conversation. True when the
+    conversation changed and needs saving."""
+    draft_id = st.get("building")
+    if not draft_id:
+        return False
+    draft = store.plan("draft")
+    if draft is not None and draft["id"] == draft_id and _building(draft):
+        return False
+    st.pop("building")
+    if draft is not None and draft["id"] == draft_id and st.get("step") == "draft":
+        st["messages"] = (st["messages"] + [interview.coach(interview.built_text(draft), "draft",
+                                                            actions=_draft_actions(store))
+                                            | ({"cost": draft["build_cost"]} if draft.get("build_cost") else {})])[-TALK_KEEP:]
+    return True
+
+
+def _draft_actions(store: Store) -> list[dict]:
+    actions = [{"id": "accept", "label": "Accept plan"}]
+    if store.plan("accepted") is not None:
+        actions.append({"id": "keep", "label": "Keep my current plan"})
+    return actions
+
+
 def _talk_json(store: Store, st: dict) -> dict:
     cfg = _coach_settings(store)
     return {"messages": st["messages"], "step": st["step"], "mode": st.get("mode", "setup"),
+            "building": bool(st.get("building")),
             "reads_with_ai": bool(cfg["coach_enabled"] and os.environ.get("ANTHROPIC_API_KEY"))}
 
 
@@ -1187,15 +1431,27 @@ def _talk_objective(store: Store, st: dict, body: TalkIn, day: date) -> list[dic
         o.pop("keep", None)
         if body.route.get("name") and not o.get("name"):
             o["name"] = str(body.route["name"])[:80]
-    if body.text and interview.general(body.text) and not interview.rules_objective(body.text, day).get("distance_mi"):
-        # No race in mind: offer a fitness block that ends in a long mountain day.
-        st["objective"] = interview.fitness_block(_activities(store, day - timedelta(days=56)), day)
-        o = st["objective"]
-        return [interview.coach(
-            f"No race needed. I'll set up a {interview.BLOCK_WEEKS}-week block that builds your weekly miles and vert "
-            f"toward a long mountain day of {o['distance_mi']:.1f} mi with {round(o['gain_ft']):,} ft up, a little past "
-            "your biggest day of the last 8 weeks, then you can start the next block. Use this, or tell me a race or a "
-            "day you have in mind.", "objective", [{"key": "confirm", "options": ["Use this"], "value": None}])]
+    if o.get("looked_up") == "block" and o.get("confirmed") and not body.text:
+        # A goal with no race day, confirmed: on to the training days (no "goal for the day" to ask).
+        st["objective"] = o
+        st["step"] = "days"
+        return [interview.coach(f"Set: {interview.block_line(o)}."), interview.ask("days", st["defaults"])]
+    chip = interview.GOAL_CHIPS.get(str((body.answers or {}).get("goal_kind") or ""))
+    kind = chip or (interview.goal_kind(body.text) if body.text else None)
+    if kind and kind != "target" and body.text and interview.rules_objective(body.text, day).get("distance_mi"):
+        kind = None  # a race with its numbers, like "get faster for the Baldy 50k on Jan 2, 31 mi"
+    if not kind and o.get("goal") == "target" and body.text and interview.year_totals(body.text):
+        kind = "target"
+    if kind:
+        totals = interview.year_totals(body.text or "") if kind == "target" else None
+        if kind == "target" and not totals:
+            st["objective"] = {"goal": "target"}
+            return [interview.coach("How much this year? Like \"1,000,000 ft\" or \"2,000 mi\", or both.", "objective")]
+        # The whole year for a yearly target's "done so far", and four months for the baseline.
+        acts = _activities(store, min(day - timedelta(days=120), date(day.year, 1, 1)))
+        st["objective"] = interview.block_objective(kind, acts, day, totals)
+        return [interview.coach(interview.block_text(st["objective"], acts, day), "objective",
+                                [{"key": "confirm", "options": ["Use this"], "value": None}])]
     if body.text:
         got = interview.rules_objective(body.text, day)
         if interview.missing(o | got):
@@ -1242,6 +1498,9 @@ def _talk_objective(store: Store, st: dict, body: TalkIn, day: date) -> list[dic
                         [f"I still need {interview._join_words([interview.MISSING_TEXT[k] for k in need])}."])
         return [interview.coach(text, "objective", st["messages"][-1].get("groups") if not body.text else []) | (meta or {})]
     o.setdefault("loss_ft", o["gain_ft"])
+    if not planner.is_event(o):  # kept a goal with no race day
+        st["step"] = "days"
+        return [interview.coach(f"Set: {interview.block_line(o)}."), interview.ask("days", st["defaults"])]
     st["step"] = "goal"
     return [interview.coach(f"Training for {interview.objective_line(o)}.") | (meta or {}),
             interview.ask("goal")]
@@ -1258,9 +1517,10 @@ def _talk_finish(store: Store, st: dict, day: date) -> list[dict]:
     c.adjust = interview.lighter_start(day) if a.get("feel") == "Tired lately" else []
     store.save_settings({"plan_constraints": asdict(c), "plan_context": interview.context(a)})
     current = store.objective()
+    goal = o.get("goal") or ("trip" if interview.TRIP.search(o.get("name") or "") else "race")
     fields = {k: o.get(k) for k in ("name", "distance_mi", "gain_ft", "loss_ft", "longest_climb_ft",
                                     "longest_descent_ft", "high_point_ft")} | {
-        "day": date.fromisoformat(o["day"]), "source": o.get("source", "manual")}
+        "day": date.fromisoformat(o["day"]), "source": o.get("source", "manual"), "goal": goal}
     if o.get("keep") and current is not None:
         obj, reason = current, "constraints"
     else:
@@ -1276,7 +1536,11 @@ def _talk_finish(store: Store, st: dict, day: date) -> list[dict]:
     actions = [{"id": "accept", "label": "Accept plan"}]
     if store.plan("accepted") is not None:
         actions.append({"id": "keep", "label": "Keep my current plan"})
-    return [interview.coach(interview.draft_summary(plan, obj.name, c.long_day, a), "draft", actions=actions)]
+    text = interview.draft_summary(plan, obj.name, c.long_day, a)
+    if plan.get("building"):
+        st["building"] = plan["id"]
+        text += "\n" + interview.BUILDING_TEXT
+    return [interview.coach(text, "draft", actions=actions)]
 
 
 def _talk_change(store: Store, st: dict, text: str, day: date) -> list[dict]:
@@ -1288,16 +1552,19 @@ def _talk_change(store: Store, st: dict, text: str, day: date) -> list[dict]:
     if interview.is_question(text) and not interview.rules_edits(text):
         return [_talk_question(store, text, day, obj, before)]
     c = _constraints(store)
+    # Week 1 is this week, even in a plan accepted weeks ago.
+    ahead = [w for w in before["weeks"] if w["start"] >= (day - timedelta(days=day.weekday())).isoformat()]
     packet = {"today": day.isoformat(), "text": text, "training_days": c.days, "long_day": c.long_day,
-              "weeks_in_plan": len(before["weeks"])}
+              "weeks_in_plan": len(ahead)}
     read, meta = _talk_read(store, "edit", text, packet, {"edits": interview.rules_edits(text)})
     edits = read["edits"] if meta is None else interview.from_edits(read["edits"])
-    if not edits and interview.is_question(text):
+    # The rules can't tell "What pace should my tempo runs be?" from a change; only the coach can.
+    if interview.is_question(text) and (not edits or meta is None):
         return [_talk_question(store, text, day, obj, before)]
     if not edits:
         asked = read.get("cannot") if meta is not None and isinstance(read.get("cannot"), str) else None
         return [interview.coach(interview.cant_text(asked), "draft") | (meta or {})]
-    new_c, done, skipped = interview.apply_edits(edits, asdict(c), before["weeks"])
+    new_c, done, skipped = interview.apply_edits(edits, asdict(c), ahead)
     if not done:
         return [interview.coach(interview.change_text(done, skipped, []) + "\n" + interview.EDIT_HELP, "draft") | (meta or {})]
     store.save_settings({"plan_constraints": asdict(planner.Constraints.from_json(new_c))})
@@ -1309,8 +1576,11 @@ def _talk_change(store: Store, st: dict, text: str, day: date) -> list[dict]:
     actions = [{"id": "accept", "label": "Accept plan"}]
     if store.plan("accepted") is not None:
         actions.append({"id": "keep", "label": "Keep my current plan"})
-    return [interview.coach(interview.change_text(done, skipped, planner.diff(before, plan)), "draft", actions=actions)
-            | (meta or {})]
+    text = interview.change_text(done, skipped, planner.diff(before, plan))
+    if plan.get("building"):
+        st["building"] = plan["id"]
+        text += "\n" + interview.BUILDING_TEXT
+    return [interview.coach(text, "draft", actions=actions) | (meta or {})]
 
 
 def _talk_question(store: Store, text: str, day: date, obj: planner.Objective, plan: dict) -> dict:
@@ -1325,7 +1595,8 @@ def _talk_question(store: Store, text: str, day: date, obj: planner.Objective, p
     except HTTPException:
         t = None
     acts = _activities(store)
-    now = _readiness_json(planner.readiness_now(obj, acts, _descent_fitness(_plan_history(store, day)), day))
+    now = (_readiness_json(planner.readiness_now(obj, acts, _descent_fitness(_plan_history(store, day)), day))
+           if planner.is_event(obj) else None)
     packet = coach.chat_packet(text, [], t, plan, now, [], [a for a in acts if a["day"] >= (day - timedelta(days=13)).isoformat()],
                                day, acts)
     _noted(store, packet)
@@ -1339,7 +1610,10 @@ def get_talk(mode: str | None = None) -> dict:
     if mode not in (None, "setup", "change"):
         raise HTTPException(422, "Mode is setup or change.")
     store = get_store()
-    return _talk_json(store, _talk_state(store, mode))
+    st = _talk_state(store, mode)
+    if _talk_caught_up(store, st):
+        store.save_settings({TALK_KEY: st})
+    return _talk_json(store, st)
 
 
 @app.post("/api/plan/talk/restart")
@@ -1356,6 +1630,7 @@ def post_talk(body: TalkIn) -> dict:
     store = get_store()
     day = date.today()
     st = _talk_state(store)
+    _talk_caught_up(store, st)
     step = st["step"]
     text = (body.text or "").strip()
     body.text = text or None
@@ -1379,6 +1654,7 @@ def post_talk(body: TalkIn) -> dict:
             reply = [interview.coach("Done. Your plan is on the calendar, and you can change it here any time."
                                      if body.action == "accept" else "Kept your current plan.")]
         st["step"] = "done"
+        st.pop("building", None)  # decided mid-build: nothing left to wait for
     elif body.action == "retry" or step == "stuck":
         reply = _talk_finish(store, st, day)
     elif step == "objective":
@@ -1550,7 +1826,7 @@ def post_chat(body: ChatIn) -> dict:
     obj = store.objective()
     acts = _activities(store)
     now = None
-    if obj is not None:
+    if obj is not None and planner.is_event(obj):
         now = _readiness_json(planner.readiness_now(obj, acts, _descent_fitness(_plan_history(store, day)), day))
     plan_ctx = accepted if accepted is not None and obj is not None else None
     sessions = _with_own_runs(store, _sessions(store, plan_ctx, acts, day, t["thresholds"]["aet"] if t else 150), acts)
@@ -1690,6 +1966,9 @@ def confirm_action(action_id: int, background: BackgroundTasks) -> dict:
         return {"id": action_id, "status": a["status"], "result": a["result"]}
     p = a["payload"]
     try:
+        # A card confirmed days later can't put a run on a day that has passed.
+        if a["kind"] in ("schedule_run", "move_run") and date.fromisoformat(p["day"]) < date.today():
+            raise ValueError(f"{_day_text(date.fromisoformat(p['day']))} has passed. Ask the coach again.")
         if a["kind"] == "schedule_run":
             store.save_planned_run(schedule.PlannedRun(date.fromisoformat(p["day"]), p["kind"], p["miles"],
                                                        p["gain_ft"], p["gain_ft"], p["minutes"]))
@@ -1706,7 +1985,7 @@ def confirm_action(action_id: int, background: BackgroundTasks) -> dict:
                 store.save_planned_run(r)
                 result = f"Moved to {_day_text(r.day)}."
         elif a["kind"] == "set_note":
-            store.save_settings({"coach_note": p["note"]})
+            store.save_settings({"coach_note": p["note"].replace("**", "")})
             result = "Training goals updated."
         elif a["kind"] == "sync":
             out = sync_now(SyncIn(), background)
@@ -1833,6 +2112,7 @@ def get_settings() -> dict:
             "brief_model": cfg["brief_model"],
             "analysis_model": cfg["analysis_model"],
             "style": cfg["coach_style"],
+            "ai_plans": saved.get("ai_plans", True),
             "styles": [{"key": k, "label": v["label"], "description": v["description"]}
                        for k, v in coach.STYLES.items()],
             "models": [{"id": k, "label": v["label"], "input": v["input"], "output": v["output"]}
@@ -1840,7 +2120,7 @@ def get_settings() -> dict:
             # Per model, so the screen can show what a switch would cost. Brief: about two a day,
             # after the sync and after the check-in. Analysis: one per activity, at the last 30 days' rate.
             "estimate": {mode: {m: _usage_estimate(store, mode, m, calls) for m in app_settings.MODELS}
-                         for mode, calls in (("brief", 60), ("analysis", analyses))},
+                         for mode, calls in (("brief", 60), ("analysis", analyses), ("build", 4))},
             "cap": _coach_cap(store),
         },
         "readiness": dict(zip(("sleep_need_h", "sleep_need_source"), wellness.sleep_need(saved))),
@@ -1915,23 +2195,23 @@ def put_thresholds(body: ThresholdsIn) -> dict:
 
 class CoachIn(BaseModel):
     enabled: bool
-    brief_model: str
-    analysis_model: str
+    # Models are set for everyone on the admin page; older apps still send these, and they're ignored.
+    brief_model: str | None = None
+    analysis_model: str | None = None
     monthly_cap_usd: float | None = Field(default=None, ge=0, le=1000)
     style: str | None = None  # left out keeps the saved style
+    ai_plans: bool | None = None  # the AI coach builds plan drafts; left out keeps the setting
 
 
 @app.put("/api/settings/coach")
 def put_coach(body: CoachIn) -> dict:
-    for m in (body.brief_model, body.analysis_model):
-        if m not in app_settings.MODELS:
-            raise HTTPException(422, f"Unknown model {m}")
     if body.style is not None and body.style not in coach.STYLES:
         raise HTTPException(422, f"Unknown style {body.style}")
-    values = {"coach_enabled": body.enabled, "brief_model": body.brief_model,
-              "analysis_model": body.analysis_model}
+    values = {"coach_enabled": body.enabled}
     if body.style is not None:
         values["coach_style"] = body.style
+    if body.ai_plans is not None:
+        values["ai_plans"] = body.ai_plans
     if "monthly_cap_usd" in body.model_fields_set:
         values["coach_monthly_cap_usd"] = body.monthly_cap_usd
     get_store().save_settings(values)
@@ -1996,6 +2276,7 @@ def _sources(saved: dict) -> dict:
     their own last sync; uploads share the last import."""
     accounts, account = get_accounts(), _account.get()
     garmin = accounts.credential(account.id, "garmin") if account else None
+    coros = accounts.credential(account.id, "coros") if account else None
     return {
         "intervals": {"connected": _intervals_credential() is not None,
                       "last_sync": saved.get("last_sync_intervals")
@@ -2004,6 +2285,9 @@ def _sources(saved: dict) -> dict:
                    "updated_at": garmin and garmin["updated_at"],
                    "mfa_pending": bool(account) and _garmin().mfa_pending(account.id),
                    "last_sync": saved.get("last_sync_garmin")},
+        "coros": {"available": _is_owner(), "connected": coros is not None,
+                  "updated_at": coros and coros["updated_at"], "region": coros and coros.get("region"),
+                  "last_sync": saved.get("last_sync_coros")},
         "upload": {"last_import": saved.get("last_import"), "max_mb": MAX_UPLOAD_MB},
         "healthkit": {"last_sync": saved.get("last_sync_healthkit")},
         "watch": {"last_sync": saved.get("last_sync_watch")},
@@ -2015,9 +2299,28 @@ def _garmin():
     return garmin
 
 
+OWNER_SOURCES = {"garmin": "Garmin Connect", "coros": "COROS"}
+
+
+def _owner_source(source: str):
+    """The saved sign-in for an unofficial source, and how to save refreshed tokens. Those
+    sources are tied to one person's login, so they never reach another account."""
+    account = current_account()
+    if not account.is_owner:
+        raise HTTPException(403, f"{OWNER_SOURCES[source]} is for the owner account only.")
+    cred = get_accounts().credential(account.id, source)
+    if cred is None:
+        raise HTTPException(409, f"Connect {OWNER_SOURCES[source]} under Data sources first.")
+
+    def save(values: dict) -> None:
+        kept = {k: v for k, v in cred.items() if k not in ("kind", "updated_at")}
+        get_accounts().set_credential(account.id, source, "tokens", kept | values)
+    return cred, save
+
+
 class SyncIn(BaseModel):
     days: int = Field(default=30, ge=1, le=730)
-    source: str = Field(default="intervals", pattern="^(intervals|garmin)$")
+    source: str = Field(default="intervals", pattern="^(intervals|garmin|coros)$")
 
 
 @app.post("/api/sync")
@@ -2029,15 +2332,7 @@ def sync_now(body: SyncIn, background: BackgroundTasks) -> dict:
         if cred is None:
             raise HTTPException(409, "Connect intervals.icu under Data sources first.")
     else:
-        account = current_account()
-        if not account.is_owner:
-            raise HTTPException(403, "Garmin Connect is for the owner account only.")
-        cred = get_accounts().credential(account.id, "garmin")
-        if cred is None:
-            raise HTTPException(409, "Connect Garmin under Data sources first.")
-
-        def save(values: dict) -> None:
-            get_accounts().set_credential(account.id, "garmin", "tokens", values)
+        cred, save = _owner_source(body.source)
     lines: list[str] = []
     since = date.today() - timedelta(days=body.days)
     # The owner's personal Strava fallback (if enabled) follows, after the response; it paces
@@ -2109,10 +2404,11 @@ def _onboarding(store: Store) -> dict:
     done, skipped = set(ob.get("done") or []), set(ob.get("skipped") or [])
     accounts, account = get_accounts(), _account.get()
     garmin = bool(account) and accounts.credential(account.id, "garmin") is not None
+    coros = bool(account) and accounts.credential(account.id, "coros") is not None
     intervals = _intervals_credential() is not None
     imp = _import_status(store)
     state = {
-        "connect": intervals or garmin or activities > 0,
+        "connect": intervals or garmin or coros or activities > 0,
         "import": activities > 0 or bool(imp and imp.get("state") == "done" and not imp.get("error")),
         "thresholds": th is not None,
         "sleep": wellness.sleep_need(saved)[1] == "saved",
@@ -2128,7 +2424,8 @@ def _onboarding(store: Store) -> dict:
         "established": bool(ob.get("established")),
         "steps": steps, "next": nxt,
         "import": imp, "activities": activities,
-        "sources": {"intervals": intervals, "garmin": garmin, "garmin_available": _is_owner()},
+        "sources": {"intervals": intervals, "garmin": garmin, "garmin_available": _is_owner(),
+                    "coros": coros, "coros_available": _is_owner()},
         "resting_hint": _resting_hint(store),
         "coach": {"enabled": _coach_settings(store)["coach_enabled"], "style": _coach_settings(store)["coach_style"],
                   "key_set": bool(os.environ.get("ANTHROPIC_API_KEY")),
@@ -2190,7 +2487,7 @@ def put_onboarding(body: OnboardingIn) -> dict:
 
 
 class ImportIn(BaseModel):
-    source: str = Field(default="intervals", pattern="^(intervals|garmin)$")
+    source: str = Field(default="intervals", pattern="^(intervals|garmin|coros)$")
     range: str = Field(default="6m", pattern="^(6w|6m|all)$")
 
 
@@ -2206,14 +2503,7 @@ def start_import(body: ImportIn) -> dict:
         if cred is None:
             raise HTTPException(409, "Connect intervals.icu first.")
     else:
-        if not account.is_owner:
-            raise HTTPException(403, "Garmin Connect is for the owner account only.")
-        cred = get_accounts().credential(account.id, "garmin")
-        if cred is None:
-            raise HTTPException(409, "Connect Garmin first.")
-
-        def save(values: dict) -> None:
-            get_accounts().set_credential(account.id, "garmin", "tokens", values)
+        cred, save = _owner_source(body.source)
     key, folder, days = str(store.dir), store.dir, IMPORT_DAYS[body.range]
     status = {"state": "running", "source": body.source, "range": body.range, "days": days,
               "started": datetime.now().isoformat(timespec="seconds"), "done": 0, "total": None,
@@ -2296,8 +2586,37 @@ def disconnect_garmin() -> dict:
     return {"ok": True}
 
 
+class CorosIn(BaseModel):
+    email: str = Field(min_length=3, max_length=200)
+    password: str = Field(min_length=1, max_length=200)
+    region: Literal["en", "eu", "cn"] = "en"
+
+
+@app.post("/api/sources/coros")
+def connect_coros(body: CorosIn) -> dict:
+    """Sign in to COROS once. The password is used for this sign-in and dropped; only the access
+    token is kept, encrypted. Signing in to Training Hub on the web ends it, and this asks again."""
+    account = current_account()
+    if not account.is_owner:
+        raise HTTPException(403, "COROS is for the owner account only.")
+    from .sources import coros
+    try:
+        cred = coros.login(body.email.strip(), body.password, body.region)
+    except coros.CorosError as e:
+        raise HTTPException(400, str(e))
+    get_accounts().set_credential(account.id, "coros", "tokens", cred)
+    return {"status": "connected"}
+
+
+@app.delete("/api/sources/coros")
+def disconnect_coros() -> dict:
+    """Forget the COROS token. Activities already synced stay."""
+    get_accounts().clear_credential(current_account().id, "coros")
+    return {"ok": True}
+
+
 class HealthKitWorkout(BaseModel):
-    uuid: str = Field(min_length=1, max_length=64)
+    uuid: str = Field(min_length=1, max_length=64, pattern="^[A-Za-z0-9-]+$")  # it names the raw file
     sport: str = Field(pattern="^(run|trail_run|hike|walk|ride|other)$")
     name: str | None = Field(default=None, max_length=200)
     start: str = Field(min_length=10, max_length=40)  # ISO 8601 with offset
@@ -2400,9 +2719,34 @@ def remember_watch_file(store: Store, key: str) -> None:
 @app.get("/api/import/watch")
 def watch_files() -> dict:
     """Files already pulled off the watch, so the apps download only what is new."""
-    saved = get_store().settings()
+    store = get_store()
+    saved = store.settings()
     return {"files": saved.get("watch_files", []), "last_sync": saved.get("last_sync_watch"),
-            "last_attempt": saved.get("watch_sync")}
+            "last_attempt": saved.get("watch_sync"), "taken": taken_spans(store)}
+
+
+WATCH_TAKEN_DAYS = 60
+UNSCORED_SPAN_S = 1800
+
+
+def taken_spans(store: Store) -> list[list[str]]:
+    """When each recent activity ran, from a synced source, as [start, end] in UTC. Files (the
+    watch's own included) are left out: the watch's files are skipped by key, and a span around
+    one would hide the next activity off the watch, like a cooldown right after a race. The apps skip a
+    watch activity that falls inside one, so a run intervals.icu or Apple Health already brought in
+    isn't downloaded off the watch only to be dropped as a duplicate. Starts are stored as local
+    wall-clock time and read in the engine's zone, like every file without one."""
+    since = (date.today() - timedelta(days=WATCH_TAKEN_DAYS)).isoformat()
+    rows = store.db.execute(
+        """SELECT a.start_time, s.summary FROM activity a LEFT JOIN activity_score s ON s.activity_id = a.id
+           WHERE a.start_time >= ? AND a.source != 'file'""", (since,)).fetchall()
+    out = []
+    for r in rows:
+        start = datetime.fromisoformat(r["start_time"])
+        start = (start if start.tzinfo else start.astimezone()).astimezone(timezone.utc)
+        elapsed = (json.loads(r["summary"]).get("elapsed_time_s") if r["summary"] else None) or UNSCORED_SPAN_S
+        out.append([start.isoformat(timespec="seconds"), (start + timedelta(seconds=elapsed)).isoformat(timespec="seconds")])
+    return sorted(out)
 
 
 class WatchSyncIn(BaseModel):
@@ -2441,6 +2785,8 @@ def _ai_name(store: Store, row, refresh: bool = False) -> dict:
     name = naming.clean(str(out["reply"].get("name") or "")) or naming.rules_name(packet)["name"]
     if name and (out["source"] == "coach" or place["peak"] or place["area"]):
         store.set_activity_name(row["id"], ai_name=name)
+    elif start is None and (store.activity_names().get(row["id"]) or {}).get("ai_name") is None:
+        store.set_activity_name(row["id"], ai_name="")  # no route to name it by: the backfill stops asking
     return {"name": name, "source": out["source"], "fallback_reason": out["fallback_reason"], "cost": out["cost"]}
 
 
@@ -2478,7 +2824,7 @@ _naming_guard = threading.Lock()
 def _unnamed(store: Store) -> list:
     names = store.activity_names()
     return [r for r in store.scored_activities() if naming.is_generic(r["name"])
-            and not (names.get(r["id"]) or {}).get("ai_name")]
+            and (names.get(r["id"]) or {}).get("ai_name") is None]  # "" is tried and left with its name
 
 
 @app.get("/api/names/backfill")
@@ -2495,6 +2841,8 @@ def names_backfill_status() -> dict:
 def names_backfill() -> dict:
     """Name every past activity that has a generic name, in the background, oldest first."""
     store = get_store()
+    if not _names_on(store):
+        raise HTTPException(409, "AI names are off. Turn them on in Settings first.")
     key = str(store.dir)
     rows = sorted(_unnamed(store), key=lambda r: r["start_time"])
     with _naming_guard:
@@ -2508,8 +2856,8 @@ def names_backfill() -> dict:
             for r in rows:
                 try:
                     _ai_name(own, r)
-                except Exception:  # an unreadable file keeps its name
-                    pass
+                except Exception:  # an unreadable file keeps its name, and isn't asked about again
+                    own.set_activity_name(r["id"], ai_name="")
                 with _naming_guard:
                     _naming[key]["named"] += 1
         finally:
@@ -2945,6 +3293,8 @@ def _target(accounts: Accounts, admin_account: Account, account_id: int) -> Acco
         raise HTTPException(404, "No such account.")
     if target.id == admin_account.id:
         raise HTTPException(409, "That's your own account. Change it from Settings.")
+    if target.is_owner:
+        raise HTTPException(409, "That's the owner's account.")
     return target
 
 
@@ -2960,7 +3310,8 @@ def admin_overview() -> dict:
             "signup": {"open": _signup_open(accounts), "chosen": accounts.config("signup_open"),
                        "env": os.environ.get("TALUS_SIGNUP", "open").lower() != "closed"},
             "features": {k: bool(accounts.config(k)) for k in FEATURES},
-            "system": admin.system(accounts), "log": log}
+            "coach_models": _admin_models(accounts),
+            "system": _system(accounts), "log": log}
 
 
 # Feature flags the admin turns on for everyone. All off by default.
@@ -2979,6 +3330,44 @@ def admin_feature(name: str, body: FeatureIn) -> dict:
     accounts.set_config(name, body.on)
     accounts.log_admin(me.id, "feature_on" if body.on else "feature_off", None, {"feature": name})
     return {name: body.on}
+
+
+def _system(accounts: Accounts) -> dict:
+    out = admin.system(accounts)
+    out["coach"] |= coach_models(accounts)
+    return out
+
+
+def _admin_models(accounts: Accounts) -> dict:
+    store = get_store()
+    month_ago = (date.today() - timedelta(days=30)).isoformat()
+    analyses = sum(1 for r in store.activities() if (r["start_time"] or "")[:10] >= month_ago)
+    return coach_models(accounts) | {
+        "chosen": accounts.config("coach_models") is not None,
+        "env": os.environ.get("TALUS_COACH_MODEL") or None,
+        "models": [{"id": k, "label": v["label"], "input": v["input"], "output": v["output"]}
+                   for k, v in app_settings.MODELS.items()],
+        # What each model would cost on the admin's own account, the same estimate Settings used to show.
+        "estimate": {mode: {m: _usage_estimate(store, mode, m, calls) for m in app_settings.MODELS}
+                     for mode, calls in (("brief", 60), ("analysis", analyses))},
+    }
+
+
+class ModelsIn(BaseModel):
+    brief_model: str
+    analysis_model: str
+
+
+@app.put("/api/admin/coach-models")
+def admin_coach_models(body: ModelsIn) -> dict:
+    accounts, me = _admin()
+    values = body.model_dump()
+    for m in values.values():
+        if m not in app_settings.MODELS:
+            raise HTTPException(422, f"Unknown model {m}")
+    accounts.set_config("coach_models", values)
+    accounts.log_admin(me.id, "coach_models", None, values)
+    return coach_models(accounts)
 
 
 class SignupIn(BaseModel):

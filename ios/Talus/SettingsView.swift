@@ -465,7 +465,7 @@ private struct UploadCard: View {
             if lines.isEmpty, let last = upload.lastImport {
                 Text("Last: \(SettingsText.importLine(last))").font(.caption).foregroundStyle(.secondary)
             }
-            Text("Activities you already have from another source are kept once. Not connected: Strava, whose API terms bar apps with AI coaching, and COROS, which opens its API only to approved partners. Export files from either and upload them here.")
+            Text("Activities you already have from another source are kept once. Strava isn't connected because its API terms bar apps with AI coaching: export your files and upload them here. On COROS, connect COROS in intervals.icu and Talus picks your runs up through intervals.icu.")
                 .font(.caption).foregroundStyle(.secondary)
         }
     }

@@ -12,7 +12,8 @@ from __future__ import annotations
 import re
 from datetime import date, timedelta
 
-from .plan import DAY_NAMES, WORKOUTS
+from . import plan as planner
+from .plan import DAY_NAMES, GOAL_KINDS, WORKOUTS
 
 DAY_SHORT = ("Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun")
 KM_PER_MI = 1.609344
@@ -26,10 +27,15 @@ WEEKDAY_MIN = {"45 min": 45, "1 h": 60, "1 h 30": 90, "2 h": 120}
 WEEKEND_MIN = {"2 h": 120, "3 h": 180, "4 h": 240, "6 h": 360, "8 h": 480}
 LESS, MORE = 0.85, 1.10  # "less" or "more" for a single week; the engine still checks the limits
 
+# Goals with no race day, as chips on the first question.
+GOAL_CHIPS = {"Build base": "base", "Maintain fitness": "maintain", "Come back from a break": "comeback",
+              "Get faster": "faster", "Yearly target": "target", "Ongoing plan": "rolling"}
+
 QUESTIONS = {
-    "objective": {"text": "What are you training for? Tell me the name, the date, the distance and the vert, "
-                          "like \"Baldy 50k on Jan 2, 31 mi, 8,000 ft\". Or upload the route's GPX.",
-                  "groups": []},
+    "objective": {"text": "What are you training for? For a race or a mountain objective, tell me the name, the date, "
+                          "the distance and the vert, like \"Baldy 50k on Jan 2, 31 mi, 8,000 ft\", or upload the "
+                          "route's GPX. No race day? Pick a goal below.",
+                  "groups": [{"key": "goal_kind", "options": list(GOAL_CHIPS), "label": "No race day"}]},
     "goal": {"text": "What's the goal for the day?", "groups": [{"key": "goal", "options": list(GOALS)}]},
     "days": {"text": "Which days can you train, and which one is your long day?",
              "groups": [{"key": "days", "options": list(DAY_SHORT), "multi": True},
@@ -58,9 +64,10 @@ def start(c: dict, current: dict | None = None) -> dict:
     set can be kept with a tap."""
     first = ask("objective")
     if current:
-        first = coach(f"You're set up for {objective_line(current)}. Keep it, or tell me what else you're "
-                      "training for. You can also upload the route's GPX.", "objective",
-                      [{"key": "keep", "options": ["Keep it"], "value": None}])
+        line = objective_line(current) if planner.is_event(current) else block_line(current)
+        first = coach(f"You're set up for {line}. Keep it, or tell me what else you're training for. You can "
+                      "also upload the route's GPX, or pick a goal with no race day.", "objective",
+                      [{"key": "keep", "options": ["Keep it"], "value": None}, QUESTIONS["objective"]["groups"][0]])
     return {"messages": [coach("Let's build your plan. Six quick questions, and I'll draft it from your "
                                "last four weeks of training."), first],
             "step": "objective", "mode": "setup", "answers": {}, "objective": {}, "defaults": days_defaults(c)}
@@ -326,21 +333,126 @@ def general(text: str) -> bool:
     return bool(GENERAL.search(text))
 
 
-def fitness_block(acts: list[dict], today: date) -> dict:
-    """With no race in mind, a 12-week block that ends in a long mountain day a little past the
-    biggest of the last 8 weeks, so the plan builds miles and vert toward something."""
-    first = (today - timedelta(days=55)).isoformat()
-    days: dict[str, list[float]] = {}
-    for a in acts:
-        if a["day"] >= first and a["day"] <= today.isoformat():
-            d = days.setdefault(a["day"], [0.0, 0.0])
-            d[0] += a["distance_mi"]
-            d[1] += a["gain_ft"]
-    miles = max((v[0] for v in days.values()), default=0.0)
-    gain = max((v[1] for v in days.values()), default=0.0)
-    miles, gain = round(max(10.0, miles * 1.2), 1), round(max(2500.0, gain * 1.2), -2)
-    return {"name": "Mountain fitness block", "day": (today + timedelta(weeks=BLOCK_WEEKS)).isoformat(),
-            "distance_mi": miles, "gain_ft": gain, "loss_ft": gain, "looked_up": "block"}
+GOAL_WORDS = (
+    ("comeback", re.compile(r"\bcom(?:e|ing) ?back\b|\breturn(?:ing)? (?:to|from)\b|\bafter (?:an? |my )?(?:injury|break|"
+                            r"time off|layoff|illness|surgery)\b|\bgetting back\b|\bback (?:into|to) (?:running|training)\b|"
+                            r"\b(?:been|was) (?:injured|off|sick)\b", re.I)),
+    ("rolling", re.compile(r"\bongoing\b|\bno end\b|\brolling\b|\bweek (?:to|by) week\b|\bopen[- ]ended\b|"
+                           r"\bindefinite|\bforever\b|\bno (?:end )?date\b", re.I)),
+    ("maintain", re.compile(r"\bmaintain|\bstay (?:fit|in shape)\b|\bkeep (?:my )?(?:fitness|shape)\b|\bhold (?:my )?fitness\b|"
+                            r"\boff[- ]?season\b", re.I)),
+    ("faster", re.compile(r"\b(?:get|getting|run|be) (?:faster|quicker)\b|\bspeed ?up\b|\bimprove (?:my )?(?:pace|speed)\b|"
+                          r"\bmore speed\b", re.I)),
+    ("base", re.compile(r"\bbase\b|\bbuild (?:up )?(?:my )?(?:miles|mileage|vert|volume|endurance|aerobic)|"
+                        r"\bmore (?:miles|vert|volume)\b|\baerobic\b", re.I)),
+)
+YEAR_WORDS = re.compile(r"\b(?:this|per|a|each|in a|for the) year\b|\byearly\b|\bannual|\bin 20\d\d\b|\bby (?:the )?end of", re.I)
+BIG = r"(\d[\d,]*(?:\.\d+)?)\s*(k|m|million|thousand)?\s*"
+
+
+def _big(n: str, unit: str | None) -> float:
+    return _n(n) * {"k": 1e3, "thousand": 1e3, "m": 1e6, "million": 1e6}.get((unit or "").lower(), 1)
+
+
+def year_totals(text: str) -> dict | None:
+    """Miles and feet for a year, like "1M ft" or "2,000 mi this year"; None when there's neither."""
+    ft = re.search(BIG + r"(?:ft|feet|foot|')(?![a-z])", text, re.I)
+    mi = re.search(BIG + r"(?:mi|miles?)\b", text, re.I)
+    out = {"distance_mi": _big(*mi.groups()) if mi else 0.0, "gain_ft": _big(*ft.groups()) if ft else 0.0}
+    return out if out["distance_mi"] or out["gain_ft"] else None
+
+
+def goal_kind(text: str) -> str | None:
+    """A goal with no race day in typed words: a yearly target, coming back, an ongoing plan,
+    maintaining, getting faster, or building base (and "general fitness" and the like)."""
+    if YEAR_WORDS.search(text) and year_totals(text):
+        return "target"
+    for kind, words in GOAL_WORDS:
+        if words.search(text):
+            return kind
+    return "base" if general(text) else None
+
+
+def _avg_week(acts: list[dict], first: date, last: date) -> dict:
+    span = [a for a in acts if first.isoformat() <= a["day"] <= last.isoformat() and planner.is_foot(a["sport"])]
+    weeks = max(1.0, ((last - first).days + 1) / 7)
+    return {k: sum(a[{"miles": "distance_mi"}.get(k, k)] for a in span) / weeks for k in ("miles", "gain_ft", "loss_ft")}
+
+
+def block_objective(kind: str, acts: list[dict], today: date, totals: dict | None = None) -> dict:
+    """A goal with no race day as an objective: weekly targets from your own training (a yearly
+    target's totals instead) and the block's last day."""
+    base = planner.baseline(acts, today)
+    end = monday(today) + timedelta(weeks=planner.ROLLING_WEEKS if kind == "rolling" else BLOCK_WEEKS, days=-1)
+    f = {"base": (planner.BASE_GROWTH, planner.BASE_GROWTH), "rolling": (planner.ROLLING_GROWTH,) * 2,
+         "faster": (1.0, planner.FASTER_VERT)}.get(kind, (1.0, 1.0))
+    ref = base
+    if kind == "comeback":
+        # Back to where you were before the break: the 12 weeks before the last four, or now if more.
+        before = _avg_week(acts, today - timedelta(days=112), today - timedelta(days=29))
+        ref = {k: max(base[k], before[k]) for k in ("miles", "gain_ft", "loss_ft")}
+    o = {"goal": kind, "name": GOAL_KINDS[kind], "day": end.isoformat(), "looked_up": "block",
+         "distance_mi": round(max(8.0, ref["miles"] * f[0]), 1), "gain_ft": round(max(1000.0, ref["gain_ft"] * f[1]), -1)}
+    o["loss_ft"] = round(max(1000.0, ref["loss_ft"] * f[1]), -1) if kind != "target" else 0.0
+    if kind == "target":
+        end = date(today.year, 12, 31)
+        if (end - today).days < 14:
+            end = date(today.year + 1, 12, 31)
+        t = totals or {}
+        parts = ([f"{_ft(t['gain_ft'])} ft"] if t.get("gain_ft") else []) + (
+            [f"{_ft(t['distance_mi'])} mi"] if t.get("distance_mi") else [])
+        o |= {"day": end.isoformat(), "name": f"{' and '.join(parts)} in {end.year}",
+              "distance_mi": float(t.get("distance_mi") or 0), "gain_ft": float(t.get("gain_ft") or 0)}
+        o["loss_ft"] = o["gain_ft"]
+    return o
+
+
+def block_text(o: dict, acts: list[dict], today: date) -> str:
+    """What a goal with no race day becomes, before it's used."""
+    b = planner.baseline(acts, today)
+    now = f"about {_mi(b['miles'])} mi and {_ft(b['gain_ft'])} ft up a week"
+    wk = f"{_mi(o['distance_mi'])} mi and {_ft(o['gain_ft'])} ft up a week"
+    kind = o["goal"]
+    if kind == "target":
+        done = planner.year_done(acts, today)
+        end = date.fromisoformat(o["day"])
+        weeks = max(1, round(((end - today).days + 1) / 7))
+        left = []
+        if o["gain_ft"]:
+            left.append(f"{_ft(max(0.0, o['gain_ft'] - done['gain_ft']) / weeks)} ft up")
+        if o["distance_mi"]:
+            left.append(f"{_mi(max(0.0, o['distance_mi'] - done['miles']) / weeks)} mi")
+        text = (f"{o['name']}: you've done {_ft(done['gain_ft'])} ft up and {_mi(done['miles'])} mi so far this year, "
+                f"so the plan aims for about {' and '.join(left)} a week for the {weeks} weeks left, building there "
+                "from your last four weeks inside the load limits.")
+    elif kind == "maintain":
+        text = f"A {BLOCK_WEEKS}-week block that holds your fitness at {wk}, with a lighter week every fourth week."
+    elif kind == "comeback":
+        text = (f"A {BLOCK_WEEKS}-week comeback from {now}: it starts easy and builds back to {wk}, where you were "
+                "before the break, with a lighter week every third week. If anything hurts above 3 of 5, the call is rest.")
+    elif kind == "faster":
+        text = (f"A {BLOCK_WEEKS}-week block that keeps you near {wk}, a little less vert than now, and adds a tempo "
+                "session each week. You can switch it to track or hill repeats in Training days.")
+    elif kind == "rolling":
+        text = (f"An ongoing plan with no end date. It looks {planner.ROLLING_WEEKS} weeks ahead, builds gently from "
+                f"{now} toward {wk}, and redraws itself each Monday from your latest training.")
+    else:
+        text = (f"A {BLOCK_WEEKS}-week base block from {now}, building to {wk} with a recovery week every fourth week, "
+                "then you can start the next block.")
+    return text + " Use this, or tell me a race, a day you have in mind, or other numbers."
+
+
+def block_line(o: dict) -> str:
+    end = date.fromisoformat(o["day"])
+    if o["goal"] == "target":
+        return f"{o['name']}, through {end:%b} {end.day}"
+    if o["goal"] == "rolling":
+        return f"an ongoing plan, around {_mi(o['distance_mi'])} mi and {_ft(o['gain_ft'])} ft up a week"
+    return (f"{o['name'].lower()}, {_mi(o['distance_mi'])} mi and {_ft(o['gain_ft'])} ft up a week through "
+            f"{end:%b} {end.day}")
+
+
+TRIP = re.compile(r"\b(?:fkt|peak|summit|traverse|trip|thru|loop|tour|r2r2r|rim to rim|ridge|route|expedition|climb)\b", re.I)
 
 
 def missing(obj: dict) -> list[str]:
@@ -401,7 +513,7 @@ def rules_edits(text: str) -> list[dict]:
     return edits
 
 
-SPEED_WORDS = r"(?:track|intervals?|speed ?work|speed|repeats|reps|tempo|threshold|workouts?|quality|(?:race|goal|marathon) pace)"
+SPEED_WORDS = r"(?:track|intervals?|speed ?work|speed|repeats|reps|tempo|threshold|fartlek|progression|workouts?|quality|(?:race|goal|marathon) pace)"
 
 
 def rules_workout(t: str) -> str | None:
@@ -414,7 +526,13 @@ def rules_workout(t: str) -> str | None:
         return "hill_repeats"
     if re.search(r"(?:race|goal|marathon) pace", t):
         return "race_pace"
-    if re.search(r"tempo|threshold", t):
+    if re.search(r"fartlek", t):
+        return "fartlek"
+    if re.search(r"progression", t):
+        return "progression"
+    if re.search(r"threshold|cruise", t):
+        return "threshold"
+    if re.search(r"tempo", t):
         return "tempo"
     return "track"
 
@@ -494,12 +612,13 @@ def cant_text(asked: str | None) -> str:
 
 
 QUESTION = re.compile(r"^\s*(?:what|what's|how|when|why|where|which|who|can i|could i|will i|would i|should i|"
-                      r"am i|is|are|do|does|did|is it|tell me|explain)\b", re.I)
+                      r"am i|is|are|does|did|is it|tell me|explain)\b", re.I)
 FINISH = re.compile(r"\b(?:finish|finishing|time|how long|hours?|pace|cutoff|cut-off)\b", re.I)
 
 
 def is_question(text: str) -> bool:
     """A question about the plan or the objective, rather than a change to it."""
+    # A leading "do" asks only with a question mark: "Do less vert next week" is a change.
     return text.strip().endswith("?") or bool(QUESTION.match(text))
 
 
@@ -560,7 +679,67 @@ def _weekday(iso: str) -> str:
     return DAY_NAMES[date.fromisoformat(iso).weekday()]
 
 
+BUILDING_TEXT = ("The AI coach is now building its own version from your training, goals and answers. It shows up "
+                 "here when it's ready, usually in a minute or two. Until then this is the engine's draft.")
+
+
+def built_text(plan: dict) -> str:
+    """The message when the coach's build of a draft finishes."""
+    if plan.get("builder") != "coach":
+        return "The AI coach couldn't build a version this time, so the engine's draft above stands."
+    weeks = [w for w in plan["weeks"] if w["focus"] != "race"] or plan["weeks"]
+    big = max(weeks, key=lambda w: (w["miles"] + w["gain_ft"] / 528))
+    return " ".join(["The AI coach's version is ready."] + _built_by(plan) + [
+        f"Its biggest week is {big['miles']:.0f} mi with {big['gain_ft']:,.0f} ft up."])
+
+
+def _built_by(plan: dict) -> list[str]:
+    """How the AI coach shaped the draft, and how many weeks the engine held to its limits."""
+    if plan.get("builder") != "coach":
+        return []
+    out = [f"The AI coach built this one: {plan['approach'].strip()}" if plan.get("approach") else
+           "The AI coach built this one."]
+    if n := plan.get("held_weeks"):
+        out.append(f"The engine held {n} week{'s' if n != 1 else ''} it asked for to the 10% build limit.")
+    return out
+
+
+def block_summary(plan: dict, name: str, long_day: int, a: dict) -> str:
+    """The draft for a goal with no race day."""
+    weeks, b = plan["weeks"], plan["baseline"]
+    goal = plan.get("goal", "base")
+    full = weeks[1:] or weeks
+    pk = {k: max(w[k] for w in full) for k in ("miles", "gain_ft", "loss_ft")}
+    span = ("an ongoing plan, looking " + f"{len(weeks)} weeks ahead") if goal == "rolling" else f"{len(weeks)} weeks: {name}"
+    move = ("holds about" if all(abs(pk[k] - b[k]) <= b[k] * 0.05 + 1 for k in ("miles", "gain_ft"))
+            else "steps down to" if pk["miles"] < b["miles"] * 0.95 and pk["gain_ft"] < b["gain_ft"] * 0.95
+            else "builds to")
+    lines = [f"Here's your draft: {span}. From your last four weeks, about {_mi(b['miles'])} mi and {_ft(b['gain_ft'])} ft "
+             f"up a week, it {move} {_mi(pk['miles'])} mi with {_ft(pk['gain_ft'])} ft up and {_ft(pk['loss_ft'])} ft down, "
+             f"with a recovery week every {'third' if goal == 'comeback' else 'fourth'} week."] + _built_by(plan)
+    longs = [w["long"] for w in weeks if w.get("long")]
+    if big := max(longs, key=lambda l: l["effort_mi"], default=None):
+        lines.append(f"Your biggest long day is {_mi(big['miles'])} mi with {_ft(big['gain_ft'])} ft up, on a {DAY_NAMES[long_day]}.")
+    speed = next((w["workout"] for w in weeks if w.get("workout")), None)
+    if speed in WORKOUTS:
+        lines.append(f"Each week has one {WORKOUTS[speed].lower()} session.")
+    if goal == "rolling":
+        lines.append("Each Monday it redraws the weeks ahead from your latest training, so it never runs out.")
+    if goal == "target" and not plan["reachable"]:
+        lines.append("At the pace the load limits allow, it falls short of the year's target; the plan won't loosen them.")
+    if a.get("feel") == "Tired lately":
+        lines.append("Since training has felt tiring lately, this week and next are a little lighter.")
+    if a.get("body") in BODY[1:] or goal == "comeback":
+        lines.append("Log anything that hurts in the morning check-in: above 3 of 5, the call is rest.")
+    if a.get("terrain") == TERRAIN[2]:
+        lines.append("With little vert near home, get the climbing on a treadmill incline or stairs.")
+    lines.append("Accept it, or tell me what to change. " + CHANGE_EXAMPLES)
+    return " ".join(lines)
+
+
 def draft_summary(plan: dict, name: str, long_day: int, a: dict) -> str:
+    if not planner.is_event(plan["objective"]):
+        return block_summary(plan, name, long_day, a)
     longs = [w["long"] for w in plan["weeks"] if w.get("long")]
     big = max(longs, key=lambda l: l["effort_mi"], default=None)
     b = plan["baseline"]
@@ -576,6 +755,7 @@ def draft_summary(plan: dict, name: str, long_day: int, a: dict) -> str:
         lines = [f"Here's your draft: {len(plan['weeks'])} weeks to {name}. You start from your last four weeks, about "
                  f"{_mi(b['miles'])} mi and {_ft(b['gain_ft'])} ft up a week, and build to a peak of {_mi(pk['miles'])} mi "
                  f"with {_ft(pk['gain_ft'])} ft up and {_ft(pk['loss_ft'])} ft down."]
+    lines += _built_by(plan)
     if big and big.get("second"):
         two = big["second"]
         lines.append(f"Your objective is long enough for back-to-back long days: the biggest pair is {_mi(big['miles'])} mi "

@@ -360,8 +360,6 @@ private struct CoachSettingsCard: View {
     let reload: () async -> Void
     @EnvironmentObject private var api: API
     @State private var enabled: Bool
-    @State private var brief: String
-    @State private var analysis: String
     @State private var style: String
     @State private var cap: String
     @State private var saving = false
@@ -371,8 +369,6 @@ private struct CoachSettingsCard: View {
         self.coach = coach
         self.reload = reload
         _enabled = State(initialValue: coach.enabled)
-        _brief = State(initialValue: coach.briefModel)
-        _analysis = State(initialValue: coach.analysisModel)
         _style = State(initialValue: coach.style)
         _cap = State(initialValue: coach.cap.limit.map { String(format: "%g", $0) } ?? "")
     }
@@ -382,7 +378,7 @@ private struct CoachSettingsCard: View {
 
     var body: some View {
         let capValid = cap.trimmingCharacters(in: .whitespaces).isEmpty || (capValue.map { $0 >= 0 && $0 <= 1000 } ?? false)
-        let dirty = capDirty || enabled != coach.enabled || style != coach.style || brief != coach.briefModel || analysis != coach.analysisModel
+        let dirty = capDirty || enabled != coach.enabled || style != coach.style
         let capped = coach.cap.limit.map { coach.cap.spent >= $0 } ?? false
         Card {
             HStack {
@@ -420,42 +416,22 @@ private struct CoachSettingsCard: View {
                 }
                 Text("\(coach.styles.first { $0.key == style }?.description ?? "") Style changes the voice only: the call, the session and the number check stay the same.")
                     .font(.caption).foregroundStyle(.secondary)
-                Picker("Daily brief model", selection: $brief) {
-                    ForEach(coach.models, id: \.id) { Text($0.label).tag($0.id) }
-                }
-                Text("Runs after each sync and after your check-in. \(costLine(coach.estimate.brief[brief])).").font(.caption).foregroundStyle(.secondary)
-                Picker("Workout analysis model", selection: $analysis) {
-                    ForEach(coach.models, id: \.id) { Text($0.label).tag($0.id) }
-                }
-                Text("Runs once per activity, right after it syncs. \(costLine(coach.estimate.analysis[analysis])).").font(.caption).foregroundStyle(.secondary)
-                if let haiku = coach.models.first(where: { $0.id.hasPrefix("claude-haiku") }), brief != haiku.id {
-                    Text("The brief is a short reply, so it could run on \(haiku.label) for about \(SettingsText.money(coach.estimate.brief[haiku.id]?.perMonth)) a month. Every reply still goes through the same number check.")
-                        .font(.caption).foregroundStyle(.secondary)
-                }
                 LabeledField(label: "Monthly spending cap, $", text: $cap, placeholder: coach.cap.ceiling == nil ? "No cap" : "", keyboard: .decimalPad)
                 Text("\(SettingsText.money(coach.cap.spent)) spent this month\(coach.cap.limit.map { " of \(SettingsText.usd($0))" } ?? "").\(capped ? " Cap reached: rule-based text until next month." : "")\(coach.cap.ceiling.map { " This Talus allows up to \(SettingsText.usd($0)) a month per account." } ?? " Blank means no cap.")")
                     .font(.caption).foregroundStyle(capped ? Tone.bad.ink : .secondary)
         }
     }
 
-    private func costLine(_ e: CostEstimate?) -> String {
-        guard let e else { return "" }
-        let call = SettingsText.money(e.perCall)
-        return "\(call.hasPrefix("under") ? "Under 1¢" : "About \(call)") a call, \(SettingsText.money(e.perMonth)) a month at \(e.callsPerMonth) calls\(e.fromLog ? "" : ", from a typical reply size until the coach has run")"
-    }
-
     /// The cap goes along only when it changed, and as an explicit null when cleared.
     private struct CoachIn: Encodable {
-        let enabled: Bool, briefModel: String, analysisModel: String, style: String
+        let enabled: Bool, style: String
         let cap: Double??
 
-        enum CodingKeys: String, CodingKey { case enabled, briefModel, analysisModel, style, monthlyCapUsd }
+        enum CodingKeys: String, CodingKey { case enabled, style, monthlyCapUsd }
 
         func encode(to encoder: Encoder) throws {
             var c = encoder.container(keyedBy: CodingKeys.self)
             try c.encode(enabled, forKey: .enabled)
-            try c.encode(briefModel, forKey: .briefModel)
-            try c.encode(analysisModel, forKey: .analysisModel)
             try c.encode(style, forKey: .style)
             if let cap { try c.encode(cap, forKey: .monthlyCapUsd) }
         }
@@ -469,7 +445,7 @@ private struct CoachSettingsCard: View {
         saving = true
         defer { saving = false }
         do {
-            try await api.put("/api/settings/coach", CoachIn(enabled: enabled, briefModel: brief, analysisModel: analysis, style: style,
+            try await api.put("/api/settings/coach", CoachIn(enabled: enabled, style: style,
                                                           cap: capDirty ? .some(capValue) : .none))
             message = (true, "Saved. The next brief and analysis use these settings.")
             await reload()

@@ -67,8 +67,14 @@ B2B_MIN = 0.33
 B2B_SPLIT = 0.60  # the first day's share of the pair
 PAIR_SHARE = {"miles": 0.55, "gain_ft": 0.6, "loss_ft": 0.6}  # the pair's share of the week
 # Speed work, one session a week in build, peak and taper weeks when the athlete asks for it.
-WORKOUTS = {"track": "Track intervals", "tempo": "Tempo", "hill_repeats": "Hill repeats", "race_pace": "Race pace"}
-WORKOUT_VERT = {"track": 0.0, "tempo": 0.5, "hill_repeats": 2.0, "race_pace": 0.3}  # the day's vert weight; easy is 1
+WORKOUTS = {"track": "Track intervals", "tempo": "Tempo", "hill_repeats": "Hill repeats", "race_pace": "Race pace",
+            "threshold": "Threshold intervals", "fartlek": "Fartlek", "progression": "Progression run"}
+WORKOUT_VERT = {"track": 0.0, "tempo": 0.5, "hill_repeats": 2.0, "race_pace": 0.3,
+                "threshold": 0.3, "fartlek": 0.7, "progression": 0.7}  # the day's vert weight; easy is 1
+# The week's hill day: one kind of mountain session, rotating through a build so each gets trained.
+HILL_SESSIONS = {"vert_climb": "Long climb", "power_hike": "Power-hike intervals", "downhill": "Downhill durability",
+                 "muscular_endurance": "Muscular endurance", "hill_sprints": "Hill sprints"}
+HILL_ROTATION = ("vert_climb", "power_hike", "downhill")
 WORKOUT_CARDIO = 1.2  # a speed session's cardio load per hour, against an easy hour
 HOLD_ABOVE = 1.25
 # Race types. The objective's shape picks how the plan trains: a flat race up to a marathon is a
@@ -91,6 +97,49 @@ ROAD_LONG_SHARE = 0.33
 NIGHT_EVERY = 3  # hundreds and multi-day races: a night long day every third build week
 # Taper weeks before the race week, with each one's share of the build level.
 TAPERS = {1: (0.70,), 2: (0.80, 0.60)}
+
+
+# Goals. A race or a trip has a day to be ready for; the rest are blocks of weekly targets.
+GOAL_KINDS = {"race": "Race", "trip": "Mountain objective", "base": "Build base", "maintain": "Maintain fitness",
+              "comeback": "Come back from a break", "faster": "Get faster", "target": "Yearly target",
+              "rolling": "Ongoing plan"}
+EVENT_GOALS = ("race", "trip")
+BLOCK_WEEKS = 12  # a block with no end of its own
+ROLLING_WEEKS = 8  # an ongoing plan looks this far ahead and is redrawn each week
+COMEBACK_EVERY = 3  # coming back: a recovery week after every two build weeks
+COMEBACK_START = 0.30  # coming back from little or nothing: the first week is 30% of the target
+BASE_GROWTH = 1.30  # build base: 30% past the last four weeks
+ROLLING_GROWTH = 1.10
+FASTER_VERT = 0.80  # get faster: a little less vert, to make room for the speed session
+
+
+def is_event(obj: Objective | dict) -> bool:
+    goal = obj.get("goal", "race") if isinstance(obj, dict) else obj.goal
+    return goal in EVENT_GOALS
+
+
+def block_kinds(n: int, every: int = RECOVERY_EVERY) -> list[str]:
+    """Build and recovery weeks for a block with no event: a recovery week every `every` weeks."""
+    return ["recovery" if i > 0 and (i + 1) % every == 0 else "build" for i in range(n)]
+
+
+def year_done(acts: list[dict], today: date) -> dict:
+    """Miles, gain and loss on foot so far this calendar year, through yesterday."""
+    first = date(today.year, 1, 1).isoformat()
+    year = [a for a in acts if first <= a["day"] < today.isoformat() and is_foot(a["sport"])]
+    return {"miles": sum(a["distance_mi"] for a in year), "gain_ft": sum(a["gain_ft"] for a in year),
+            "loss_ft": sum(a["loss_ft"] for a in year)}
+
+
+def block_weekly(obj: Objective, acts: list[dict], base: dict, today: date) -> dict:
+    """A block's weekly targets. A yearly target spreads what's left of it over the weeks left;
+    a total not set holds the last four weeks."""
+    weekly = {"miles": obj.distance_mi, "gain_ft": obj.gain_ft, "loss_ft": obj.loss_ft}
+    if obj.goal != "target":
+        return weekly
+    done = year_done(acts, today)
+    weeks_left = max(1.0, ((obj.day - today).days + 1) / 7)
+    return {k: max(0.0, weekly[k] - done[k]) / weeks_left if weekly[k] else base[k] for k in DIMS}
 
 
 def race_type(distance_mi: float, gain_ft: float) -> str:
@@ -152,6 +201,10 @@ class Objective:
     high_point_ft: float | None = None
     source: str = "manual"  # or "gpx"
     id: int | None = None
+    # What the plan is for: a race or a mountain objective on a day (EVENT_GOALS), or a block with
+    # no event in it. For a block, day is the block's last day; distance_mi, gain_ft and loss_ft are
+    # weekly targets, except for "target", where they are the year's totals (0 for one not set).
+    goal: str = "race"
 
     def json(self) -> dict:
         return asdict(self) | {"day": self.day.isoformat()}
@@ -222,8 +275,9 @@ def demand(obj: Objective, p: dict) -> dict:
 
 
 def b2b_sized(dem: dict) -> bool:
-    """An objective long enough to train for with back-to-back long days."""
-    return dem["time"]["mid_h"] >= B2B_FROM_H
+    """An objective long enough to train for with back-to-back long days. Never a road race: a
+    slow marathon still trains with one long run, not two shorter days."""
+    return dem["time"]["mid_h"] >= B2B_FROM_H and dem.get("race_type") != "road"
 
 
 def pair_size(first: float, second: float) -> float:
@@ -400,6 +454,53 @@ def _workout_day(workout: str | None, others: list[date], hills: date | None, pa
     return max(easy, key=lambda d: (min((abs((d - h).days) for h in hard), default=7), -d.toordinal()))
 
 
+def default_hill_session(rtype: str, focus: str, builds: int, late: bool = False) -> str:
+    """The hill day's session when no one picked one. Mountain builds rotate a long climb,
+    power-hike intervals and downhill repeats; the last weeks before the taper (`late`) and peak
+    weeks swap every other one for muscular endurance; recovery and taper weeks climb easy. A
+    road race does short hill sprints for strength and form."""
+    if rtype == "road":
+        return "hill_sprints" if focus in ("build", "peak", "hold") else "vert_climb"
+    if focus in ("recovery", "taper", "race"):
+        return "vert_climb"
+    if (late or focus == "peak") and builds % 2 == 0:
+        return "muscular_endurance"
+    return HILL_ROTATION[builds % len(HILL_ROTATION)]
+
+
+def type_week(sessions: list[dict], week: dict) -> None:
+    """Give a week's days their kind of session beyond the split: the hill day's session, the
+    recovery run after the long day, strides on one easy day, and strength on two. In place."""
+    focus = week.get("focus", "build")
+    hill = week.get("hill_session") or "vert_climb"
+    run = [s for s in sessions if s["kind"] not in ("rest", "done", "objective")]
+    longs = [date.fromisoformat(s["day"]) for s in run if s["kind"] in ("long", "long2")]
+    hard = set(longs) | {date.fromisoformat(s["day"]) for s in run if s["kind"] in WORKOUTS or s["kind"] == "hills"}
+    after_long = (max(longs) + timedelta(days=1)).isoformat() if longs else None
+    easy = [s for s in run if s["kind"] == "easy" and not s.get("own")]
+    for s in run:
+        if s["kind"] == "hills" and not s.get("own"):
+            s["type"] = hill
+    for s in easy:
+        if focus in ("recovery", "taper", "race") or s["day"] == after_long:
+            s["type"] = "recovery"
+    if focus in ("build", "peak", "hold"):
+        # Strides on an easy day before nothing hard, as far from the long day as the week allows.
+        fresh = [s for s in easy if "type" not in s and date.fromisoformat(s["day"]) + timedelta(days=1) not in hard]
+        if fresh:
+            max(fresh, key=lambda s: min((abs((date.fromisoformat(s["day"]) - d).days) for d in longs),
+                                         default=7))["type"] = "strides"
+    # Strength twice a week (once in a taper, none in the race week), first on easy days that
+    # aren't the day before a hard one, so the legs come to the long day fresh.
+    want = {"race": 0, "taper": 1}.get(focus, 2)
+    spots = [s for s in easy if date.fromisoformat(s["day"]) + timedelta(days=1) not in hard]
+    spots += [s for s in easy if s not in spots]
+    for s in spots[:want]:
+        s["strength"] = True
+    for s in run:
+        s.setdefault("type", s["kind"])
+
+
 def sessions_for_week(target: dict, week_start: date, first_day: date, c: Constraints,
                       pace_min: float, b2b: bool = False, workout: str | None = None,
                       road_long: float | None = None) -> tuple[list[dict], list[str]]:
@@ -510,8 +611,13 @@ def _long_descent(obj: Objective, long_loss: float) -> float | None:
     return min(long_loss, obj.longest_descent_ft * DURABILITY_TARGET)
 
 
-def build(obj: Objective, acts: list[dict], history: list[LedgerDay], c: Constraints, today: date) -> dict:
-    """Weekly targets from this week to the objective's week. See the module docstring."""
+def build(obj: Objective, acts: list[dict], history: list[LedgerDay], c: Constraints, today: date,
+          proposal: list[dict] | None = None) -> dict:
+    """Weekly targets from this week to the objective's week. See the module docstring.
+
+    `proposal`, from the AI coach, sets each week's focus, miles, gain, loss and speed session in
+    place of the engine's own build. The engine still holds every week to its rules: no week adds
+    more than BUILD_RATE over the last build week, and the load-limit cuts apply as always."""
     if obj.day <= today:
         raise PlanError("Pick an objective date after today.")
     if not c.days:
@@ -523,9 +629,11 @@ def build(obj: Objective, acts: list[dict], history: list[LedgerDay], c: Constra
     r = rates(acts, today)
     week0 = today - timedelta(days=today.weekday())
     n = (obj.day - week0).days // 7 + 1
-    rtype = dem["race_type"]
-    kinds = week_kinds(n, taper_weeks(rtype, obj.distance_mi))
-    pairs = b2b_sized(dem)
+    event = is_event(obj)
+    rtype = dem["race_type"] if event else "mountain"
+    kinds = (week_kinds(n, taper_weeks(rtype, obj.distance_mi)) if event
+             else block_kinds(n, COMEBACK_EVERY if obj.goal == "comeback" else RECOVERY_EVERY))
+    pairs = b2b_sized(dem) if event else False
     b2b = pairs and c.back_to_back
     lt = LONG_TARGET_BY_TYPE.get(rtype, LONG_TARGET)
     volume = VOLUME_TARGET_BY_TYPE.get(rtype, VOLUME_TARGET)
@@ -545,11 +653,18 @@ def build(obj: Objective, acts: list[dict], history: list[LedgerDay], c: Constra
             "gain_ft": max(obj.gain_ft * volume, long_target["gain_ft"] / share["gain_ft"]),
             "loss_ft": max(obj.loss_ft * volume, long_target["loss_ft"] / share["loss_ft"])}
     default_speed = road_workout(obj.distance_mi) if rtype == "road" else None
+    if proposal is not None:
+        kinds = _proposed_kinds(proposal, n, week0, event)
     tapers = [i for i, k in enumerate(kinds) if k == "taper"]
     builds = 0
     # Build to what the objective needs. Already past it, hold no more than HOLD_ABOVE of it:
     # more volume than the day calls for only makes the long day oversized.
     peak = {k: max(need[k], min(base[k], need[k] * HOLD_ABOVE)) for k in DIMS}
+    if not event:
+        # A block builds to (or steps down to) its weekly targets and holds them.
+        peak = block_weekly(obj, acts, base, today)
+        if obj.goal == "faster":
+            default_speed = "tempo"
     road_long = road_long_mi(obj.distance_mi) if rtype == "road" else None
     if road_long:
         peak["miles"] = max(need["miles"], base["miles"])  # more miles never hurt a road race; only vert steps down
@@ -562,12 +677,22 @@ def build(obj: Objective, acts: list[dict], history: list[LedgerDay], c: Constra
     proj = _Projector([d for d in history if d.day < first_planned])  # the plan takes over from there
     descent_now = _Projector(history).fitness("descent")
     level = {k: base[k] for k in DIMS}
+    if obj.goal == "comeback":
+        level = {k: max(base[k], peak[k] * COMEBACK_START) for k in DIMS}
     weeks: list[dict] = []
     descent_fitness_at: dict[int, float] = {}
     for i, kind in enumerate(kinds):
         start = week0 + timedelta(weeks=i)
         descent_fitness_at[i] = proj.fitness("descent")
-        if kind == "build" and i > 0:
+        held: list[str] = []
+        if proposal is not None:
+            # The coach's week, held to BUILD_RATE over the last build level (no more than that level
+            # for any other week).
+            pw = proposal[i]
+            cap = {k: max(level[k], 1.0) * (BUILD_RATE if kind == "build" else 1.0) for k in DIMS}
+            want = {k: min(float(pw[k]), cap[k]) for k in DIMS}
+            held = [k for k in DIMS if float(pw[k]) > cap[k] * 1.01]
+        elif kind == "build" and i > 0:
             want = {k: peak[k] if level[k] >= peak[k] else min(peak[k], max(level[k], 1.0) * BUILD_RATE)
                     for k in DIMS}
         elif kind == "taper":
@@ -583,10 +708,15 @@ def build(obj: Objective, acts: list[dict], history: list[LedgerDay], c: Constra
             for k in DIMS:
                 if ("miles" if k == "miles" else "vert") in a.get("dims", []):
                     planned[k] *= f
-        race = _in_week(obj.day, start)
+        race = event and _in_week(obj.day, start)
         speed = (c.workout if c.workout in WORKOUTS else default_speed) if kind in ("build", "taper") else None
+        if proposal is not None:
+            speed = proposal[i]["workout"] if proposal[i]["workout"] in WORKOUTS and kind != "race" else None
         sessions, notes = sessions_for_week(planned, start, first, _before(c, obj.day) if race else c, pace_min,
                                             b2b and not race, speed, road_long)
+        if held:
+            notes.insert(0, f"The coach asked for more {_join(['miles' if k == 'miles' else 'gain' if k == 'gain_ft' else 'descent' for k in held])}; "
+                            f"held to {round((BUILD_RATE - 1) * 100)}% over the last build week")
         for a in asked:
             what = _join(["miles" if d == "miles" else "vert" for d in a.get("dims", [])])
             notes.insert(0, f"{'Less' if float(a.get('factor', 1.0)) < 1 else 'More'} {what} this week, as you asked")
@@ -635,7 +765,11 @@ def build(obj: Objective, acts: list[dict], history: list[LedgerDay], c: Constra
             else:
                 # A week you asked to change doesn't move the build: the next week carries on.
                 level = {k: total[k] for k in DIMS} if limited and not asked else want
-        focus = "peak" if kind == "build" and i > 0 and all(level[k] >= peak[k] * 0.98 for k in DIMS) else kind
+        focus = ("peak" if event else "hold") if kind == "build" and i > 0 and all(
+            level[k] >= peak[k] * 0.98 for k in DIMS) else kind
+        if proposal is not None:
+            pf = proposal[i]["focus"]
+            focus = pf if kind == "build" and pf in ("build", "peak", "hold") else kind
         builds += kind == "build"
         # Hundreds and multi-day races: every third build week's long day runs into the night.
         night = (rtype in ("hundred", "multiday") and kind == "build" and long is not None
@@ -658,8 +792,26 @@ def build(obj: Objective, acts: list[dict], history: list[LedgerDay], c: Constra
                     "effort_mi": effort_miles(second["miles"], second["gain_ft"])}},
             "limited_by": limited_by if scale < 1 else [], "notes": list(dict.fromkeys(notes)),
             "workout": next((s["kind"] for s in sessions if s["kind"] in WORKOUTS), None),
+            "hill_session": (proposal[i]["hill_session"] if proposal is not None
+                             and proposal[i].get("hill_session") in HILL_SESSIONS
+                             else default_hill_session(rtype, focus, builds,
+                                                       any(k in ("taper", "race") for k in kinds[i + 1:i + 7]))),
             "night": night,
+            **({"coach_note": str(proposal[i].get("note") or "")[:240]} if proposal is not None else {}),
         })
+    common = {"objective": obj.json(), "built_on": today.isoformat(), "constraints": asdict(c),
+              "back_to_back": b2b, "race_type": rtype, "goal": obj.goal,
+              "baseline": base, "rates": r, "pace": p, "demand": dem, "peak": peak, "weeks": weeks}
+    if not event:
+        # No event to be ready for. A yearly target is reachable when the weeks planned cover what's left of it.
+        reachable = True
+        if obj.goal == "target":
+            done = year_done(acts, today)
+            planned = {k: sum(w[k] for w in weeks) for k in DIMS}
+            totals = {"miles": obj.distance_mi, "gain_ft": obj.gain_ft, "loss_ft": obj.loss_ft}
+            reachable = all(done[k] + planned[k] >= totals[k] * 0.97 for k in DIMS if totals[k])
+            common["target"] = {"done": done, "planned": planned, "totals": totals}
+        return common | {"projected": None, "reachable": reachable}
     # Projected readiness, read at the start of the taper (or the race week): the last 4 weeks
     # before it and the biggest long day in the 8 weeks before it.
     cut = next(i for i, k in enumerate(kinds) if k in ("taper", "race"))
@@ -685,17 +837,31 @@ def build(obj: Objective, acts: list[dict], history: list[LedgerDay], c: Constra
         "altitude": current["altitude"],
     }
     projected = evaluate(dem, proj_cap, pairs)
-    return {"objective": obj.json(), "built_on": today.isoformat(), "constraints": asdict(c),
-            "back_to_back": b2b, "race_type": rtype,
-            "baseline": base, "rates": r, "pace": p, "demand": dem, "peak": peak, "weeks": weeks,
-            "projected": {"capacity": proj_cap, **projected}, "reachable": projected["verdict"] != "gap"}
+    return common | {"projected": {"capacity": proj_cap, **projected}, "reachable": projected["verdict"] != "gap"}
+
+
+def _proposed_kinds(proposal: list[dict], n: int, week0: date, event: bool) -> list[str]:
+    """The week kinds of a coach's plan, after checking it lines up with the plan's weeks. For an
+    event the last week is always the race week; a block has no taper or race week."""
+    if len(proposal) != n:
+        raise PlanError(f"The coach's plan has {len(proposal)} weeks; the plan has {n}.")
+    kinds = []
+    for i, pw in enumerate(proposal):
+        if pw.get("start") != (week0 + timedelta(weeks=i)).isoformat():
+            raise PlanError("The coach's weeks don't line up with the plan's.")
+        if not all(isinstance(pw.get(k), (int, float)) and 0 <= pw[k] < 1e6 for k in DIMS):
+            raise PlanError("The coach's plan has a week without usable numbers.")
+        f = pw.get("focus")
+        kinds.append("race" if event and i == n - 1 else "recovery" if f == "recovery"
+                     else "taper" if f == "taper" and event and i >= n - 4 else "build")
+    return kinds
 
 
 def options(obj: Objective, acts: list[dict], history: list[LedgerDay], c: Constraints, today: date,
             plan: dict) -> dict:
     """When the objective is out of reach: a smaller version on the same date, and the earliest
     later date with no gap. Neither loosens a limit."""
-    if plan["reachable"]:
+    if plan["reachable"] or not is_event(obj):
         return {"smaller": None, "later": None}
     factor = 1.0
     for d in plan["projected"]["dims"]:
@@ -765,6 +931,7 @@ def upcoming_sessions(plan: dict, acts: list[dict], today: date, days: int = 7,
     c = Constraints.from_json(plan["constraints"])
     obj = plan["objective"]
     obj_day = date.fromisoformat(obj["day"])
+    event = is_event(obj)
     pace_min = plan["pace"]["min_per_effort_mi"]
     b2b = bool(plan.get("back_to_back"))
     road_long = road_long_mi(obj["distance_mi"]) if plan.get("race_type") == "road" else None
@@ -785,7 +952,7 @@ def upcoming_sessions(plan: dict, acts: list[dict], today: date, days: int = 7,
                     if _in_week(date.fromisoformat(d), start) and d >= first.isoformat() and d != obj["day"]}
             left = {d: max(0.0, w[d] - sum(a[{"miles": "distance_mi"}.get(d, d)] for a in done)
                            - sum(r[d] for r in mine.values())) for d in DIMS}
-            race = _in_week(obj_day, start)
+            race = event and _in_week(obj_day, start)
             cw = _around_own(_before(c, obj_day) if race else c, mine, w)
             # The week as it would run from Monday around your own runs, with nothing missed: the
             # sizes a session ahead may grow to, by kind.
@@ -821,9 +988,10 @@ def upcoming_sessions(plan: dict, acts: list[dict], today: date, days: int = 7,
                         s["kind"] = "easy"
                     elif w.get("long") and w["long"].get("longest_descent_ft"):
                         s["longest_descent_ft"] = min(s["loss_ft"], w["long"]["longest_descent_ft"])
+            type_week(ss, w)
             weeks[w["start"]] = {s["day"]: s for s in ss}
         s = dict(weeks[w["start"]][day.isoformat()])
-        if day == obj_day:
+        if day == obj_day and event:
             s = {"day": day.isoformat(), "kind": "objective", "miles": obj["distance_mi"],
                  "gain_ft": obj["gain_ft"], "loss_ft": obj["loss_ft"],
                  "minutes": plan["demand"]["time"]["mid_h"] * 60}
@@ -841,69 +1009,144 @@ SESSION_TITLE = {"long": "Long day", "long2": "Back-to-back day", "hills": "Hill
 
 
 def _reps(s: dict, steps: tuple) -> int | str:
-    """How many reps: fewer in a taper week, more at the peak."""
-    return {"taper": steps[0], "peak": steps[2]}.get(s.get("focus"), steps[1])
+    """How many reps: fewer in a taper or recovery week, more at the peak."""
+    return {"taper": steps[0], "recovery": steps[0], "peak": steps[2]}.get(s.get("focus"), steps[1])
 
 
-def workout_how(s: dict, aet: float, ant: float | None) -> str:
-    """How to run a speed session. Hard means around AnT, when it's known."""
-    hard = f"around {ant:.0f} bpm by the end of each" if ant else "hard but even, the last one as fast as the first"
-    if s["kind"] == "track":
-        return (f"Warm up 15 min under {aet:.0f} bpm. Then {_reps(s, (4, 6, 8))} × 800 m ({hard}), with 400 m "
-                "easy jogging between. Cool down 10 min easy. A track or any flat path.")
-    if s["kind"] == "race_pace":
-        miles = _reps(s, (3, 5, 8))
-        return (f"Warm up 15 min under {aet:.0f} bpm. Then {miles} mi steady at your goal race pace, "
-                "taking a gel or drink as you will in the race. Cool down 10 min.")
-    if s["kind"] == "tempo":
-        block = _reps(s, ("2 × 8", "2 × 15", "3 × 12"))
-        steady = f"just under {ant:.0f} bpm" if ant else "comfortably hard, a pace you could hold for an hour"
-        return f"Warm up 15 min under {aet:.0f} bpm. Then {block} min {steady}, 3 min easy between. Cool down 10 min."
-    return (f"Warm up 15 min under {aet:.0f} bpm. Then {_reps(s, (5, 8, 10))} × 2 min hard uphill ({hard}), "
-            "walking or jogging down to recover. Cool down 10 min.")
+def hr_zones(aet: float, ant: float | None) -> dict[str, str]:
+    """Heart-rate targets from the athlete's own thresholds: recovery well under AeT, zone 2 just
+    under it, steady between AeT and tempo, tempo and threshold just under AnT, hard above it.
+    Without an AnT, the hard zones are described by feel."""
+    z = {"easy": f"under {aet:.0f} bpm", "recovery": f"zone 1, under {aet - 20:.0f} bpm",
+         "aerobic": f"zone 2, {aet - 10:.0f} to {aet:.0f} bpm"}
+    if ant and ant > aet + 6:
+        lo = max(aet + 1, ant - 12)
+        return z | {"steady": f"{aet:.0f} to {lo:.0f} bpm", "tempo": f"zone 3, {lo:.0f} to {ant - 5:.0f} bpm",
+                    "threshold": f"{ant - 5:.0f} to {ant:.0f} bpm, right at your AnT",
+                    "hard": f"{ant:.0f} bpm and up, over your AnT"}
+    return z | {"steady": f"just over {aet:.0f} bpm", "tempo": "comfortably hard, a pace you could hold for an hour",
+                "threshold": "hard but even, a pace you could hold for 30 to 40 min",
+                "hard": "hard, about your 5k effort"}
+
+
+STRENGTH = ("Then 25 min of strength: 3 rounds of 10 step-ups a leg, 10 split squats a leg, 10 single-leg "
+            "deadlifts a leg, 15 slow step-downs off a box a leg (for the descents), 20 calf raises and a 45 s plank.")
+EASY_TITLE = {"easy": "Easy aerobic", "recovery": "Recovery run", "strides": "Easy run with strides"}
+
+
+def _workout_steps(s: dict, z: dict) -> list[str]:
+    """How to run a speed session, warm-up to cool-down."""
+    warm, cool = f"Warm up 15 min easy, {z['easy']}.", "Cool down 10 min easy."
+    kind = s["kind"]
+    if kind == "track":
+        return [warm + " Add 4 × 20 s strides.",
+                f"{_reps(s, (4, 6, 8))} × 800 m at {z['hard']}, about 5k effort, with 400 m of easy jogging between.",
+                cool, "A track or any flat path."]
+    if kind == "threshold":
+        return [warm, f"{_reps(s, (3, 4, 5))} × 6 min at {z['threshold']}, 2 min easy jogging between.", cool]
+    if kind == "tempo":
+        return [warm, f"{_reps(s, ('2 × 8', '2 × 15', '3 × 12'))} min at {z['tempo']}, 3 min easy between.", cool]
+    if kind == "race_pace":
+        return [warm, f"{_reps(s, (3, 5, 8))} mi steady at your goal race pace, on terrain like the race's, taking a "
+                      "gel or drink when you will in the race.", cool]
+    if kind == "fartlek":
+        return [warm, f"{_reps(s, (4, 5, 6))} rounds of 2 min at {z['tempo']}, 1 min at {z['hard']} and 2 min easy, "
+                      "on rolling trail: let the hills set where the hard bits fall.", cool]
+    if kind == "progression":
+        return [f"Start easy, {z['easy']}, for the first half.",
+                f"Then step it up every 10 min: through {z['steady']}, finishing the last 15 to 20 min at {z['tempo']}.",
+                "Jog 5 min easy to finish."]
+    return [warm, f"{_reps(s, (5, 8, 10))} × 2 min hard uphill on a 6 to 10% grade at {z['hard']}, walking or "
+                  "jogging down to recover.", cool]
+
+
+def _hill_steps(s: dict, z: dict, kind: str) -> list[str]:
+    """How to run the week's hill day."""
+    if kind == "power_hike":
+        return [f"Warm up 15 min easy on gentle terrain, {z['easy']}.",
+                f"{_reps(s, (3, 5, 6))} × 6 min power-hiking a steep grade (15% or more), hands on knees or poles, "
+                f"at {z['steady']}: short quick steps, upright, arms working.",
+                "Walk or jog down between. Run the rest of the day easy in zone 2."]
+    if kind == "downhill":
+        return [f"Climb to the top of a smooth, moderately steep trail in {z['aerobic']}.",
+                f"{_reps(s, (3, 5, 6))} × 3 to 5 min downhill: quick light steps under your hips, eyes ahead, "
+                f"controlled rather than fast; hike or jog back up in {z['aerobic']}.",
+                "This builds the quads for long descents. Expect them sore for a day or two at first."]
+    if kind == "muscular_endurance":
+        return [f"Warm up 15 min easy, {z['easy']}.",
+                f"With a pack of 10 to 20% of your body weight (start light), hike your steepest climb for "
+                f"{_reps(s, (20, 40, 60))} min at {z['steady']}. No hill: step-ups on a box or bench.",
+                "Your legs should burn but your breathing stay easy. Dump water at the top to spare your knees "
+                "on the way down."]
+    if kind == "hill_sprints":
+        return [f"Warm up 15 min easy, {z['easy']}.",
+                f"{_reps(s, (6, 8, 10))} × 10 to 15 s near all-out up a steep hill, walking back down and resting "
+                "about 2 min between: power and form, not fitness.",
+                f"Run the rest easy, {z['aerobic']}."]
+    return ["Take the longest climb you can reach.",
+            f"Climb steady in {z['aerobic']}: run what's runnable and power-hike anything steep.",
+            "Descend relaxed, with quick feet."]
 
 
 def session_text(s: dict, aet: float, objective_name: str | None = None, ant: float | None = None) -> dict:
-    """The words for a session: a title, how to run it, and the full detail with its numbers.
-    Every number is the engine's."""
+    """The words for a session: a title, the steps to run it, how (the steps as one line), and the
+    full detail with its numbers. Every number is the engine's or the athlete's own heart rate."""
     kind = s["kind"]
-    if kind == "rest":
-        return {"title": "Rest", "how": "Rest, or an easy walk.", "detail": "Rest, or an easy walk."}
+    kind_of = s.get("type") or kind
+    z = hr_zones(aet, ant)
     if kind == "done":
         return {"title": "Done for today", "how": "Today's training is in. Recover.",
-                "detail": "Today's training is in. Recover."}
+                "detail": "Today's training is in. Recover.", "steps": []}
+    if kind == "rest":
+        steps = [f"Rest, or 30 to 45 min of easy cross-training (bike, swim or a walk) in {z['recovery']}.",
+                 "10 min of mobility: hips, ankles and calves."]
+        how = " ".join(steps)
+        return {"title": "Rest", "how": how, "detail": how, "steps": steps}
     vol = f"{s['miles']:.1f} mi, {round(s['gain_ft'], -1):,.0f} ft up, {round(s['loss_ft'], -1):,.0f} ft down"
     if kind == "objective":
-        return {"title": objective_name or "Objective", "how": "Go well.", "detail": f"{vol}. Go well."}
+        return {"title": objective_name or "Objective", "how": "Go well.", "detail": f"{vol}. Go well.", "steps": []}
     mins = f"about {round(s['minutes'] / 5) * 5:.0f} min"
     race = s.get("race", "mountain")
     if kind == "long" and race == "road":
-        how, title = f"Easy and conversational, under {aet:.0f} bpm.", "Long run"
+        title = "Long run"
+        steps = [f"Easy and conversational, {z['aerobic']}."]
         if s.get("focus") == "peak" and s["miles"] >= 10:
-            how += " Run the last 2 to 3 mi at goal race pace."
+            steps.append("Run the last 2 to 3 mi at goal race pace.")
     elif kind == "long":
-        how = f"Keep it under {aet:.0f} bpm; hike the steep climbs."
-        if s.get("longest_descent_ft"):
-            how += f" Include one continuous descent of about {round(s['longest_descent_ft'], -2):,.0f} ft."
         title = "Long day"
+        steps = [f"Mostly {z['aerobic']}; power-hike the steep climbs so you stay under {aet:.0f} bpm.",
+                 "Eat and drink from the first hour, the way you will on race day."]
+        if s.get("longest_descent_ft"):
+            steps.insert(1, f"Include one continuous descent of about {round(s['longest_descent_ft'], -2):,.0f} ft.")
     elif kind == "long2":
-        how = (f"The second of two long days, on tired legs: under {aet:.0f} bpm, hike the climbs and "
-               "practice moving well downhill.")
         title = "Back-to-back day"
+        steps = [f"The second of two long days, on tired legs: {z['aerobic']}, hiking the climbs.",
+                 "Practice moving well downhill and eating while tired."]
     elif kind in WORKOUTS:
-        how, title = workout_how(s, aet, ant), WORKOUTS[kind]
+        title, steps = WORKOUTS[kind], _workout_steps(s, z)
     elif kind == "hills":
-        how, title = f"Climb steady under {aet:.0f} bpm and hike anything steep.", "Hills"
+        title, steps = HILL_SESSIONS.get(kind_of, "Hills"), _hill_steps(s, z, kind_of)
+    elif kind_of == "recovery":
+        title = EASY_TITLE["recovery"]
+        steps = [f"Short and slow in {z['recovery']}, on the gentlest ground you have.",
+                 "Heavy legs: swap it for an easy bike or a walk."]
+    elif kind_of == "strides":
+        title = EASY_TITLE["strides"]
+        steps = [f"Easy in {z['aerobic']}.",
+                 "In the last 10 min, 6 × 20 s strides: quick and relaxed at about mile pace, walking back between."]
     else:
-        how, title = f"Under {aet:.0f} bpm.", "Easy aerobic"
+        title = EASY_TITLE["easy"]
+        steps = [f"Easy and conversational in {z['aerobic']}; hike any climb that pushes you over {aet:.0f} bpm."]
     if kind in ("long", "long2") and race in ("hundred", "multiday"):
-        how += (" Power-hike every climb at race effort, and eat from the first hour (about 250 kcal an hour)"
-                " with your race food.")
+        steps.append("Power-hike every climb at race effort, and eat about 250 kcal an hour with your race food.")
         if s.get("night"):
-            how += " Run part of it in the dark with your race headlamp."
-            if race == "multiday":
-                how += " Practice a 20 min sleep stop."
-    return {"title": title, "how": how, "detail": f"{vol}, {mins}. {how}"}
+            steps.append("Run part of it in the dark with your race headlamp."
+                         + (" Practice a 20 min sleep stop." if race == "multiday" else ""))
+    if s.get("strength"):
+        title += " + strength"
+        steps.append(STRENGTH)
+    how = " ".join(steps)
+    return {"title": title, "how": how, "detail": f"{vol}, {mins}. {how}", "steps": steps}
 
 
 # Weekly review and replanning ------------------------------------------------------------------
@@ -959,6 +1202,7 @@ REPLAN_TEXT = {
     "constraints": "Your training days or time limits changed",
     "new": "New objective",
     "request": "You asked for a fresh plan",
+    "rolling": "A new week: your ongoing plan moved on with your latest training",
 }
 
 

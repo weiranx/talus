@@ -1,3 +1,4 @@
+import json
 from dataclasses import asdict
 from datetime import date, timedelta
 
@@ -52,6 +53,8 @@ def test_speed_work_can_be_asked_for_in_plain_words():
     assert interview.rules_edits("I'd like a tempo run each week") == [{"kind": "workout", "workout": "tempo"}]
     assert interview.rules_edits("hill repeats please") == [{"kind": "workout", "workout": "hill_repeats"}]
     assert interview.rules_edits("no more speed work") == [{"kind": "workout", "workout": "none"}]
+    assert interview.rules_edits("add a fartlek") == [{"kind": "workout", "workout": "fartlek"}]
+    assert interview.rules_edits("threshold intervals on tuesdays") == [{"kind": "workout", "workout": "threshold"}]
     c, done, _ = interview.apply_edits([{"kind": "workout", "workout": "track"}], asdict(planner.Constraints()), [])
     assert c["workout"] == "track" and "track intervals once a week" in done[0]
     assert interview.from_edits([{"kind": "workout", "workout": "tempo"}, {"kind": "workout", "workout": "sprint"}]) == [
@@ -117,6 +120,7 @@ def test_plan_by_conversation(tmp_path, monkeypatch):
 
 def test_typed_answers_go_to_the_cheaper_model(tmp_path, monkeypatch):
     client = _setup(tmp_path, monkeypatch)
+    client.put("/api/settings/coach", json={"enabled": True, "ai_plans": False})  # engine-built drafts
     day = (date.today() + timedelta(weeks=9)).isoformat()
     fake = FakeClient({"name": "Fall 30k", "date": day, "distance_mi": None, "distance_km": 30, "gain_ft": None,
                        "gain_m": 1200, "loss_ft": None, "loss_m": None})
@@ -139,6 +143,7 @@ def test_typed_answers_go_to_the_cheaper_model(tmp_path, monkeypatch):
 
 def test_a_named_race_is_looked_up_and_confirmed(tmp_path, monkeypatch):
     client = _setup(tmp_path, monkeypatch)
+    client.put("/api/settings/coach", json={"enabled": True, "ai_plans": False})  # engine-built drafts
     day = (date.today() + timedelta(weeks=30)).isoformat()
     found = ('Canyons Endurance Runs 100M is in late April.\n{"found": true, "name": "Canyons 100M", "date": "' + day
              + '", "distance_mi": 100.4, "gain_ft": 22000, "loss_ft": 22300, "source": "https://example.com/canyons"}')
@@ -186,13 +191,57 @@ def test_sentences_and_numbers_are_not_objective_names():
     assert not interview.general("Baldy 50k on Jan 2")
 
 
-def test_no_race_gets_a_fitness_block(tmp_path, monkeypatch):
+def test_goals_without_a_race_day(tmp_path, monkeypatch):
+    assert interview.goal_kind("just general fitness") == "base"
+    assert interview.goal_kind("coming back after an injury") == "comeback"
+    assert interview.goal_kind("I want to get faster") == "faster"
+    assert interview.goal_kind("just maintain over the winter") == "maintain"
+    assert interview.goal_kind("an ongoing plan, week to week") == "rolling"
+    assert interview.goal_kind("1M ft this year") == "target"
+    assert interview.year_totals("1M ft and 2,000 mi") == {"distance_mi": 2000.0, "gain_ft": 1_000_000.0}
+    assert interview.goal_kind("Baldy 50k on Jan 2") is None
     client = _setup(tmp_path, monkeypatch)
     r = client.post("/api/plan/talk", json={"text": "just general fitness"}).json()
     last = r["messages"][-1]
-    assert r["step"] == "objective" and "12-week block" in last["text"] and last["groups"][0]["key"] == "confirm"
+    assert r["step"] == "objective" and "12-week base block" in last["text"] and last["groups"][0]["key"] == "confirm"
     r = client.post("/api/plan/talk", json={"answers": {"confirm": "Use this"}}).json()
-    assert r["step"] == "goal" and "Training for Mountain fitness block" in r["messages"][-2]["text"]
+    assert r["step"] == "days" and r["messages"][-2]["text"].startswith("Set: build base,")
+    for answers in ({"days": ["Tue", "Thu", "Sat", "Sun"], "long_day": "Sat"}, {"weekday": "1 h", "weekend": "4 h"},
+                    {"terrain": "Rolling hills"}, {"body": "Nothing to note", "feel": "Fresh"}):
+        r = client.post("/api/plan/talk", json={"answers": answers}).json()
+    text = r["messages"][-1]["text"]
+    assert r["step"] == "draft" and "weeks: Build base" in text and "taper" not in text and "race" not in text
+    p = client.get("/api/plan").json()
+    assert p["objective"]["goal"] == "base" and not p["objective"]["event"] and p["readiness"] is None
+    d = p["draft"]
+    assert d["goal"] == "base" and d["projected"] is None and d["now"] is None
+    assert {w["focus"] for w in d["weeks"]} <= {"build", "hold", "recovery"}
+    assert all(s["kind"] != "objective" for s in p["sessions"])
+    # A yearly target: tap the chip, then say how much.
+    client.post("/api/plan/talk/restart", json={"mode": "setup"})
+    r = client.post("/api/plan/talk", json={"answers": {"goal_kind": "Yearly target"}}).json()
+    assert "How much this year?" in r["messages"][-1]["text"]
+    r = client.post("/api/plan/talk", json={"text": "500k ft"}).json()
+    assert r["messages"][-1]["text"].startswith("500,000 ft in ") and "a week for the" in r["messages"][-1]["text"]
+
+
+def test_an_ongoing_plan_moves_on_each_week(tmp_path, monkeypatch):
+    client = _setup(tmp_path, monkeypatch)
+    day = date.today()
+    end = day - timedelta(days=day.weekday()) + timedelta(weeks=8, days=-1)
+    r = client.put("/api/plan/objective", json={"name": "Ongoing plan", "day": end.isoformat(), "distance_mi": 30,
+                                                "gain_ft": 5000, "loss_ft": 5000, "goal": "rolling", "new": True}).json()
+    plan_id = r["draft"]["id"]
+    client.post(f"/api/plan/{plan_id}/accept")
+    # Built last week: the next read redraws it from this week and keeps it accepted.
+    store = api.get_store()
+    body = store.plan("accepted")
+    body["built_on"] = (day - timedelta(days=day.weekday() + 7)).isoformat()
+    store.db.execute("UPDATE plan SET body = ? WHERE status = 'accepted'", (json.dumps(body),))
+    store.db.commit()
+    p = client.get("/api/plan").json()
+    assert p["accepted"]["id"] != plan_id and p["accepted"]["built_on"] == day.isoformat()
+    assert p["accepted"]["reason"] == "rolling" and p["objective"]["day"] == end.isoformat()
 
 
 def test_questions_and_cut_off_asks():
@@ -206,6 +255,7 @@ def test_questions_and_cut_off_asks():
 
 def test_plan_questions_go_to_the_coach(tmp_path, monkeypatch):
     client = _setup(tmp_path, monkeypatch)
+    client.put("/api/settings/coach", json={"enabled": True, "ai_plans": False})  # engine-built drafts
     client.put("/api/plan/objective", json=OBJ | {"day": (date.today() + timedelta(weeks=10)).isoformat()})
     client.post("/api/plan/talk/restart", json={"mode": "setup"})
     client.post("/api/plan/talk", json={"answers": {"keep": "Keep it"}})
@@ -220,3 +270,18 @@ def test_plan_questions_go_to_the_coach(tmp_path, monkeypatch):
     assert r["messages"][-1]["text"] == "About 9 to 11 hours on your recent pace."
     assert len(fake.calls) == 1 and "Mode: chat." in fake.calls[0]["messages"][0]["content"]
     assert client.get("/api/coach/chat").json()["messages"] == []  # not added to the Coach chat
+
+
+def test_a_leading_do_is_a_change_unless_it_asks():
+    assert not interview.is_question("Do less vert next week")
+    assert interview.is_question("Do I need more vert?") and interview.is_question("Does the taper start soon")
+
+
+def test_a_yearly_target_reads_what_is_done_so_far():
+    from datetime import date
+    today = date(2026, 10, 13)
+    acts = [{"day": "2026-02-01", "start_time": "2026-02-01T08:00:00", "distance_mi": 10.0, "gain_ft": 2000.0,
+             "loss_ft": 2000.0, "effort_mi": 14.0, "moving_time_s": 7200, "sport": "Run"}]
+    o = interview.block_objective("target", acts, today, {"distance_mi": 2000.0, "gain_ft": 0.0})
+    text = interview.block_text(o, acts, today)
+    assert "10.0 mi so far this year" in text

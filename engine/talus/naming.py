@@ -24,15 +24,21 @@ OVERPASS = "https://overpass-api.de/api/interpreter"
 PEAK_RADIUS_M = 400
 NAME_MAX = 60
 
-# Names a watch or platform makes up: an activity type, maybe after a place or a time of day.
-_TYPES = (r"(?:trail |treadmill |indoor |street |track |virtual )?(?:run(?:ning)?|hik(?:e|ing)|walk(?:ing)?|"
-          r"cycling|ride|biking|mountaineering|climb(?:ing)?|(?:backcountry |cross[- ]country )?ski(?:ing)?|"
-          r"ski touring|snowshoe(?:ing)?|activity|workout|cardio|other)")
-GENERIC = re.compile(rf"^\s*(?:(?:morning|afternoon|evening|night|lunch|early|late)\s+)?(?:[\w .'’,-]+\s+)?{_TYPES}\s*$",
-                     re.IGNORECASE)
+# Names a watch or platform makes up: an activity type, maybe after a time of day ("Morning Run",
+# "Evening Trail Run"), or the type's full word after a place ("Pasadena Trail Running",
+# "Los Angeles County Hiking"). A place before a short form ("Mt Whitney Hike", "Baldy Bowl run")
+# reads as typed by the athlete, and so do names like "Tempo run" or "Long run".
+_FULL = (r"(?:(?:trail|treadmill|indoor|street|track|virtual|ultra)\s+)?(?:running|hiking|walking|cycling|biking|"
+         r"mountaineering|climbing|(?:(?:backcountry|cross[- ]country)\s+)?skiing|ski\s+touring|snowshoeing|cardio)")
+_SHORT = (r"(?:(?:(?:trail|treadmill|indoor|street|track|virtual)\s+)?(?:run|walk|ride)|hike|ski|climb|snowshoe|"
+          r"activity|workout|other)")
+_WHEN = r"(?:(?:morning|afternoon|evening|night|lunch|early|late)\s+)"
+GENERIC = re.compile(rf"^\s*(?:{_WHEN}?(?:{_FULL}|{_SHORT})|(?:[\w.'’,-]+\s+)+{_FULL})\s*$", re.IGNORECASE)
 FILE_NAME = re.compile(r"\.(?:fit|gpx|tcx)$", re.IGNORECASE)
-# A file's stem or a device's id: one word with a run of digits, like "run01" or "2026-10-11-0715".
-FILE_STEM = re.compile(r"^[\w-]*\d{2,}[\w-]*$")
+# A file's stem or a device's id: digits, maybe after a sport or app word, like "run01" or
+# "2026-10-11-0715". A race name with digits ("WS100", "UTMB2025") is the athlete's.
+FILE_STEM = re.compile(r"^(?:(?:run|hike|walk|ride|activity|track|workout|export|garmin|coros|strava|file)[_-]?)?"
+                       r"[\d_-]*\d{2,}[\d_-]*$", re.IGNORECASE)
 
 
 def is_generic(name: str | None) -> bool:
@@ -52,13 +58,17 @@ _nominatim_guard = threading.Lock()
 _nominatim_last = 0.0
 
 
-def _get(url: str, params: dict, timeout: float = 8.0) -> dict | list | None:
+class LookupFailed(Exception):
+    """The lookup didn't get an answer (offline, timed out, rate limited): ask again next time."""
+
+
+def _get(url: str, params: dict, timeout: float = 8.0) -> dict | list:
     try:
         r = httpx.get(url, params=params, headers={"User-Agent": USER_AGENT}, timeout=timeout)
         r.raise_for_status()
         return r.json()
-    except (httpx.HTTPError, ValueError):
-        return None
+    except (httpx.HTTPError, ValueError) as e:
+        raise LookupFailed(str(e)) from e
 
 
 def area_name(lat: float, lon: float) -> str | None:
@@ -88,6 +98,8 @@ def peak_name(lat: float, lon: float) -> str | None:
     data = _get(OVERPASS, {"data": q}, timeout=12.0)
     if not isinstance(data, dict):
         return None
+    if "error" in str(data.get("remark") or "").lower():  # Overpass answers 200 with a remark when its query times out
+        raise LookupFailed(str(data["remark"]))
     best = None
     for el in data.get("elements") or []:
         if el.get("tags", {}).get("natural") == "saddle":
@@ -120,7 +132,10 @@ def _cached(store, key: str, fetch) -> str | None:
     hit = store.place(key)
     if hit is not None:
         return hit or None
-    value = fetch()
+    try:
+        value = fetch()
+    except LookupFailed:
+        return None  # not cached, so the next activity here asks again
     store.save_place(key, value or "")  # an empty answer is cached too, so nothing is asked twice
     return value
 
@@ -183,5 +198,5 @@ def rules_name(p: dict) -> dict:
 
 
 def clean(name: str) -> str:
-    return re.sub(r"\s+", " ", name.strip().strip("\"'“”")).rstrip(".")[:NAME_MAX]
+    return re.sub(r"\s+", " ", name.replace("*", "").strip().strip("\"'“”")).rstrip(".")[:NAME_MAX]
 

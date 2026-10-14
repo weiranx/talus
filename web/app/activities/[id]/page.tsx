@@ -4,6 +4,7 @@ import ActivityName from "@/components/ActivityName";
 import CoachRead, { coachRead, CoachReadPending } from "@/components/CoachRead";
 import ActivityView from "@/components/ActivityView";
 import EngineDown from "@/components/EngineDown";
+import { DurabilityCard, GradeCard } from "@/components/TerrainCards";
 import Explain from "@/components/Explain";
 import { engine, engineFailed } from "@/lib/api";
 import { dayLabel, duration, LEDGER_LABEL, mi, n0, pct } from "@/lib/format";
@@ -30,6 +31,9 @@ export default async function ActivityPage({ params }: { params: Promise<{ id: s
     ["Effort miles", <Explain key="e" path={`activity/${a.id}/effort_mi`}>{mi(a.effort_mi)}</Explain>],
     ["Hike share", pct(a.hike_share)],
   ];
+
+  const longest = `Longest climb ${n0(a.longest_climb_ft)} ft. Longest descent ${n0(a.longest_descent_ft)} ft.${
+    a.minutes_above_8000ft >= 1 ? ` ${Math.round(a.minutes_above_8000ft)} min above 8,000 ft.` : ""}`;
 
   return (
     <>
@@ -86,29 +90,30 @@ export default async function ActivityPage({ params }: { params: Promise<{ id: s
 
       <ActivityView a={a} />
 
-      <section className="card">
-        <h2 className="label">Vert by grade</h2>
-        <div className="table-wrap">
-          <table>
-            <thead>
-              <tr><th scope="col">Grade</th><th scope="col" className="num">Gain, ft</th><th scope="col" className="num">Descent, ft</th></tr>
-            </thead>
-            <tbody>
-              {BANDS.map(([k, label]) => (
-                <tr key={k}>
-                  <td>{label}</td>
-                  <td className="num">{n0(a.gain_by_band_ft[k])}</td>
-                  <td className="num">{n0(a.loss_by_band_ft[k])}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-        <div className="muted">
-          Longest climb {n0(a.longest_climb_ft)} ft. Longest descent {n0(a.longest_descent_ft)} ft.
-          {a.minutes_above_8000ft >= 1 ? ` ${Math.round(a.minutes_above_8000ft)} min above 8,000 ft.` : ""}
-        </div>
-      </section>
+      {a.terrain?.bands.length ? <GradeCard t={a.terrain} footer={longest} /> : (
+        <section className="card">
+          <h2 className="label">Vert by grade</h2>
+          <div className="table-wrap">
+            <table>
+              <thead>
+                <tr><th scope="col">Grade</th><th scope="col" className="num">Gain, ft</th><th scope="col" className="num">Descent, ft</th></tr>
+              </thead>
+              <tbody>
+                {BANDS.map(([k, label]) => (
+                  <tr key={k}>
+                    <td>{label}</td>
+                    <td className="num">{n0(a.gain_by_band_ft[k])}</td>
+                    <td className="num">{n0(a.loss_by_band_ft[k])}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          <div className="muted">{longest}</div>
+        </section>
+      )}
+
+      {a.terrain?.durability ? <DurabilityCard d={a.terrain.durability} /> : null}
     </>
   );
 }

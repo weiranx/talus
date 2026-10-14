@@ -158,7 +158,8 @@ def test_sync_method_and_watch_file_keys(tmp_path, monkeypatch):
     assert client.put("/api/settings/sync-method", json={"method": "strava"}).status_code == 422
     assert client.get("/api/settings").json()["sync_method"] == "watch"
 
-    assert client.get("/api/import/watch").json() == {"files": [], "last_sync": None, "last_attempt": None}
+    assert client.get("/api/import/watch").json() == {"files": [], "last_sync": None, "last_attempt": None,
+                                                      "taken": []}
     hrv = hrv_fit(utc(2026, 10, 5, 13, 31), 61)
     r = client.post("/api/import?name=hrv.fit&watch_file=68-1-1791000000", content=hrv).json()
     assert r["wellness_days"] == 1
@@ -188,3 +189,27 @@ def test_a_finished_watch_sync_is_recorded(tmp_path, monkeypatch):
     assert w["last_sync"] and w["last_attempt"]["error"] is None
     row = next(r for r in client.get("/api/status").json()["sources"] if r["key"] == "watch")
     assert (row["state"], row["at"]) == ("ok", w["last_sync"])
+
+
+def test_watch_clients_learn_when_stored_runs_happened(tmp_path, monkeypatch):
+    from datetime import date as _date
+
+    from tests.conftest import sign_in
+    from tests.test_connectors import _gpx
+
+    monkeypatch.setenv("TALUS_DATA_DIR", str(tmp_path / "data"))
+    main(["thresholds", "--resting", "50", "--max", "190", "--ant", "170"])
+    client = sign_in()
+    day = (_date.today() - timedelta(days=3)).isoformat()
+    assert client.post("/api/import?name=run.gpx", content=_gpx().replace(b"2026-10-01", day.encode())).json()["new"] == 1
+    # A file (the watch's own included) is skipped by its key, never by its span: a span would
+    # hide the next activity off the watch, like a cooldown right after a race.
+    assert client.get("/api/import/watch").json()["taken"] == []
+    import sqlite3
+    db_path = next((tmp_path / "data").rglob("talus.db"))
+    with sqlite3.connect(db_path) as db:
+        db.execute("UPDATE activity SET source = 'intervals'")
+    taken = client.get("/api/import/watch").json()["taken"]
+    assert len(taken) == 1
+    start, end = (datetime.fromisoformat(t) for t in taken[0])
+    assert start.tzinfo is not None and end > start  # UTC, and as long as the run

@@ -2,7 +2,7 @@ import json
 from datetime import date, datetime, timedelta
 from types import SimpleNamespace
 
-from talus import api, cli, coach
+from talus import api, cli, coach, settings
 from tests.conftest import sign_in
 from tests.test_api import _gpx
 
@@ -37,6 +37,9 @@ def test_check_flags_invented_numbers_and_a_bolder_call():
     assert "less cautious" in problems[1]
     calm = {"call": "rest", "why": "Descent is 42% above normal."}
     assert coach.check(calm, PACKET, "brief") == []
+    # Bold and bullets for reading don't hide a number from the check.
+    assert coach.check({"call": "rest", "why": "**Rest today.** Descent is **42%** above normal."}, PACKET, "brief") == []
+    assert "18" in coach.check({"call": "rest", "why": "- **18 mi** this week"}, PACKET, "brief")[0]
 
 
 class FakeClient:
@@ -383,5 +386,68 @@ def test_action_numbers_may_be_quoted_but_not_invented_elsewhere():
     reply = {"answer": "Added 6 mi with 300 ft up; your normal is 361.", "used": [],
              "actions": [{"kind": "schedule_run", "day": "2026-10-15", "run_kind": "easy", "miles": 6, "gain_ft": 300,
                           "minutes": None, "run_id": None, "note": None}]}
-    assert coach.check(reply, PACKET, "chat") == []
-    assert coach.check(reply | {"answer": "Added 83 mi."}, PACKET, "chat") == ["These numbers are not in the data: 83."]
+    chat = PACKET | {"scheduled_runs": []}
+    assert coach.check(reply, chat, "chat") == []
+    assert coach.check(reply | {"answer": "Added 83 mi."}, chat, "chat") == ["These numbers are not in the data: 83."]
+    # Where actions can't be proposed (the plan chat), or the action could never be a card, an
+    # action's numbers don't count as data.
+    assert coach.check(reply, PACKET, "chat") == ["These numbers are not in the data: 6, 300."]
+    sync = {"answer": "Your long run was 17.4 mi.", "used": [],
+            "actions": [{"kind": "sync", "miles": 17.4}]}
+    assert coach.check(sync, chat, "chat") == ["These numbers are not in the data: 17.4."]
+    huge = reply | {"answer": "Added 250 mi.", "actions": [reply["actions"][0] | {"miles": 250}]}
+    assert coach.check(huge, chat, "chat") == ["These numbers are not in the data: 250."]
+
+
+def test_the_prompt_lets_no_new_number_through():
+    # "under about 120 words" let "120 mi" pass the check anywhere.
+    assert 120 not in coach.PROMPT_NUMBERS
+
+
+def test_every_mode_fits_a_request_the_sdk_sends_without_streaming():
+    # The SDK refuses (ValueError, before any request) a non-streaming call whose max_tokens
+    # could run past 10 minutes; the plan builder at 32k tokens failed every time.
+    import anthropic
+    from anthropic._constants import MODEL_NONSTREAMING_TOKENS
+    sdk = anthropic.Anthropic(api_key="test")
+    for mode, cfg in coach.MODES.items():
+        for model in settings.MODELS:
+            sdk._calculate_nonstreaming_timeout(cfg["max_tokens"], MODEL_NONSTREAMING_TOKENS.get(model))
+
+
+def test_a_request_the_sdk_refuses_falls_back_to_rules():
+    class Refusing(FakeClient):
+        def create(self, **kw):
+            raise ValueError("Streaming is required for operations that may take longer than 10 minutes.")
+
+    r = coach.run("brief", PACKET, FALLBACK, Refusing())
+    assert r.source == "rules" and r.reply == FALLBACK and r.fallback_reason == "api_error: ValueError"
+
+
+def test_clearing_the_chat_takes_its_cards_with_it(tmp_path, monkeypatch):
+    # Chat ids start again from 1 once the table is empty, so a card left behind showed under
+    # the next answer with the same id.
+    client = _demo(tmp_path, monkeypatch)
+    later = (date.today() + timedelta(days=3)).isoformat()
+    act = {"kind": "schedule_run", "day": later, "run_kind": "easy", "miles": 5, "gain_ft": 300, "minutes": None,
+           "run_id": None, "note": None}
+    monkeypatch.setattr(api, "coach_client", lambda: FakeClient({"answer": "Adding 5 mi with 300 ft up.", "used": [],
+                                                                  "actions": [act]}))
+    card = client.post("/api/coach/chat", json={"question": "Add an easy run"}).json()["messages"][-1]["actions"][0]
+    assert client.post(f"/api/coach/actions/{card['id']}/confirm").json()["status"] == "done"
+    client.delete("/api/coach/chat")
+    monkeypatch.setattr(api, "coach_client", lambda: FakeClient({"answer": "Rest.", "used": [], "actions": []}))
+    msgs = client.post("/api/coach/chat", json={"question": "Should I rest?"}).json()["messages"]
+    assert msgs[-1]["actions"] == []
+
+
+def test_a_card_confirmed_after_its_day_has_passed_does_nothing(tmp_path, monkeypatch):
+    client = _demo(tmp_path, monkeypatch)
+    store = api.get_store()
+    chat_id = store.add_chat("coach", "Adding a run.")
+    past = (date.today() - timedelta(days=2)).isoformat()
+    aid = store.add_action(chat_id, "schedule_run", {"day": past, "kind": "easy", "miles": 5.0, "gain_ft": 300,
+                                                     "minutes": None}, "Add Easy")
+    r = client.post(f"/api/coach/actions/{aid}/confirm").json()
+    assert r["status"] == "failed" and "has passed" in r["result"]
+    assert store.planned_runs() == []

@@ -2,6 +2,7 @@
 
 import { useRouter } from "next/navigation";
 import { Fragment, useState } from "react";
+import CoachModelsCard from "@/components/CoachModelsCard";
 import type { AdminAccount, AdminOverview } from "@/lib/types";
 
 type Msg = { ok: boolean; text: string } | null;
@@ -15,6 +16,7 @@ const ACTIONS: Record<string, string> = {
   signup_closed: "Closed sign-ups",
   feature_on: "Turned on",
   feature_off: "Turned off",
+  coach_models: "Changed coach models",
 };
 
 const FEATURES: { key: keyof AdminOverview["features"]; label: string; help: string }[] = [
@@ -226,6 +228,8 @@ export default function AdminView({ data }: { data: AdminOverview }) {
               {data.signup.chosen === null ? ` Set by TALUS_SIGNUP until you change it here.` : ""}
             </div>
           </section>
+
+          <CoachModelsCard data={data.coach_models} />
 
           <section className="card">
             <h2 className="label">Feature flags</h2>

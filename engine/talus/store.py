@@ -112,7 +112,8 @@ CREATE TABLE IF NOT EXISTS objective (
     high_point_ft REAL,
     source TEXT NOT NULL,
     created_at TEXT NOT NULL,
-    active INTEGER NOT NULL
+    active INTEGER NOT NULL,
+    goal TEXT NOT NULL DEFAULT 'race'
 );
 CREATE TABLE IF NOT EXISTS plan (
     id INTEGER PRIMARY KEY,
@@ -237,6 +238,15 @@ class Store:
             # no-op once set. The schema check writes nothing when the tables exist.
             self.db.execute("PRAGMA journal_mode = WAL").fetchone()
             self.db.executescript(SCHEMA)
+            # Columns added after a table was first made.
+            cols = {r["name"] for r in self.db.execute("PRAGMA table_info(objective)")}
+            if "goal" not in cols:
+                self.db.execute("ALTER TABLE objective ADD COLUMN goal TEXT NOT NULL DEFAULT 'race'")
+            # Cards an older clear_chat left behind: their message is gone, or a newer message took
+            # its id (a card is never older than the message that proposed it).
+            self.db.execute("DELETE FROM coach_action WHERE NOT EXISTS (SELECT 1 FROM chat WHERE chat.id ="
+                            " coach_action.chat_id AND chat.created_at <= coach_action.created_at)")
+            self.db.commit()
 
     @contextmanager
     def _write(self):
@@ -353,7 +363,10 @@ class Store:
 
     @_writes
     def add(self, act: RemoteActivity, raw: RawFile) -> int:
-        path = self.dir / "raw" / act.source / f"{act.source_id}.{EXT[raw.fmt]}"
+        raw_dir = (self.dir / "raw").resolve()
+        path = raw_dir / act.source / f"{act.source_id}.{EXT[raw.fmt]}"
+        if path.resolve().parent.parent != raw_dir:  # a source id names a file, never a path
+            raise ValueError(f"Bad activity id: {act.source_id!r}")
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_bytes(raw.data)
         cur = self.db.execute(
@@ -364,7 +377,7 @@ class Store:
                    raw_fmt = excluded.raw_fmt
                RETURNING id""",
             (act.source, act.source_id, act.start_time.isoformat() if act.start_time else None,
-             act.name, act.sport, act.device_name, str(path.relative_to(self.dir)), raw.fmt,
+             act.name, act.sport, act.device_name, str(path.relative_to(raw_dir.parent)), raw.fmt,
              act.distance_m, act.gain_m),
         )
         activity_id = cur.fetchone()[0]
@@ -588,7 +601,8 @@ class Store:
         if r is None:
             return None
         return Objective(r["name"], date.fromisoformat(r["day"]), r["distance_mi"], r["gain_ft"], r["loss_ft"],
-                         r["longest_climb_ft"], r["longest_descent_ft"], r["high_point_ft"], r["source"], r["id"])
+                         r["longest_climb_ft"], r["longest_descent_ft"], r["high_point_ft"], r["source"], r["id"],
+                         r["goal"])
 
     @_writes
     def save_objective(self, obj: Objective) -> int:
@@ -597,9 +611,10 @@ class Store:
         self.db.execute("UPDATE plan SET status = 'superseded' WHERE status IN ('draft', 'accepted')")
         cur = self.db.execute(
             "INSERT INTO objective (name, day, distance_mi, gain_ft, loss_ft, longest_climb_ft, longest_descent_ft,"
-            " high_point_ft, source, created_at, active) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)",
+            " high_point_ft, source, created_at, active, goal) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?)",
             (obj.name, obj.day.isoformat(), obj.distance_mi, obj.gain_ft, obj.loss_ft, obj.longest_climb_ft,
-             obj.longest_descent_ft, obj.high_point_ft, obj.source, datetime.now().isoformat(timespec="seconds")))
+             obj.longest_descent_ft, obj.high_point_ft, obj.source, datetime.now().isoformat(timespec="seconds"),
+             obj.goal))
         return cur.lastrowid
 
     @_writes
@@ -607,9 +622,9 @@ class Store:
         """Change the active objective in place; its accepted plan stands until a new one is accepted."""
         self.db.execute(
             "UPDATE objective SET name = ?, day = ?, distance_mi = ?, gain_ft = ?, loss_ft = ?, longest_climb_ft = ?,"
-            " longest_descent_ft = ?, high_point_ft = ?, source = ? WHERE id = ? AND active = 1",
+            " longest_descent_ft = ?, high_point_ft = ?, source = ?, goal = ? WHERE id = ? AND active = 1",
             (obj.name, obj.day.isoformat(), obj.distance_mi, obj.gain_ft, obj.loss_ft, obj.longest_climb_ft,
-             obj.longest_descent_ft, obj.high_point_ft, obj.source, obj.id))
+             obj.longest_descent_ft, obj.high_point_ft, obj.source, obj.goal, obj.id))
 
     @_writes
     def clear_objective(self) -> None:
@@ -634,6 +649,12 @@ class Store:
         cur = self.db.execute("INSERT INTO plan (objective_id, created_at, status, reason, body) VALUES (?, ?, 'draft', ?, ?)",
                               (objective_id, datetime.now().isoformat(timespec="seconds"), reason, json.dumps(body)))
         return cur.lastrowid
+
+    @_writes
+    def replace_draft(self, plan_id: int, body: dict) -> bool:
+        """Swap a waiting draft's weeks for a rebuilt version; a draft decided meanwhile stays as it was."""
+        cur = self.db.execute("UPDATE plan SET body = ? WHERE id = ? AND status = 'draft'", (json.dumps(body), plan_id))
+        return cur.rowcount > 0
 
     @_writes
     def decide_draft(self, plan_id: int, accept: bool) -> bool:
@@ -665,8 +686,10 @@ class Store:
 
     @_writes
     def clear_chat(self) -> None:
+        # Every card goes with its message: chat ids start again from 1 once the table is empty,
+        # so a card left behind would show under a new answer.
         self.db.execute("DELETE FROM chat")
-        self.db.execute("DELETE FROM coach_action WHERE status = 'proposed'")
+        self.db.execute("DELETE FROM coach_action")
 
     # Activity names: the coach's and the athlete's own, beside the device's name on the activity.
     def activity_names(self) -> dict[int, dict]:

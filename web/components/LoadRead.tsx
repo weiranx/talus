@@ -1,4 +1,5 @@
 import AiCost from "@/components/AiCost";
+import CoachText from "@/components/CoachText";
 import CoachFeedback from "@/components/CoachFeedback";
 import { BusyLine, Skel } from "@/components/Loading";
 import { engine } from "@/lib/api";
@@ -12,17 +13,15 @@ const QUESTIONS: [keyof LoadReply, string][] = [
   ["next", "Next 7 days"],
 ];
 
-const grid = { margin: 0, display: "grid", gridTemplateColumns: "minmax(110px, 160px) 1fr", gap: "10px 20px" } as const;
-
 export function LoadReadPending() {
   return (
     <section className="card">
       <h2 className="label">Coach&apos;s take</h2>
-      <dl style={grid} className="coach-read" aria-hidden>
+      <dl className="coach-read" aria-hidden>
         {QUESTIONS.map(([k, q], i) => (
-          <div key={k} style={{ display: "contents" }}>
-            <dt style={{ fontWeight: 600 }}>{q}</dt>
-            <dd style={{ margin: 0, display: "flex", alignItems: "center", minHeight: 20 }}><Skel w={`${88 - i * 10}%`} h={13} /></dd>
+          <div key={k}>
+            <dt>{q}</dt>
+            <dd style={{ display: "flex", alignItems: "center", minHeight: 20 }}><Skel w={`${88 - i * 10}%`} h={13} /></dd>
           </div>
         ))}
       </dl>
@@ -44,11 +43,11 @@ export default async function LoadRead({ reply }: { reply: Promise<CoachReply<Lo
   return (
     <section className="card">
       <h2 className="label">Coach&apos;s take</h2>
-      <dl style={grid} className="coach-read">
+      <dl className="coach-read">
         {QUESTIONS.map(([k, q]) => (
-          <div key={k} style={{ display: "contents" }}>
-            <dt style={{ fontWeight: 600 }}>{q}</dt>
-            <dd style={{ margin: 0, maxWidth: 720 }}>{r.reply[k]}</dd>
+          <div key={k}>
+            <dt>{q}</dt>
+            <dd><CoachText text={r.reply[k]} /></dd>
           </div>
         ))}
       </dl>

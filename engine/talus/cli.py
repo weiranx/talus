@@ -47,7 +47,7 @@ def main(argv: list[str] | None = None) -> None:
 
     s = sub.add_parser("sync", help="pull new activities, plus overnight HRV, resting HR and sleep, from a platform")
     s.add_argument("--source", choices=SOURCES, default="intervals",
-                   help="garmin is unofficial: owner account only, at your own risk")
+                   help="garmin and coros are unofficial: owner account only, at your own risk")
     s.add_argument("--days", type=int, default=180)
     s.add_argument("--since", type=date.fromisoformat)
     s.add_argument("--no-coach", action="store_true", help="skip writing the coach brief and reads after the sync")
@@ -246,9 +246,11 @@ def cmd_thresholds(store: Store, args) -> None:
 def cmd_sync(store: Store, args) -> None:
     since = args.since or date.today() - timedelta(days=args.days)
     credential = args.credential
-    if args.source == "garmin" and not (args.account and args.account.is_owner):
-        # Unofficial and tied to one person's Garmin login: never pull it into another account.
-        sys.exit("Garmin Connect is for the owner account only.")
+    if args.source in ("garmin", "coros") and not (args.account and args.account.is_owner):
+        # Unofficial and tied to one person's login: never pull it into another account.
+        sys.exit(f"{'COROS' if args.source == 'coros' else 'Garmin Connect'} is for the owner account only.")
+    if args.source == "coros" and credential is None:
+        sys.exit("Connect COROS in Settings > Data sources first.")
     if args.source == "garmin" and credential is None:
         # First run from the command line: sign in with GARMIN_EMAIL and GARMIN_PASSWORD from .env
         # (MFA prompts here), then keep only the tokens, like Settings does.
@@ -275,7 +277,7 @@ def cmd_sync(store: Store, args) -> None:
         warm_coach(result["added_ids"] + (strava["added_ids"] if strava else []))
 
 
-SOURCES = ("intervals", "garmin")
+SOURCES = ("intervals", "garmin", "coros")
 STRAVA_WEB = "strava_web"
 
 
@@ -307,6 +309,11 @@ def open_source(source_name: str, credential: dict | None):
         if credential is None:
             raise RuntimeError("Garmin Connect isn't connected. Connect it in Settings > Data sources.")
         return GarminSource.from_credential(credential)
+    if source_name == "coros":
+        from .sources.coros import CorosSource
+        if credential is None:
+            raise RuntimeError("COROS isn't connected. Connect it in Settings > Data sources.")
+        return CorosSource.from_credential(credential)
     raise ValueError(f"Unknown source {source_name}")
 
 

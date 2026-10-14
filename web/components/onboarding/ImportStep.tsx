@@ -21,7 +21,7 @@ export default function ImportStep({ ob }: { ob: Onboarding }) {
   const [starting, setStarting] = useState(false);
   const imp = ob.import;
   const running = imp?.state === "running";
-  const source = ob.sources.intervals ? "intervals" : ob.sources.garmin ? "garmin" : null;
+  const source = ob.sources.intervals ? "intervals" : ob.sources.garmin ? "garmin" : ob.sources.coros ? "coros" : null;
 
   // While it runs, refresh the page every couple of seconds for the progress.
   useEffect(() => {

@@ -55,7 +55,7 @@ private struct PlanScreen: View {
                     if let w = p.thisWeek { ThisWeekCard(w: w) }
                     CalendarCard(initial: b.schedule, compact: true, onChange: reload)
                     RoadCard(obj: obj, plan: accepted, current: PlanScreen.weekStart(p.date), actuals: p.actuals ?? [:])
-                    if let r = p.readiness { ReadinessPlanCard(r: r, projected: accepted.projected, note: p.fitnessOnly) }
+                    if let r = p.readiness, let pr = accepted.projected { ReadinessPlanCard(r: r, projected: pr, note: p.fitnessOnly) }
                     Card {
                         SectionLabel("Coach")
                         CoachPlanSection()
@@ -130,9 +130,8 @@ private struct PlanScreen: View {
 
     private func header(_ obj: Objective) -> some View {
         VStack(alignment: .leading, spacing: 4) {
-            Text("\(Fmt.day(obj.day, .dateTime.weekday(.wide).month(.wide).day())) · \(obj.daysToGo) days to go")
-                .font(.subheadline).foregroundStyle(.secondary)
-            Text(Fmt.distVert(mi: obj.distanceMi, gain: obj.gainFt, loss: obj.lossFt)).font(.subheadline.monospacedDigit())
+            Text(obj.whenText).font(.subheadline).foregroundStyle(.secondary)
+            Text(obj.sizeText).font(.subheadline.monospacedDigit())
         }
     }
 
@@ -246,12 +245,14 @@ private struct SetupReview: View {
                 HStack(alignment: .top) {
                     Text("Your plan for \(obj.name)").font(.title3.weight(.semibold))
                     Spacer()
-                    Pill(text: draft.reachable ? "Reachable" : "Out of reach", tone: draft.reachable ? .good : .bad)
+                    if obj.isEvent || obj.goal == "target" {
+                        Pill(text: draft.reachable ? (obj.isEvent ? "Reachable" : "On pace") : (obj.isEvent ? "Out of reach" : "Short of target"),
+                             tone: draft.reachable ? .good : .bad)
+                    }
                 }
-                Text("\(Fmt.day(obj.day, .dateTime.weekday(.wide).month(.wide).day())) · \(obj.daysToGo) days to go · \(Fmt.mi(obj.distanceMi)) mi, \(Fmt.n0(obj.gainFt)) ft up, \(Fmt.n0(obj.lossFt)) ft down")
-                    .font(.subheadline).foregroundStyle(.secondary)
+                Text("\(obj.whenText) · \(obj.sizeText)").font(.subheadline).foregroundStyle(.secondary)
                 Text(Self.summary(draft, obj.name))
-                if !draft.reachable { OutOfReach(draft: draft) }
+                if !draft.reachable && obj.isEvent { OutOfReach(draft: draft) }
                 PlanActions(draftId: draft.id, acceptOnly: true, reload: reload)
                 HStack(spacing: 16) {
                     Button("Change the objective") { change(.objective) }
@@ -267,7 +268,7 @@ private struct SetupReview: View {
                 SectionLabel("Coach's read")
                 CoachPlanSection()
             }
-            if let r = p.readiness { ReadinessPlanCard(r: r, projected: draft.projected, note: p.fitnessOnly) }
+            if let r = p.readiness, let pr = draft.projected { ReadinessPlanCard(r: r, projected: pr, note: p.fitnessOnly) }
             Text("Nothing is on your calendar until you accept. You can change or delete the plan any time after.")
                 .font(.subheadline).foregroundStyle(.secondary)
             deleteButton
@@ -571,12 +572,12 @@ private struct RoadCard: View {
     var body: some View {
         Card {
             HStack {
-                SectionLabel("Road to \(obj.name)")
+                SectionLabel(obj.isEvent ? "Road to \(obj.name)" : "The weeks ahead")
                 Spacer()
                 NavigationLink("Every week") { WeeksScreen(obj: obj, plan: plan, current: current, actuals: actuals) }
                     .font(.subheadline)
             }
-            Text("Peak \(Fmt.mi(plan.peak.miles)) mi and \(Fmt.n0(plan.peak.gainFt)) ft up a week. Lighter weeks are recovery and taper; the marker is this week.")
+            Text("\(obj.isEvent ? "Peak" : "Target") \(Fmt.mi(plan.peak.miles)) mi and \(Fmt.n0(plan.peak.gainFt)) ft up a week. Lighter weeks are \(obj.isEvent ? "recovery and taper" : "recovery weeks"); the marker is this week.")
                 .font(.subheadline).foregroundStyle(.secondary)
             strip("Miles a week", color: Ledger.color("distance")) { $0.miles }
             strip("Feet up a week", color: Ledger.color("climb")) { $0.gainFt }
@@ -780,8 +781,8 @@ private struct ReviewSection: View {
                     .font(.subheadline).foregroundStyle(.secondary)
             }
             if let r {
-                Text(r.reply.week)
-                Text(r.reply.next)
+                CoachText(text: r.reply.week)
+                CoachText(text: r.reply.next)
                 CoachFooter(source: r.source, reason: r.fallbackReason, what: "review", logId: r.logId, feedback: r.feedback, cost: r.cost)
             }
             if let reason = review.replan.first {
@@ -846,7 +847,7 @@ private struct ChatCard: View {
         return HStack {
             if mine { Spacer(minLength: 40) }
             VStack(alignment: .leading, spacing: 6) {
-                Text(m.text)
+                if mine { Text(m.text) } else { CoachText(text: m.text) }
                 if !mine, m.source == "coach", let id = m.logId {
                     Text("AI coach, numbers checked").font(.caption2).foregroundStyle(.secondary)
                     if let cost = m.cost { Text(cost.text).font(.caption2.monospacedDigit()).foregroundStyle(.secondary) }

@@ -164,7 +164,47 @@ export interface Segment {
   hr_zone_minutes: HrZoneMinutes | null;
   climb_load: number;
   descent_load: number;
+  avg_hr?: number | null;
+  vert_rate_ft_h?: number | null;
 }
+
+// Climbing and descending by grade, and durability (engine terrain.py).
+export interface GradeSplit { time_s: number; vert_rate_ft_h: number; pace_min_mi: number | null; avg_hr: number | null }
+export interface GradeBand {
+  key: string;
+  label: string;
+  kind: "climb" | "descent";
+  time_s: number;
+  distance_mi: number;
+  vert_ft: number;
+  vert_rate_ft_h: number;
+  pace_min_mi: number | null;
+  hike_share: number;
+  avg_hr: number | null;
+  hike: GradeSplit | null;
+  run: GradeSplit | null;
+  usual: { runs: number; vert_rate_ft_h: number; avg_hr: number | null; rate_change_pct: number | null; hr_change_bpm: number | null; fastest: boolean } | null;
+}
+export interface DurabilityHalf {
+  time_s: number; distance_mi: number; gain_ft: number; flat_pace_min_mi: number | null;
+  climb_rate_ft_h: number | null; avg_hr: number | null; efficiency: number | null;
+}
+export interface Durability {
+  first: DurabilityHalf;
+  second: DurabilityHalf;
+  flat_pace_min_mi: number | null;
+  pace_change_pct: number | null;
+  climb_rate_change_pct: number | null;
+  decoupling_pct: number | null;
+  verdict: "held" | "drifted" | "faded" | null;
+  usual_decoupling_pct: number | null;
+  usual_runs: number;
+}
+export interface HikeOrRun {
+  key: string; label: string; hike_rate_ft_h: number; run_rate_ft_h: number; run_rate_gain_pct: number;
+  hike_hr: number | null; run_hr: number | null; run_hr_cost_bpm: number | null;
+}
+export interface Terrain { bands: GradeBand[]; durability: Durability | null; hike_or_run: HikeOrRun[] }
 
 export interface UsualDay { load: number | null; times_usual_day: number | null; six_week_high: boolean }
 
@@ -177,6 +217,7 @@ export interface ActivityDetail extends Omit<ActivitySummary, "cardio_load" | "c
   minutes_above_8000ft: number;
   loads: Record<Ledger, UsualDay>;
   segments: Segment[];
+  terrain?: Terrain | null;
   zone_model: ZoneModel;
   streams: {
     time_s: number[];
@@ -298,6 +339,8 @@ export interface Settings {
     intervals: { connected: boolean; last_sync: LastSync | null };
     // Garmin direct is unofficial and offered to the owner account only.
     garmin: { available: boolean; connected: boolean; updated_at: string | null; mfa_pending: boolean; last_sync: LastSync | null };
+    // COROS direct (Training Hub's API) is unofficial and offered to the owner account only too.
+    coros: { available: boolean; connected: boolean; updated_at: string | null; region: string | null; last_sync: LastSync | null };
     upload: { last_import: LastImport | null; max_mb: number };
     // Posted by the Talus iOS app to /api/import/healthkit.
     healthkit: { last_sync: { at: string; workouts_added: number; workouts_skipped: number; wellness_days: number } | null };
@@ -312,9 +355,11 @@ export interface Settings {
     brief_model: string;
     analysis_model: string;
     style: string;
+    // The AI coach builds plan drafts (the engine checks them); off means the engine builds them.
+    ai_plans?: boolean;
     styles: { key: string; label: string; description: string }[];
     models: { id: string; label: string; input: number; output: number }[];
-    estimate: { brief: Record<string, CostEstimate>; analysis: Record<string, CostEstimate> };
+    estimate: { brief: Record<string, CostEstimate>; analysis: Record<string, CostEstimate>; build?: Record<string, CostEstimate> };
     // This month's spending on the server's Anthropic key. ceiling is null for the owner.
     cap: { limit: number | null; ceiling: number | null; spent: number; month: string };
   };
@@ -374,9 +419,17 @@ export interface Objective {
   high_point_ft: number | null;
   source: "manual" | "gpx";
   days_to_go: number;
+  // What the plan is for. A race or trip has a day to be ready for (event); a block has none, and
+  // its distance and gain are weekly targets (a yearly target's are the year's totals).
+  goal?: Goal;
+  event?: boolean;
+  goal_text?: string;
 }
 
-export type Workout = "none" | "track" | "tempo" | "hill_repeats" | "race_pace";
+export type Goal = "race" | "trip" | "base" | "maintain" | "comeback" | "faster" | "target" | "rolling";
+
+export type Workout = "none" | "track" | "tempo" | "hill_repeats" | "race_pace" | "threshold" | "fartlek" | "progression";
+export type HillSession = "vert_climb" | "power_hike" | "downhill" | "muscular_endurance" | "hill_sprints";
 
 export interface Constraints {
   days: number[]; weekday_min: number; weekend_min: number; long_day: number; notes: string;
@@ -395,7 +448,7 @@ export interface LongDay {
   second?: { day: string; miles: number; gain_ft: number; loss_ft: number; minutes: number; effort_mi: number } | null;
 }
 
-export type Focus = "build" | "peak" | "recovery" | "taper" | "race";
+export type Focus = "build" | "peak" | "hold" | "recovery" | "taper" | "race";
 
 export interface PlanWeek {
   index: number;
@@ -410,9 +463,14 @@ export interface PlanWeek {
   limited_by: string[];
   notes: string[];
   workout?: Exclude<Workout, "none"> | null;
+  hill_session?: HillSession | null;
+  // The AI coach's line for the week, when it built the plan.
+  coach_note?: string | null;
 }
 
 export interface WeekBrief { focus: Focus; miles: number; gain_ft: number; loss_ft: number; hours: number }
+
+export interface Vol3 { miles: number; gain_ft: number; loss_ft: number }
 
 export interface Plan {
   id: number;
@@ -428,16 +486,25 @@ export interface Plan {
   demand: { effort_mi: number; time: { low_h: number; mid_h: number; high_h: number; pace_learned: boolean } };
   peak: { miles: number; gain_ft: number; loss_ft: number };
   weeks: PlanWeek[];
-  projected: ReadinessEval & { capacity: Record<string, number> };
+  projected: (ReadinessEval & { capacity: Record<string, number> }) | null;
   reachable: boolean;
   back_to_back?: boolean;
+  goal?: Goal;
+  target?: { done: Vol3; planned: Vol3; totals: Vol3 } | null;
   race_type?: "mountain" | "road" | "hundred" | "multiday";
+  // "coach" when the AI coach built the weeks and the engine held them to its limits.
+  builder?: "engine" | "coach" | null;
+  // The AI coach is still building its version; the engine's weeks show until it's done.
+  building?: boolean;
+  approach?: string | null;
+  held_weeks?: number | null;
   options: { smaller: { factor: number; distance_mi: number; gain_ft: number; loss_ft: number } | null; later: string | null };
-  now: ReadinessEval;
+  now: ReadinessEval | null;
   changes: { start: string; before: WeekBrief | null; after: WeekBrief }[];
 }
 
-export type SessionKind = "long" | "long2" | "hills" | "easy" | "track" | "tempo" | "hill_repeats" | "race_pace" | "rest" | "objective" | "done";
+export type SessionKind = "long" | "long2" | "hills" | "easy" | "track" | "tempo" | "hill_repeats" | "race_pace"
+  | "threshold" | "fartlek" | "progression" | "rest" | "objective" | "done";
 
 export interface PlanSession {
   day: string;
@@ -449,6 +516,11 @@ export interface PlanSession {
   focus: Focus;
   title: string;
   how: string;
+  // How to run it, warm-up to cool-down, with heart-rate targets.
+  steps?: string[];
+  // The hill day's session, or recovery/strides on an easy day; strength is added after the run.
+  type?: string;
+  strength?: boolean;
   own?: boolean;
   detail: string;
   longest_descent_ft?: number | null;
@@ -549,6 +621,14 @@ export interface AdminOverview {
   month: string;
   signup: { open: boolean; chosen: boolean | null; env: boolean };
   features: { show_ai_cost: boolean };
+  coach_models: {
+    brief_model: string;
+    analysis_model: string;
+    chosen: boolean;
+    env: string | null;
+    models: { id: string; label: string; input: number; output: number }[];
+    estimate: Record<"brief" | "analysis", Record<string, CostEstimate>>;
+  };
   system: {
     revision: string | null;
     model_version: string;
@@ -566,14 +646,15 @@ export interface TalkMessage {
   role: "athlete" | "coach"; text: string; step?: string | null;
   groups?: TalkGroup[]; actions?: { id: "accept" | "keep" | "retry"; label: string }[]; cost?: AiCost | null;
 }
-export interface Talk { messages: TalkMessage[]; step: string; mode: "setup" | "change"; reads_with_ai: boolean }
+// building: the AI coach is still building its version of the draft; the conversation says when it is ready.
+export interface Talk { messages: TalkMessage[]; step: string; mode: "setup" | "change"; reads_with_ai: boolean; building?: boolean }
 
 export type OnboardingStep = "connect" | "import" | "thresholds" | "sleep" | "coach" | "tour";
 export type ImportRange = "6w" | "6m" | "all";
 
 export interface ImportStatus {
   state: "running" | "done";
-  source: "intervals" | "garmin";
+  source: "intervals" | "garmin" | "coros";
   range: ImportRange;
   days: number;
   started: string;
@@ -595,7 +676,7 @@ export interface Onboarding {
   next: OnboardingStep | null;
   import: ImportStatus | null;
   activities: number;
-  sources: { intervals: boolean; garmin: boolean; garmin_available: boolean };
+  sources: { intervals: boolean; garmin: boolean; garmin_available: boolean; coros: boolean; coros_available: boolean };
   resting_hint: number | null;
   coach: { enabled: boolean; style: string; key_set: boolean; styles: { key: string; label: string; description: string }[] };
   import_choices: Record<ImportRange, number>;
@@ -605,7 +686,7 @@ export interface Onboarding {
 export type CheckState = "ok" | "warn" | "bad" | "idle";
 export interface EngineHealth { ok: boolean; revision: string | null; model_version: string; started_at: string; uptime_s: number }
 export interface SourceStatus {
-  key: "intervals" | "garmin" | "watch" | "healthkit" | "upload";
+  key: "intervals" | "garmin" | "coros" | "watch" | "healthkit" | "upload";
   label: string;
   state: CheckState;
   connected: boolean | null;
@@ -644,4 +725,26 @@ export interface StatusOverview {
     sign_in: { google: boolean };
     intervals_oauth: { enabled: boolean; connected: number };
   }) | null;
+}
+
+// /api/heatmap: every scored activity with its route as an encoded polyline (null without GPS).
+export type HeatKind = "trail" | "run" | "hike" | "ride" | "other";
+export interface HeatActivity {
+  id: number;
+  day: string;
+  start_time: string;
+  name: string | null;
+  sport: string | null;
+  kind: HeatKind;
+  distance_mi: number;
+  gain_ft: number;
+  loss_ft: number;
+  effort_mi: number;
+  moving_time_s: number;
+  line: string | null;
+  pending: boolean;
+}
+export interface HeatmapData {
+  pending: number;
+  activities: HeatActivity[];
 }

@@ -307,6 +307,9 @@ def test_healthkit_endpoint_for_the_ios_app(tmp_path, monkeypatch):
     assert w[date(2026, 10, 2)]["hrv"] == 61  # the watch's night stays
     assert w[date(2026, 10, 3)] == {"hrv": None, "resting_hr": 46, "sleep_s": 27000, "sleep_score": None}
     assert client.post("/api/import/healthkit", json={"workouts": [{"uuid": "x", "sport": "swim"}]}).status_code == 422
+    # A uuid names the raw file, so it can't climb out of the account's folder.
+    bad = body["workouts"][0] | {"uuid": "../../../1/raw/pwned"}
+    assert client.post("/api/import/healthkit", json={"workouts": [bad]}).status_code == 422
 
 
 def _fit_with_local_time(utc_ms: int, offset_s: int) -> bytes:

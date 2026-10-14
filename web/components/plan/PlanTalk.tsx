@@ -3,6 +3,7 @@
 import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 import AiCost from "@/components/AiCost";
+import CoachText from "@/components/CoachText";
 import { Dots } from "@/components/Loading";
 import type { Talk, TalkGroup, TalkMessage } from "@/lib/types";
 
@@ -33,6 +34,22 @@ export default function PlanTalk({ initial }: { initial: Talk }) {
   const [picks, setPicks] = useState<Picks>(() => startPicks(groups));
   const list = useRef<HTMLDivElement>(null);
 
+  // While the AI coach builds its version of the draft, check back until it's ready.
+  useEffect(() => {
+    if (!talk.building || busy) return;
+    const timer = setTimeout(async () => {
+      const res = await fetch(`/api/plan/talk?mode=${talk.mode}`).catch(() => null);
+      const next: Talk | null = res?.ok ? await res.json().catch(() => null) : null;
+      if (!next) return setTalk({ ...talk });  // try again on the next tick
+      setTalk(next);
+      if (!next.building) {
+        setPicks(startPicks([...next.messages].reverse().find((m) => m.role === "coach")?.groups ?? []));
+        router.refresh();
+      }
+    }, 4000);
+    return () => clearTimeout(timer);
+  }, [talk, busy, router]);
+
   // Keep the newest message in view inside the conversation, without scrolling the page.
   useEffect(() => {
     if (list.current) list.current.scrollTop = list.current.scrollHeight;
@@ -49,7 +66,9 @@ export default function PlanTalk({ initial }: { initial: Talk }) {
     if (!res?.ok) {
       setTalk(before);
       const detail = res ? (await res.json().catch(() => ({}))).detail : null;
-      return setError(typeof detail === "string" ? detail : "Could not reach the coach. Is the engine running?");
+      return setError(typeof detail === "string" ? detail
+        : res && res.status >= 500 ? `The engine couldn't answer that (${res.status}). Try again, or start over.`
+        : "Could not reach the coach. Is the engine running?");
     }
     const next: Talk = await res.json();
     setTalk(next);
@@ -119,9 +138,9 @@ export default function PlanTalk({ initial }: { initial: Talk }) {
               <div style={{
                 maxWidth: "min(620px, 92%)", background: m.role === "athlete" ? "var(--strong)" : "var(--bg)",
                 color: m.role === "athlete" ? "var(--on-strong)" : "var(--ink)", borderRadius: 14, padding: "10px 14px", fontSize: 15,
-                whiteSpace: "pre-wrap", opacity: m.role === "coach" && i < lastIndex - 1 ? 0.85 : 1,
+                whiteSpace: m.role === "coach" ? undefined : "pre-wrap", opacity: m.role === "coach" && i < lastIndex - 1 ? 0.85 : 1,
               }}>
-                {m.text}
+                {m.role === "coach" ? <CoachText text={m.text} /> : m.text}
                 {m.cost ? <span className="muted"><AiCost cost={m.cost} /></span> : null}
               </div>
               {active && m.groups?.length ? (
@@ -154,6 +173,12 @@ export default function PlanTalk({ initial }: { initial: Talk }) {
             </div>
           );
         })}
+        {talk.building && !busy ? (
+          <div role="status" style={{ alignSelf: "flex-start", display: "flex", alignItems: "center", gap: 10, background: "var(--bg)", borderRadius: 14,
+            padding: "10px 14px", fontSize: 14, color: "var(--muted)" }}>
+            <Dots /><span>The AI coach is building its version.</span>
+          </div>
+        ) : null}
         {busy ? (
           <div role="status" style={{ alignSelf: "flex-start", display: "flex", alignItems: "center", gap: 10, background: "var(--bg)", borderRadius: 14,
             padding: "10px 14px", fontSize: 14, color: "var(--muted)" }}>

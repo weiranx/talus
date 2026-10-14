@@ -1,5 +1,6 @@
 import AiCost from "@/components/AiCost";
 import CoachFeedback from "@/components/CoachFeedback";
+import CoachText from "@/components/CoachText";
 import PlanActions from "@/components/plan/PlanActions";
 import { engine } from "@/lib/api";
 import { coachNote } from "@/lib/coach";
@@ -52,8 +53,8 @@ export default async function Review({ fallback, compact }: { fallback: WeekRevi
       {review.flags.length ? <div className="muted">Flags: {review.flags.map((f) => `${f.ledger} ${f.text.toLowerCase()}`).join("; ")}.</div> : null}
       {r ? (
         <>
-          <div>{r.reply.week}</div>
-          <div>{r.reply.next}</div>
+          <CoachText text={r.reply.week} />
+          <CoachText text={r.reply.next} />
           <div style={{ display: "flex", flexWrap: "wrap", justifyContent: "space-between", alignItems: "center", gap: 10 }}>
             <div className="muted" style={{ fontSize: 12, maxWidth: 520 }}>{coachNote(r.source, r.fallback_reason, "review")}<AiCost cost={r.cost} /></div>
             {r.log_id ? <CoachFeedback logId={r.log_id} initial={r.feedback} /> : null}

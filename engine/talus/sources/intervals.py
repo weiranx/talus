@@ -4,7 +4,8 @@ Either an OAuth access token (Settings > Connect intervals.icu, see intervals_au
 auth; 100 requests per user per day, 500 users by default) or a personal API key over basic auth,
 which still works as a fallback. intervals.icu said on 2026-10-09 that
 Garmin data through its API will likely be blocked soon, so keep the Garmin adapter as a fallback.
-Strava-sourced activities are skipped: the API does not serve them, and Talus does not use Strava data.
+Strava-sourced activities are skipped: the API does not serve them, and no account gets Strava data
+from intervals.icu. (The owner's personal Strava fallback is sources/strava_web, never offered to others.)
 """
 
 from __future__ import annotations

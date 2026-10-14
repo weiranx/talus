@@ -90,6 +90,9 @@ ACCOUNT_COLUMNS = {
     "disabled_at": "TEXT",          # set: the account can't sign in
     "last_seen": "TEXT",            # last signed-in request, to SEEN_EVERY
     "coach_ceiling_usd": "REAL",    # the admin's monthly coach ceiling for it; NULL is the server's
+    # Owner only, set by `talus strava-web setup`, no app shows it: also pull from Strava's
+    # website after each intervals.icu sync (sources/strava_web, a personal fallback).
+    "strava_web_enabled": "INTEGER NOT NULL DEFAULT 0",
 }
 
 
@@ -208,6 +211,14 @@ class Accounts:
 
     def by_email(self, email: str) -> Account | None:
         return self._row(self.db.execute("SELECT * FROM account WHERE email = ?", (email.strip(),)).fetchone())
+
+    def strava_web_enabled(self, account_id: int) -> bool:
+        r = self.db.execute("SELECT strava_web_enabled FROM account WHERE id = ?", (account_id,)).fetchone()
+        return bool(r and r[0])
+
+    def set_strava_web_enabled(self, account_id: int, enabled: bool) -> None:
+        self.db.execute("UPDATE account SET strava_web_enabled = ? WHERE id = ?", (int(enabled), account_id))
+        self.db.commit()
 
     def owner(self) -> Account | None:
         return self._row(self.db.execute("SELECT * FROM account WHERE is_owner = 1 ORDER BY id LIMIT 1").fetchone())

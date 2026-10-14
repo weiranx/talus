@@ -22,6 +22,7 @@ from contextvars import ContextVar
 from dataclasses import asdict
 from datetime import date, datetime, timedelta, timezone
 from http.cookies import SimpleCookie
+from pathlib import Path
 from typing import Literal
 
 import httpx
@@ -2333,9 +2334,12 @@ def sync_now(body: SyncIn, background: BackgroundTasks) -> dict:
     else:
         cred, save = _owner_source(body.source)
     lines: list[str] = []
+    since = date.today() - timedelta(days=body.days)
+    # The owner's personal Strava fallback (if enabled) follows, after the response; it paces
+    # itself at a request a second, so the button never waits on it.
+    background.add_task(_strava_web_after, store.dir, _account.get(), body.source, since)
     try:
-        result = cli.sync(store, body.source, date.today() - timedelta(days=body.days), log=lines.append,
-                          credential=cred, save_credential=save)
+        result = cli.sync(store, body.source, since, log=lines.append, credential=cred, save_credential=save)
     except Exception:
         return store.settings()[f"last_sync_{body.source}"] | {"log": lines}
     # The coach writes after the response, so the sync button doesn't wait on it.
@@ -2343,6 +2347,13 @@ def sync_now(body: SyncIn, background: BackgroundTasks) -> dict:
     background.add_task(warm_coach, added)
     background.add_task(start_inferring, store.dir)
     return result | {"added": added_activities(store, added), "log": lines}
+
+
+def _strava_web_after(folder: Path, account: Account | None, source_name: str, since: date) -> None:
+    result = cli.strava_web_after(get_accounts(), account, Store(folder), source_name, since, log=lambda _: None)
+    if result and result["added_ids"]:
+        warm_coach(result["added_ids"])
+        start_inferring(folder)
 
 
 def added_activities(store: Store, ids: list[int]) -> list[dict]:

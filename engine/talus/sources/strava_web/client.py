@@ -1,19 +1,22 @@
-"""A signed-in session on strava.com, the way the website itself signs in. Strava's public API is
-deliberately not used.
+"""A signed-in session on strava.com, borrowed from the owner's own browser. Strava's public API
+is deliberately not used.
 
 Personal only: this exists so the owner's own runs still reach Talus when Garmin rate-limits
 intervals.icu. It runs only for the owner account with `strava_web_enabled` set in accounts.db,
 and it is never offered as a source in the apps. Scraping the website is against Strava's terms;
 keep it to your own account.
 
-STRAVA_EMAIL and STRAVA_PASSWORD come from .env, like GARMIN_EMAIL and GARMIN_PASSWORD. The
-password is only ever sent to strava.com/session. The session's cookies are kept in the account's
-folder (strava_web_cookies.json, mode 0600, outside raw/ so an export leaves them out) and reused
-across runs; Talus signs in again only when Strava sends it to /login or answers 401 or 403.
-STRAVA_SESSION_COOKIE, a whole Cookie header copied from a signed-in browser, overrides the jar.
+Talus never signs in with a password. Strava's sign-in page is an email-first app now (no
+authenticity_token, no form posting to /session), and posting a password from a server is what
+gets an account flagged. Instead `talus strava-web setup` takes the Cookie header from a browser
+that is signed in, checks it, and saves it encrypted like the Garmin tokens. STRAVA_SESSION_COOKIE
+in .env overrides it.
 
-A captcha or a refused sign-in stops the run with an error and is never retried. One request at a
-time, at most one a second, with a desktop browser's User-Agent.
+The session's cookies, as Strava refreshes them, are kept in the account's folder
+(strava_web_cookies.json, mode 0600, outside raw/ so an export leaves them out) and reused across
+runs. When Strava sends a request to /login or answers 401 or 403, the session has ended: the run
+stops with `session_expired` until setup is run again. A captcha stops it the same way. Neither is
+retried. One request at a time, at most one a second, with a desktop browser's User-Agent.
 """
 
 from __future__ import annotations
@@ -34,13 +37,11 @@ USER_AGENT = ("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.3
 MIN_INTERVAL_S = 1.0
 MAX_REDIRECTS = 5
 COOKIE_FILE = "strava_web_cookies.json"
+SETUP = "Run `talus strava-web setup` with a fresh cookie from a browser signed in to Strava."
 
-TOKEN_INPUT = re.compile(r'<input[^>]*name="authenticity_token"[^>]*>', re.I)
-VALUE = re.compile(r'value="([^"]*)"')
 CSRF_META = re.compile(r'<meta[^>]*name="csrf-token"[^>]*content="([^"]*)"|'
                        r'<meta[^>]*content="([^"]*)"[^>]*name="csrf-token"', re.I)
-# A challenge, not just the script: Strava's pages may load reCAPTCHA invisibly on every visit.
-# Unverified against a recording (there is no HAR yet); widen if a live run meets one unnoticed.
+# A challenge, not just the script: signed-in pages may load reCAPTCHA invisibly on every visit.
 CAPTCHA = re.compile(r'class="[^"]*\b(g-recaptcha|h-captcha|cf-turnstile)\b|/captcha|captcha-challenge', re.I)
 
 
@@ -49,8 +50,8 @@ class StravaWebError(RuntimeError):
     code = "error"
 
 
-class StravaLoginError(StravaWebError):
-    code = "login_failed"
+class StravaSessionExpired(StravaWebError):
+    code = "session_expired"
 
 
 class StravaCaptchaError(StravaWebError):
@@ -61,30 +62,38 @@ def cookie_path(account_dir: str | Path) -> Path:
     return Path(account_dir) / COOKIE_FILE
 
 
+def clean_cookie_header(text: str) -> str:
+    """What someone pastes: the header's value, maybe with "Cookie:" in front, maybe wrapped."""
+    text = " ".join(text.split())
+    if text.lower().startswith("cookie:"):
+        text = text[len("cookie:"):]
+    return "; ".join(p.strip() for p in text.split(";") if "=" in p)
+
+
 class StravaWebClient:
-    def __init__(self, cookie_file: str | Path, email: str | None = None, password: str | None = None,
-                 session_cookie: str | None = None, transport: httpx.BaseTransport | None = None,
+    def __init__(self, cookie_file: str | Path, session_cookie: str | None = None,
+                 saved_cookie: str | None = None, transport: httpx.BaseTransport | None = None,
                  clock=time.monotonic, sleep=time.sleep):
+        """session_cookie (STRAVA_SESSION_COOKIE) wins; then the jar on disk, which carries the
+        cookies Strava refreshed on earlier runs; then saved_cookie, from setup."""
         self.cookie_file = Path(cookie_file)
-        self.email, self.password = email, password
         self.http = httpx.Client(base_url=BASE_URL, transport=transport, follow_redirects=False, timeout=60,
                                  headers={"User-Agent": USER_AGENT, "Accept-Language": "en-US,en;q=0.9"})
         self.csrf: str | None = None
-        self.logins = 0
         self._clock, self._sleep = clock, sleep
         self._last: float | None = None
         if session_cookie:
-            for part in session_cookie.split(";"):
-                name, _, value = part.strip().partition("=")
-                if name:
-                    self.http.cookies.set(name, value, domain=COOKIE_DOMAIN, path="/")
+            self._use(session_cookie)
         else:
             self._load()
+            if not len(self.http.cookies.jar) and saved_cookie:
+                self._use(saved_cookie)
 
-    @classmethod
-    def from_env(cls, cookie_file: str | Path, **kwargs) -> "StravaWebClient":
-        return cls(cookie_file, email=os.environ.get("STRAVA_EMAIL"), password=os.environ.get("STRAVA_PASSWORD"),
-                   session_cookie=os.environ.get("STRAVA_SESSION_COOKIE"), **kwargs)
+    def _use(self, header: str) -> None:
+        for part in clean_cookie_header(header).split("; "):
+            name, _, value = part.partition("=")
+            if name:
+                self.http.cookies.set(name, value, domain=COOKIE_DOMAIN, path="/")
 
     # Cookie jar on disk
     def _load(self) -> None:
@@ -134,58 +143,26 @@ class StravaWebClient:
             m = CSRF_META.search(resp.text)
             if m:
                 self.csrf = m.group(1) or m.group(2)
-        self._save()
-        return resp
-
-    def _follow(self, method: str, url: str, **kwargs) -> httpx.Response:
-        """Follow redirects by hand, stopping at one to the sign-in page."""
-        resp = self._send(method, url, **kwargs)
-        for _ in range(MAX_REDIRECTS):
-            if not resp.is_redirect or _to_login(resp):
-                return resp
-            resp = self._send("GET", str(resp.request.url.join(resp.headers["location"])))
         return resp
 
     def request(self, method: str, url: str, **kwargs) -> httpx.Response:
-        """A request in the signed-in session: signs in first when there is no session, and once
-        more when Strava sends this one to sign-in."""
+        """A request in the borrowed session. Redirects are followed by hand, stopping at one to
+        the sign-in page; the cookies Strava sets along the way are kept for the next run."""
         if not len(self.http.cookies.jar):
-            self.login()
-        resp = self._follow(method, url, **kwargs)
-        if _needs_login(resp):
-            self.login()
-            resp = self._follow(method, url, **kwargs)
-            if _needs_login(resp):
-                raise StravaLoginError("Strava still asks Talus to sign in right after signing in.")
+            raise StravaSessionExpired("Talus has no Strava session yet. " + SETUP)
+        resp = self._send(method, url, **kwargs)
+        for _ in range(MAX_REDIRECTS):
+            if not resp.is_redirect or _to_login(resp):
+                break
+            resp = self._send("GET", str(resp.request.url.join(resp.headers["location"])))
         _no_captcha(resp)
+        if _to_login(resp) or resp.status_code in (401, 403):
+            raise StravaSessionExpired(f"Strava's session has ended ({resp.status_code}). " + SETUP)
+        self._save()
         return resp
 
     def get(self, url: str, **kwargs) -> httpx.Response:
         return self.request("GET", url, **kwargs)
-
-    def login(self) -> None:
-        """GET /login for its authenticity_token, then POST /session. A captcha or a refusal
-        raises; neither is retried."""
-        if not (self.email and self.password):
-            raise StravaLoginError("Strava's session has ended and STRAVA_EMAIL and STRAVA_PASSWORD aren't set in .env.")
-        if self.logins:
-            raise StravaLoginError("Strava asked Talus to sign in twice in one run; stopping.")
-        self.logins += 1
-        self.http.cookies.clear()
-        page = self._send("GET", "/login")
-        _no_captcha(page)
-        field = TOKEN_INPUT.search(page.text)
-        token = field and VALUE.search(field.group(0))
-        if not token:
-            raise StravaLoginError(f"Strava's sign-in page had no authenticity_token ({page.status_code}).")
-        self.csrf = self.csrf or token.group(1)
-        resp = self._send("POST", "/session", data={
-            "utf8": "✓", "authenticity_token": token.group(1), "plan": "",
-            "email": self.email, "password": self.password, "remember_me": "on"})
-        _no_captcha(resp)
-        if not resp.is_redirect or _to_login(resp):
-            raise StravaLoginError(f"Strava didn't accept the email and password ({resp.status_code}).")
-        self._save()
 
     def close(self) -> None:
         self.http.close()
@@ -196,12 +173,8 @@ def _to_login(resp: httpx.Response) -> bool:
     return resp.is_redirect and httpx.URL(location).path.rstrip("/") in ("/login", "/session")
 
 
-def _needs_login(resp: httpx.Response) -> bool:
-    return resp.status_code in (401, 403) or _to_login(resp)
-
-
 def _no_captcha(resp: httpx.Response) -> None:
     if CAPTCHA.search(resp.headers.get("location", "")) or (
             "html" in resp.headers.get("content-type", "") and CAPTCHA.search(resp.text)):
-        raise StravaCaptchaError("Strava wants a captcha solved. Sign in once at strava.com from a browser, "
-                                 "or set STRAVA_SESSION_COOKIE, then sync again.")
+        raise StravaCaptchaError("Strava wants a captcha solved. Open strava.com in your browser, "
+                                 "then run `talus strava-web setup` again.")

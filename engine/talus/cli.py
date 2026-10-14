@@ -8,6 +8,8 @@ from __future__ import annotations
 import argparse
 import getpass
 import os
+import shutil
+import subprocess
 import sys
 from datetime import date, datetime, timedelta
 from pathlib import Path
@@ -76,6 +78,9 @@ def main(argv: list[str] | None = None) -> None:
     ac.add_argument("action", choices=["list", "create", "password"])
     ac.add_argument("email", nargs="?")
 
+    sw = sub.add_parser("strava-web", help="owner only: set up, check or turn off the personal Strava website fallback")
+    sw.add_argument("action", choices=["setup", "status", "off"])
+
     args = p.parse_args(argv)
     if args.cmd == "serve":
         import uvicorn
@@ -102,7 +107,7 @@ def main(argv: list[str] | None = None) -> None:
     try:
         {"thresholds": cmd_thresholds, "sync": cmd_sync, "import": cmd_import, "score": cmd_score,
          "rescore": cmd_rescore, "list": cmd_list, "load": cmd_load, "infer": cmd_infer,
-         "demo": cmd_demo}[args.cmd](store, args)
+         "demo": cmd_demo, "strava-web": cmd_strava_web}[args.cmd](store, args)
     finally:
         api._account.reset(reset)
 
@@ -271,6 +276,7 @@ def cmd_sync(store: Store, args) -> None:
 
 
 SOURCES = ("intervals", "garmin")
+STRAVA_WEB = "strava_web"
 
 
 def strava_web_after(accounts: Accounts, account: Account | None, store: Store, source_name: str, since: date,
@@ -282,8 +288,9 @@ def strava_web_after(accounts: Accounts, account: Account | None, store: Store, 
             or not accounts.strava_web_enabled(account.id):
         return None
     from .sources.strava_web import puller
+    cred = accounts.credential(account.id, STRAVA_WEB)
     try:
-        return puller.sync(store, since, log=log)
+        return puller.sync(store, since, log=log, saved_cookie=cred and cred.get("cookie"))
     except Exception as e:
         log(f"Strava (personal fallback) not synced: {type(e).__name__}: {e}")
         return None
@@ -372,6 +379,97 @@ def sync(store: Store, source_name: str, since: date, log=print, credential: dic
             if tokens and credential and tokens != credential.get("tokens"):
                 save_credential({"tokens": tokens})  # refreshed during the sync
     return result | {"added_ids": added}
+
+
+STRAVA_COOKIE_STEPS = """\
+Talus borrows the session from a browser where you are signed in to Strava.
+
+  1. In Chrome, open https://www.strava.com/dashboard while signed in.
+  2. Open DevTools (Cmd+Option+I), go to the Network tab and reload the page.
+  3. Click the first request (dashboard), then Headers > Request Headers.
+  4. Copy the whole value of the Cookie line (right-click it > Copy value).
+
+It's never shown, and it's saved encrypted, like the Garmin tokens. You can also pipe it in:
+pbpaste | talus strava-web setup. When Strava ends the session, syncs stop with
+session_expired: run this again.
+"""
+
+
+def _paste_cookie() -> str:
+    """The Cookie header, which runs past the 1,024 characters macOS lets a terminal line hold:
+    piped in, else from the clipboard where pbpaste exists, else typed without echo."""
+    if not sys.stdin.isatty():
+        return sys.stdin.read()
+    if shutil.which("pbpaste"):
+        input("Copy it, then press Enter here (Talus reads it from the clipboard): ")
+        return subprocess.run(["pbpaste"], capture_output=True, text=True, check=False).stdout
+    return getpass.getpass("Cookie (not shown): ")
+
+
+def _ask(prompt: str) -> str:
+    if not sys.stdin.isatty():
+        return ""
+    try:
+        return input(prompt).strip().lower()
+    except EOFError:
+        return ""
+
+
+def cmd_strava_web(store: Store, args) -> None:
+    """Guided setup, status and off switch for sources/strava_web, the owner's personal fallback.
+    No app shows it; this is the only way to turn it on."""
+    from .sources.strava_web import client as strava, puller
+
+    accounts, account = args.accounts, args.account
+    if account is None or not account.is_owner:
+        sys.exit("The Strava website fallback is for the owner account only.")
+    if args.action == "off":
+        accounts.set_strava_web_enabled(account.id, False)
+        accounts.clear_credential(account.id, STRAVA_WEB)
+        strava.cookie_path(store.dir).unlink(missing_ok=True)
+        print("Strava website sync is off, and its saved session is deleted.")
+        return
+    if args.action == "status":
+        cred = accounts.credential(account.id, STRAVA_WEB)
+        last = store.settings().get(f"last_sync_{STRAVA_WEB}")
+        print(f"After each intervals.icu sync: {'on' if accounts.strava_web_enabled(account.id) else 'off'}")
+        print(f"Session: {'saved ' + cred['updated_at'][:16] if cred else 'none'}"
+              + (" (STRAVA_SESSION_COOKIE in .env overrides it)" if os.environ.get("STRAVA_SESSION_COOKIE") else ""))
+        if last:
+            print(f"Last run {last['at']}: {last['saved']} new, {last['aliased']} already here"
+                  + (f", stopped: {last['error_code']} ({last['error']})" if last.get("error") else ""))
+        return
+
+    print("Strava website sync: a personal fallback for when intervals.icu can't get your runs.\n"
+          "It reads your own Strava account through the website, which Strava's terms don't allow.\n"
+          "Only this owner account uses it, and no app shows it.\n")
+    print(STRAVA_COOKIE_STEPS)
+    header = strava.clean_cookie_header(_paste_cookie())
+    if not header:
+        sys.exit("Nothing pasted. Nothing was saved.")
+    # Checked against a scratch jar, so a cookie that doesn't work leaves the saved session alone.
+    scratch = strava.cookie_path(store.dir).with_name("strava_web_cookies.check.json")
+    client = puller.open_client(store.dir, cookie_file=scratch, session_cookie=header)
+    try:
+        client.get("/dashboard")  # sends a dead session to /login, where the list just answers 500
+        page = puller.list_page(client, 1)
+    except strava.StravaWebError as e:
+        sys.exit(f"That cookie didn't work: {e}\nNothing was saved.")
+    finally:
+        client.close()
+        scratch.unlink(missing_ok=True)
+    latest = page["models"][0] if page["models"] else None
+    print(f"Signed in: {page.get('total', len(page['models']))} activities on Strava"
+          + (f", the latest {puller.to_activity(latest).start_time:%a %b %-d} \"{latest.get('name')}\"." if latest else "."))
+    accounts.set_credential(account.id, STRAVA_WEB, "cookie", {"cookie": header})
+    strava.cookie_path(store.dir).unlink(missing_ok=True)  # the old session's jar
+    accounts.set_strava_web_enabled(account.id, True)
+    print("Saved. Talus now also syncs from Strava after each intervals.icu sync.\n"
+          "The cookie may still be on your clipboard: copy something else over it.")
+    if _ask("Pull the last 30 days from Strava now? [y/N] ") in ("y", "yes"):
+        result = strava_web_after(accounts, account, store, "intervals", date.today() - timedelta(days=30))
+        if result and result["added_ids"] and store.thresholds() is not None:
+            warm_coach(result["added_ids"])
 
 
 def cmd_import(store: Store, args) -> None:

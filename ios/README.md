@@ -7,7 +7,7 @@ A native SwiftUI app (iOS 17+) over the Talus engine API: Today, Plan, Load, Act
 | Today | The call for the day (the AI coach's brief when it's on, rule-based otherwise), the morning check-in, engine and legs readiness, overnight HRV, resting HR and sleep, each ledger against your normal, this week's miles and vert, and 28-day intensity |
 | Plan | The objective and its plan: the next run, this week against its target, the calendar of scheduled runs (add, move, edit, delete), the road to the objective week by week, readiness for the day, the coach's read and weekly review, and chat. Until a plan is accepted, a three-step setup: objective (type it or pick a GPX), training days, review and accept |
 | Load | Cardio, distance, climb and descent ledgers over 6 weeks, 6 months or a year: daily load, your normal and your last 7 days; intensity by week; biggest days |
-| Activity | Every activity by week, with each week's miles, ft up and ft down; the detail has the route map, the elevation profile, the coach's read, the loads against a usual day, and climb and descent segments |
+| Activity | Every activity by week, with each week's miles, ft up and ft down; Routes, every route on one map, and Calendar, a heatmap of days, filtered by range and sport; the detail has the route map, the elevation profile, the coach's read, the loads against a usual day, climb and descent segments, climbing and descending by grade against your usual, hike or run, durability, and Rename with an AI suggestion |
 | Settings | Data sources (intervals.icu key, Garmin Connect, file upload, Apple Health), heart rate thresholds with the estimate from your runs, zones, the AI coach, sleep need, appearance, account (password, export, delete), the engine address, and Admin for the admin account |
 
 ## Run it in the Simulator
@@ -49,7 +49,7 @@ The first sync reads the last 90 days. After that the app syncs when it opens (a
 | `Talus/Models.swift` | The engine's JSON shapes |
 | `Talus/HealthSync.swift` | HealthKit reads and the upload format (`HealthPayload`, unit tested) |
 | `Talus/Format.swift` | Number formatting, ledger colors and badges, shared card views |
-| `TalusTests/` | Decoding, badge and Health payload tests |
+| `TalusTests/` | Decoding, badge, Health payload and polyline tests |
 | `screenshots/` | The app on demo data |
 
 The project uses folder-synced groups, so new Swift files in `Talus/` are picked up without editing the project file.

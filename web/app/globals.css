@@ -249,6 +249,16 @@ a.btn { display: inline-flex; align-items: center; text-decoration: none; }
 .kv { display: grid; grid-template-columns: max-content 1fr; gap: 8px 16px; margin: 0; }
 .kv dt { color: var(--muted); font-size: 13px; padding-top: 1px; }
 .kv dd { margin: 0; min-width: 0; overflow-wrap: anywhere; }
+.sync-sources { list-style: none; padding: 0; margin: 0; }
+.sync-sources li { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 4px 16px; padding: 10px 0; border-top: 1px solid var(--line); }
+.sync-sources li strong { font-size: 14px; }
+.sync-sources li span { overflow-wrap: anywhere; min-width: 0; }
+.sync-feedback { background: var(--hover-bg); border-radius: 10px; padding: 12px; display: grid; gap: 4px; overflow-wrap: anywhere; }
+.sync-options { font-size: 13px; }
+.sync-options summary { cursor: pointer; color: var(--muted); padding: 4px 0; }
+.sync-options[open] summary { margin-bottom: 8px; }
+.sync-options .inline-field { margin-bottom: 8px; }
+#garmin-watch { scroll-margin-top: 90px; }
 code { font-family: var(--code); font-size: 13px; background: var(--bg); padding: 1px 5px; border-radius: 4px; }
 .zone-list { display: flex; flex-direction: column; border-top: 1px solid var(--line); }
 .zone-row { display: flex; align-items: center; gap: 10px; padding: 9px 0; border-bottom: 1px solid var(--line); }

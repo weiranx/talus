@@ -9,8 +9,7 @@ export function when(iso: string): string {
 
 export function syncLine(s: LastSync): string {
   if (s.error) return `Failed ${when(s.at)}: ${s.error}`;
-  const dups = s.duplicates ? `, ${s.duplicates} already here from another source` : "";
-  return `${when(s.at)}: ${s.listed} activities since ${dayLabel(s.since, { month: "short", day: "numeric" })}, ${s.new} new${dups}.`;
+  return `${s.new ? `${s.new} new` : "No new activities"} · ${when(s.at)}`;
 }
 
 type StravaRun = NonNullable<Settings["sources"]["strava_web"]["last_sync"]>;
@@ -26,6 +25,18 @@ export function stravaLine(s: StravaRun): string {
 
 /** What a sync or watch import brought in, as one line for a list of links. */
 export type Added = { id: number; name: string | null; start_time: string | null; distance_m: number | null; gain_m: number | null };
+
+/** A partial sync must never claim everything is up to date. */
+export function syncSummary(r: SyncResult): { ok: boolean; text: string } {
+  const failed = r.sources.filter((s) => s.error).map((s) => s.label);
+  const added = r.saved ? `${r.saved} new ${r.saved === 1 ? "activity" : "activities"} added.` : "";
+  if (failed.length) return {
+    ok: false,
+    text: `${added ? `${added} ` : ""}Sync incomplete. ${failed.join(" and ")} couldn't sync. Check the source below and try again.`,
+  };
+  if (r.error) return { ok: false, text: `${added ? `${added} ` : ""}Sync incomplete. ${r.error}` };
+  return { ok: true, text: added ? `Sync complete. ${added}` : "You're up to date. No new activities." };
+}
 
 export function addedLine(a: Added): string {
   const parts: string[] = [];
@@ -43,13 +54,9 @@ export async function syncAll(days: number): Promise<{ ok: boolean; text: string
     headers: { "content-type": "application/json" },
     body: JSON.stringify({ days }),
   }).catch(() => null);
-  if (!res) return { ok: false, text: "Could not reach the engine. Is it running?", result: null };
+  if (!res) return { ok: false, text: "Couldn't reach Talus. Check your connection and try again.", result: null };
   const body = await res.json().catch(() => ({}));
-  if (!res.ok) return { ok: false, text: body.detail ?? `Sync failed (${res.status}).`, result: null };
+  if (!res.ok) return { ok: false, text: typeof body.detail === "string" ? body.detail : `Sync couldn't finish (${res.status}). Try again.`, result: null };
   const r = body as SyncResult;
-  const got = r.saved ? `Pulled ${r.saved} new ${r.saved === 1 ? "activity" : "activities"}.` : "Up to date, nothing new.";
-  const dups = r.duplicates ? ` ${r.duplicates} already here from another source.` : "";
-  const failed = r.sources.filter((s) => s.error).map((s) => s.label);
-  const stopped = failed.length ? ` ${failed.join(" and ")} didn't sync; see below.` : "";
-  return { ok: !failed.length || r.saved > 0, text: got + dups + stopped, result: r };
+  return { ...syncSummary(r), result: r };
 }

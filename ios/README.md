@@ -35,7 +35,9 @@ Running on a real phone needs your Apple Developer team set under Signing & Capa
 
 ## Apple Health
 
-Settings > Connect Apple Health asks to read workouts and their routes, heart rate, walking, running and cycling distance, HRV, resting heart rate and sleep. Health holds Apple Watch data and anything Garmin Connect or other apps write to it, so this is the free route to those watches.
+Settings > Data sources > Connect Apple Health asks to read workouts and their routes, heart rate, walking, running and cycling distance, HRV, resting heart rate and sleep. Health holds Apple Watch data and anything Garmin Connect or other apps write to it, so this is the free route to those watches.
+
+For a manual sync, open **Settings > Data sources** and tap **Sync now**. Talus checks online sources, then the Garmin watch and Apple Health when enabled. The card shows the current step, the result and any new activities; **Sync details** holds the full results. Keep Talus open and your watch nearby until it finishes. A source that fails doesn't stop the others; **Try sync again** safely skips activities already imported. **Import older activities** changes the online history range only.
 
 The first sync reads the last 90 days. After that the app syncs when it opens (at most hourly) and on **Sync now** under Settings > Data sources, which also syncs the engine's sources and the Garmin watch when it's switched on, re-reading the last two days each time so a late watch sync is picked up. Each run posts to `POST /api/import/healthkit`:
 

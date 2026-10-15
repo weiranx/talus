@@ -29,12 +29,13 @@ export default function WatchCard({ watch }: { watch: Settings["sources"]["watch
   const lastSync = watch.last_sync;
   const [switching, setSwitching] = useState(false);
   const [switchError, setSwitchError] = useState<string | null>(null);
-  const [where, setWhere] = useState<Reach>("ok");
+  const [where, setWhere] = useState<Reach | null>(null);
   const [tryHere, setTryHere] = useState(false);
   const [busy, setBusy] = useState(false);
   const [progress, setProgress] = useState<Progress | null>(null);
   const [lines, setLines] = useState<{ ok: boolean; text: string }[]>([]);
   const [added, setAdded] = useState<Added[]>([]);
+  const [message, setMessage] = useState<{ ok: boolean; text: string } | null>(null);
 
   useEffect(() => setWhere(reach()), []);
 
@@ -48,6 +49,7 @@ export default function WatchCard({ watch }: { watch: Settings["sources"]["watch
     setBusy(true);
     setLines([]);
     setAdded([]);
+    setMessage(null);
     let added = 0;
     // Mornings the overnight files filled: a night's sleep and HRV files arrive separately.
     const nights = new Set<string>();
@@ -84,6 +86,13 @@ export default function WatchCard({ watch }: { watch: Settings["sources"]["watch
         }
       }
       if (todo.length) say(true, `Pulled ${todo.length} ${todo.length === 1 ? "file" : "files"}: ${added} new ${added === 1 ? "activity" : "activities"}${nights.size ? `, ${nights.size} ${nights.size === 1 ? "night" : "nights"} of HRV, resting HR and sleep` : ""}.`);
+      const imported = [
+        added ? `${added} new ${added === 1 ? "activity" : "activities"}` : "",
+        nights.size ? `${nights.size} ${nights.size === 1 ? "night" : "nights"} of health data` : "",
+      ].filter(Boolean).join(" and ");
+      setMessage({ ok: !failed, text: failed
+        ? `Sync incomplete. ${imported ? `${imported} added; ` : ""}${failed} files couldn't import. Try again to finish.`
+        : imported ? `Sync complete. ${imported} added.` : "Your watch is up to date. No new data." });
       await done(added, failed ? `${failed} of ${todo.length} files failed.` : null);
     } catch (e) {
       const msg = (e as Error).message;
@@ -91,7 +100,8 @@ export default function WatchCard({ watch }: { watch: Settings["sources"]["watch
       // Chrome on a Mac refuses to connect to Garmin watches; Windows, Android and the iPhone app work.
       if (/unsupported device/i.test(msg)) say(false, "This browser can't connect to the watch (Chrome on a Mac refuses it). Sync from the Talus iPhone app instead, or Chrome on Windows or Android.");
       else say(false, (e as Error).name === "NotFoundError"
-        ? "No watch chosen. If it wasn't in the list, your phone is holding its connection: turn Bluetooth off in the phone's Settings (not Control Center) and try again." : msg);
+        ? "No watch chosen. Try again and select your watch. If it isn't listed, follow the connection steps above." : msg);
+      setMessage({ ok: false, text: `${out.at(-1)?.text ?? msg}${added ? ` ${added} new activities were saved.` : ""}` });
     } finally {
       session.disconnect();
       setProgress(null);
@@ -114,32 +124,30 @@ export default function WatchCard({ watch }: { watch: Settings["sources"]["watch
 
   const p = progress;
   return (
-    <section className="card">
+    <section className="card" id="garmin-watch" aria-labelledby="watch-title">
       <div style={{ display: "flex", flexWrap: "wrap", justifyContent: "space-between", alignItems: "center", gap: 8 }}>
-        <h2 className="label">Garmin watch</h2>
+        <h2 className="label" id="watch-title">Garmin watch</h2>
         <div className="actions" style={{ gap: 6 }}>
           <Pill tone="warn">Experimental</Pill>
-          {!watch.enabled ? <Pill tone="neutral">Off</Pill> : lastSync ? <Pill tone="good">Synced</Pill> : <Pill tone="neutral">Not synced yet</Pill>}
+          {!watch.enabled ? <Pill tone="neutral">Off</Pill> : watch.last_attempt?.error ? <Pill tone="warn">Needs attention</Pill> : <Pill tone="neutral">On</Pill>}
         </div>
       </div>
       <div className="muted">
-        Pulls new activities straight off your watch over Bluetooth, without Garmin&apos;s servers. Nothing on the
-        watch is changed or deleted. Sleep, HRV and resting heart rate don&apos;t come from the watch, since Garmin
-        Connect clears those files as it syncs; they still come from intervals.icu or Apple Health. It works alongside
-        your other sources: a run two of them have is kept once.
+        Import activities directly over Bluetooth. Activities already in Talus are skipped.
       </div>
       {!watch.enabled ? (
         <div className="actions">
           <button className="btn light outline" onClick={() => turn(true)} disabled={switching} aria-busy={switching}>Turn on</button>
         </div>
-      ) : where === "ok" || tryHere ? (
+      ) : where === null ? <div className="muted">Checking Bluetooth support…</div> : where === "ok" || tryHere ? (
         <>
-          <div className="muted">
-            Turn off Bluetooth in your phone&apos;s Settings first (the watch stays hidden while the phone holds it)
-            and keep the watch close.
-          </div>
+          <ol className="muted" style={{ margin: 0, paddingLeft: 20 }}>
+            <li>Keep your watch close to this device.</li>
+            <li>Turn off Bluetooth in your phone&apos;s Settings so this browser can reach the watch.</li>
+            <li>Tap Sync from watch, then choose your watch.</li>
+          </ol>
           <div className="actions">
-            <button className="btn" onClick={sync} disabled={busy} aria-busy={busy}>{busy ? "Syncing" : "Sync from watch"}</button>
+            <button className="btn" onClick={sync} disabled={busy || switching} aria-busy={busy}>{busy ? "Syncing…" : "Sync from watch"}</button>
           </div>
         </>
       ) : (
@@ -147,21 +155,23 @@ export default function WatchCard({ watch }: { watch: Settings["sources"]["watch
           <strong>Sync from the Talus iPhone app.</strong>{" "}
           <span className="muted">
             {where === "mac" ? "Chrome on a Mac can't connect to Garmin watches. " : "This browser can't use Bluetooth. "}
-            The iPhone app syncs alongside Garmin Connect, with no pairing, and does it on its own whenever you open
-            Talus. Chrome or Edge on Windows or Android can sync from here too.
+            Open Talus on your iPhone, then go to Settings → Data sources → Sync now. Keep the watch nearby
+            and the app open. Chrome or Edge on Windows or Android can also sync from here.
           </span>
           {where === "mac" ? (
             <div className="actions"><button className="link-btn" onClick={() => setTryHere(true)}>Try this browser anyway</button></div>
           ) : null}
         </div>
       )}
-      {p ? (
-        <div className="muted" role="status">
-          {p.phase}
-          {p.total ? ` (${(p.done ?? 0) + 1} of ${p.total}${p.bytes ? `, ${Math.round(p.bytes / 1024)} KB` : ""})` : ""}
-        </div>
-      ) : null}
-      {lines.map((l, i) => <div key={i} className={l.ok ? "ok-text" : "error-text"}>{l.text}</div>)}
+      <div role="status" aria-live="polite" aria-atomic="true">
+        {busy ? <div className="sync-feedback"><strong>{p?.phase ?? "Connecting to your watch…"}</strong>
+          {p?.total ? <span className="muted">File {(p.done ?? 0) + 1} of {p.total}</span> : null}
+          <span className="muted">Keep the watch nearby and this page open.</span>
+        </div> : message ? <div className={message.ok ? "ok-text" : "error-text"}>{message.text}</div> : null}
+      </div>
+      {!busy && lines.length ? <details className="sync-options"><summary>Sync details</summary>
+        {lines.map((l, i) => <div key={i} className={l.ok ? "muted" : "error-text"}>{l.text}</div>)}
+      </details> : null}
       {added.length ? (
         <ul className="muted" style={{ margin: 0, paddingLeft: 18 }}>
           {added.map((a) => <li key={a.id}><a href={`/activities/${a.id}`}>{addedLine(a)}</a></li>)}
@@ -169,6 +179,10 @@ export default function WatchCard({ watch }: { watch: Settings["sources"]["watch
       ) : null}
       {watch.enabled && !lines.length && lastSync ? <div className="muted">Last sync {when(lastSync)}.</div> : null}
       {watch.enabled && !lastSync && !busy ? <div className="muted">The first sync brings in the last {FIRST_SYNC_DAYS} days of activities, about half a minute each.</div> : null}
+      <details className="sync-options"><summary>What syncs from the watch?</summary><div className="muted">
+        Activities sync over Bluetooth; the iPhone app also checks automatically when opened, at most hourly.
+        Available sleep, HRV and resting heart rate files are also imported. Intervals.icu or Apple Health can supply data the watch no longer has. Nothing on the watch is changed or deleted.
+      </div></details>
       {switchError ? <div className="error-text">{switchError}</div> : null}
       {watch.enabled ? (
         <div className="actions">

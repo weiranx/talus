@@ -123,7 +123,12 @@ struct Sources: Codable, Hashable {
     struct Upload: Codable, Hashable { let lastImport: LastImport?; let maxMb: Int }
     /// Files the web or iOS app pulled straight off a Garmin watch over Bluetooth, when switched on.
     /// `enabled` is nil on engines from before the switch, which had a sync method instead.
-    struct Watch: Codable, Hashable { let enabled: Bool?; let lastSync: String? }
+    struct Watch: Codable, Hashable {
+        struct Attempt: Codable, Hashable { let at: String; let error: String? }
+        let enabled: Bool?
+        let lastSync: String?
+        var lastAttempt: Attempt? = nil
+    }
     let intervals: Intervals
     let garmin: Garmin
     let upload: Upload
@@ -267,8 +272,7 @@ enum SettingsText {
 
     static func sync(_ s: LastSync) -> String {
         if let e = s.error { return "Failed \(when(s.at)): \(e)" }
-        let dups = (s.duplicates ?? 0) > 0 ? ", \(s.duplicates!) already here from another source" : ""
-        return "\(when(s.at)): \(s.listed) activities since \(Fmt.day(s.since, .dateTime.month(.abbreviated).day())), \(s.new) new\(dups)."
+        return "\(s.new > 0 ? "\(s.new) new" : "No new activities") · \(when(s.at))"
     }
 
     static func importLine(_ r: LastImport) -> String {

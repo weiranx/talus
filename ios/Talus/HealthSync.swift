@@ -16,6 +16,7 @@ final class HealthSync: ObservableObject {
     @Published private(set) var lastSync: Date? { didSet { UserDefaults.standard.set(lastSync, forKey: "health.lastSync") } }
     @Published private(set) var running = false
     @Published private(set) var status: String?
+    @Published private(set) var failed = false
 
     private let store = HKHealthStore()
 
@@ -35,6 +36,7 @@ final class HealthSync: ObservableObject {
 
     func turnOn(_ api: API) async {
         guard available else {
+            failed = true
             status = "Apple Health isn't available on this device."
             return
         }
@@ -43,6 +45,7 @@ final class HealthSync: ObservableObject {
             enabled = true
             await sync(api)
         } catch {
+            failed = true
             status = "Health access failed: \(error.localizedDescription)"
         }
     }
@@ -56,6 +59,7 @@ final class HealthSync: ObservableObject {
     func sync(_ api: API) async {
         guard enabled, !running else { return }
         running = true
+        failed = false
         defer { running = false }
         let now = Date.now
         // Re-read the last two days each time: a late watch sync can add a workout or finish a night.
@@ -81,6 +85,7 @@ final class HealthSync: ObservableObject {
             lastSync = now
             status = "Synced \(workouts.count) workouts (\(added) new) and \(wellness.count) days of HRV, resting HR and sleep."
         } catch {
+            failed = true
             status = error.localizedDescription
         }
     }

@@ -1399,6 +1399,8 @@ def _ask(client: Client, mode: str, packet: dict, problems: list[str], model_id:
     if problems:
         text += ("\n\nYour last reply was rejected. " + " ".join(problems)
                  + (" Write it again." if cfg.get("free_numbers") else " Write it again using only numbers that appear in the data."))
+    if hasattr(client, "ask"):
+        return client.ask(model_id.removeprefix("chatgpt/"), SYSTEM, text, cfg["schema"], cfg["max_tokens"])
     resp = client.beta.messages.create(
         model=model_id,
         max_tokens=cfg["max_tokens"],

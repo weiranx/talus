@@ -60,7 +60,7 @@ def call_cost(model: str | None, usage: dict | str | None) -> dict | None:
     reads are priced as plain input, so this errs high. None when the call never reached the API."""
     if isinstance(usage, str):
         usage = json.loads(usage)
-    if not usage:
+    if not usage or (model or "").startswith("chatgpt/"):
         return None
     tokens = (sum(usage.get(k) or 0 for k in ("input_tokens", "cache_read_input_tokens",
                                               "cache_creation_input_tokens")), usage.get("output_tokens") or 0)
@@ -73,5 +73,6 @@ def spent_since(store, since) -> float:
     total = 0.0
     for r in store.db.execute("SELECT model, usage FROM coach_log WHERE created_at >= ?"
                               " AND usage IS NOT NULL AND usage != 'null'", (since.isoformat(),)):
-        total += call_cost(r["model"], r["usage"])["usd"]
+        cost = call_cost(r["model"], r["usage"])
+        total += cost["usd"] if cost else 0
     return round(total, 4)

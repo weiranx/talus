@@ -1,0 +1,212 @@
+{
+ "thresholds": null,
+ "inferred": null,
+ "source": {
+  "name": "intervals.icu",
+  "key_set": false,
+  "kind": null,
+  "athlete_id": null,
+  "athlete_name": null,
+  "oauth_available": false,
+  "updated_at": null,
+  "garmin_fallback_set": false,
+  "activities": 0,
+  "latest_activity": null,
+  "last_sync": null
+ },
+ "sources": {
+  "intervals": {
+   "connected": false,
+   "last_sync": null
+  },
+  "garmin": {
+   "available": true,
+   "connected": false,
+   "updated_at": null,
+   "mfa_pending": false,
+   "last_sync": null
+  },
+  "coros": {
+   "available": true,
+   "connected": false,
+   "updated_at": null,
+   "region": null,
+   "last_sync": {
+    "at": "2026-10-14T20:52:08",
+    "source": "coros",
+    "since": "2026-09-14",
+    "listed": 2,
+    "new": 0,
+    "saved": 0,
+    "error": null
+   }
+  },
+  "strava_web": {
+   "available": true,
+   "connected": false,
+   "enabled": false,
+   "updated_at": null,
+   "env_override": false,
+   "last_sync": {
+    "at": "2026-10-14T20:52:08",
+    "source": "strava_web",
+    "since": "2026-09-14",
+    "listed": 4,
+    "new": 1,
+    "saved": 1,
+    "aliased": 3,
+    "duplicates": 0,
+    "error": null,
+    "error_code": null
+   }
+  },
+  "upload": {
+   "last_import": {
+    "at": "2026-10-14T20:52:08",
+    "source": "file",
+    "files": 1,
+    "listed": 1,
+    "new": 1,
+    "saved": 1,
+    "duplicates": 0,
+    "failed": [],
+    "wellness_days": 0,
+    "error": null
+   },
+   "max_mb": 2048
+  },
+  "healthkit": {
+   "last_sync": null
+  },
+  "watch": {
+   "last_sync": null
+  }
+ },
+ "sync_method": "intervals",
+ "coach": {
+  "enabled": true,
+  "key_set": false,
+  "brief_model": "claude-haiku-5-5",
+  "analysis_model": "claude-opus-5-5",
+  "style": "plain",
+  "ai_plans": true,
+  "styles": [
+   {
+    "key": "plain",
+    "label": "Plain",
+    "description": "Calm and factual. The default."
+   },
+   {
+    "key": "blunt",
+    "label": "Blunt",
+    "description": "Fewest words. Verdict first, no softening."
+   },
+   {
+    "key": "encouraging",
+    "label": "Encouraging",
+    "description": "Warm. Says what went well before what to change."
+   },
+   {
+    "key": "teaching",
+    "label": "Teaching",
+    "description": "Adds a short why behind each point."
+   }
+  ],
+  "models": [
+   {
+    "id": "claude-opus-5-5",
+    "label": "Opus 5.5",
+    "input": 4.0,
+    "output": 20.0
+   },
+   {
+    "id": "claude-sonnet-5-5",
+    "label": "Sonnet 5.5",
+    "input": 2.0,
+    "output": 10.0
+   },
+   {
+    "id": "claude-haiku-5-5",
+    "label": "Haiku 5.5",
+    "input": 0.1,
+    "output": 0.5
+   }
+  ],
+  "estimate": {
+   "brief": {
+    "claude-opus-5-5": {
+     "per_call": 0.02,
+     "per_month": 1.2,
+     "calls_per_month": 60,
+     "from_log": false
+    },
+    "claude-sonnet-5-5": {
+     "per_call": 0.01,
+     "per_month": 0.6,
+     "calls_per_month": 60,
+     "from_log": false
+    },
+    "claude-haiku-5-5": {
+     "per_call": 0.0005,
+     "per_month": 0.03,
+     "calls_per_month": 60,
+     "from_log": false
+    }
+   },
+   "analysis": {
+    "claude-opus-5-5": {
+     "per_call": 0.04,
+     "per_month": 0.0,
+     "calls_per_month": 0,
+     "from_log": false
+    },
+    "claude-sonnet-5-5": {
+     "per_call": 0.02,
+     "per_month": 0.0,
+     "calls_per_month": 0,
+     "from_log": false
+    },
+    "claude-haiku-5-5": {
+     "per_call": 0.001,
+     "per_month": 0.0,
+     "calls_per_month": 0,
+     "from_log": false
+    }
+   },
+   "build": {
+    "claude-opus-5-5": {
+     "per_call": 0.168,
+     "per_month": 0.672,
+     "calls_per_month": 4,
+     "from_log": false
+    },
+    "claude-sonnet-5-5": {
+     "per_call": 0.084,
+     "per_month": 0.336,
+     "calls_per_month": 4,
+     "from_log": false
+    },
+    "claude-haiku-5-5": {
+     "per_call": 0.0042,
+     "per_month": 0.0168,
+     "calls_per_month": 4,
+     "from_log": false
+    }
+   }
+  },
+  "cap": {
+   "limit": null,
+   "ceiling": null,
+   "spent": 0.0,
+   "month": "2026-10-01"
+  }
+ },
+ "readiness": {
+  "sleep_need_h": 8.0,
+  "sleep_need_source": "default"
+ },
+ "units": {
+  "distance": "mi",
+  "vert": "ft"
+ }
+}

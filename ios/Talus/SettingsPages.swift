@@ -351,6 +351,7 @@ struct CoachPage: View {
     var body: some View {
         SettingsPage(title: "AI coach") { s, reload in
             CoachSettingsCard(coach: s.coach, reload: reload)
+            NamesCard()
         }
     }
 }
@@ -361,6 +362,7 @@ private struct CoachSettingsCard: View {
     @EnvironmentObject private var api: API
     @State private var enabled: Bool
     @State private var style: String
+    @State private var aiPlans: Bool
     @State private var cap: String
     @State private var saving = false
     @State private var message: (ok: Bool, text: String)?
@@ -370,6 +372,7 @@ private struct CoachSettingsCard: View {
         self.reload = reload
         _enabled = State(initialValue: coach.enabled)
         _style = State(initialValue: coach.style)
+        _aiPlans = State(initialValue: coach.aiPlans ?? true)
         _cap = State(initialValue: coach.cap.limit.map { String(format: "%g", $0) } ?? "")
     }
 
@@ -378,7 +381,8 @@ private struct CoachSettingsCard: View {
 
     var body: some View {
         let capValid = cap.trimmingCharacters(in: .whitespaces).isEmpty || (capValue.map { $0 >= 0 && $0 <= 1000 } ?? false)
-        let dirty = capDirty || enabled != coach.enabled || style != coach.style
+        let dirty = capDirty || enabled != coach.enabled || style != coach.style || aiPlans != (coach.aiPlans ?? true)
+        let buildCost = coach.estimate.build?[coach.analysisModel]?.perCall
         let capped = coach.cap.limit.map { coach.cap.spent >= $0 } ?? false
         Card {
             HStack {
@@ -393,10 +397,22 @@ private struct CoachSettingsCard: View {
                         .font(.caption).foregroundStyle(.secondary)
                 }
             }
+            Text("Tell the coach what kind of training you want under Coach, Your training goals.")
+                .font(.subheadline).foregroundStyle(.secondary)
             if !coach.keySet {
                 Text((coach.cap.ceiling == nil ? "Add ANTHROPIC_API_KEY to the engine's .env and restart it." : "The owner of this Talus hasn't added an Anthropic key yet.")
                      + " Until then Talus shows rule-based text.")
                     .font(.caption).foregroundStyle(.secondary)
+            }
+            if coach.aiPlans != nil {
+                Toggle(isOn: $aiPlans) {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Let the coach build training plans").fontWeight(.semibold)
+                        Text("The coach writes each plan draft from your history, goals and answers, and the engine holds every week to the load limits. \(buildCost.map { "About \(SettingsText.money($0)) a draft. " } ?? "")Off, the engine builds plans by its rules.")
+                            .font(.caption).foregroundStyle(.secondary)
+                    }
+                }
+                .disabled(!enabled)
             }
             choices(capped: capped)
             .disabled(!enabled)
@@ -425,14 +441,16 @@ private struct CoachSettingsCard: View {
     /// The cap goes along only when it changed, and as an explicit null when cleared.
     private struct CoachIn: Encodable {
         let enabled: Bool, style: String
+        let aiPlans: Bool?
         let cap: Double??
 
-        enum CodingKeys: String, CodingKey { case enabled, style, monthlyCapUsd }
+        enum CodingKeys: String, CodingKey { case enabled, style, aiPlans, monthlyCapUsd }
 
         func encode(to encoder: Encoder) throws {
             var c = encoder.container(keyedBy: CodingKeys.self)
             try c.encode(enabled, forKey: .enabled)
             try c.encode(style, forKey: .style)
+            try c.encodeIfPresent(aiPlans, forKey: .aiPlans)
             if let cap { try c.encode(cap, forKey: .monthlyCapUsd) }
         }
     }
@@ -445,7 +463,7 @@ private struct CoachSettingsCard: View {
         saving = true
         defer { saving = false }
         do {
-            try await api.put("/api/settings/coach", CoachIn(enabled: enabled, style: style,
+            try await api.put("/api/settings/coach", CoachIn(enabled: enabled, style: style, aiPlans: coach.aiPlans == nil ? nil : aiPlans,
                                                           cap: capDirty ? .some(capValue) : .none))
             message = (true, "Saved. The next brief and analysis use these settings.")
             await reload()
@@ -632,6 +650,7 @@ struct AdminPage: View {
         .background(Color(uiColor: .systemGroupedBackground))
         .navigationTitle("Admin")
         .navigationBarTitleDisplayMode(.inline)
+        .toolbar { NavigationLink("Status") { StatusPage() } }
     }
 }
 
@@ -644,7 +663,8 @@ private struct AdminContent: View {
 
     private static let actions = ["disable": "Turned off sign-in", "enable": "Turned on sign-in", "sign-out": "Signed out everywhere",
                                   "coach_ceiling": "Changed coach ceiling", "signup_open": "Opened sign-ups",
-                                  "signup_closed": "Closed sign-ups", "feature_on": "Turned on", "feature_off": "Turned off"]
+                                  "signup_closed": "Closed sign-ups", "feature_on": "Turned on", "feature_off": "Turned off",
+                                  "coach_models": "Changed coach models"]
 
     var body: some View {
         let month = Fmt.date(d.month).map { $0.formatted(.dateTime.month(.wide)) } ?? d.month
@@ -669,6 +689,7 @@ private struct AdminContent: View {
             Button(d.signup.open ? "Close sign-ups" : "Open sign-ups") { Task { await toggleSignup() } }
                 .buttonStyle(.bordered).disabled(busy)
         }
+        if let models = d.coachModels { CoachModelsCard(data: models, reload: reload) }
         Card {
             SectionLabel("Feature flags")
             Toggle(isOn: Binding(get: { d.features.showAiCost }, set: { on in Task { await feature("show_ai_cost", on) } })) {

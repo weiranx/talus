@@ -4,6 +4,7 @@ import { Suspense } from "react";
 import CallCard from "@/components/CallCard";
 import CoachCall from "@/components/CoachCall";
 import CheckIn from "@/components/CheckIn";
+import ComingUp from "@/components/ComingUp";
 import EngineDown from "@/components/EngineDown";
 import Explain from "@/components/Explain";
 import Overnight from "@/components/Overnight";
@@ -34,6 +35,7 @@ export default async function TodayPage() {
     return <EngineDown message={engineFailed(e)} />;
   }
   const t = tRes.value;
+  const lw = t.week.last_week_to_date;
 
   return (
     <>
@@ -69,6 +71,7 @@ export default async function TodayPage() {
             </div>
           </section>
         ) : null}
+        {t.ahead ? <ComingUp ahead={t.ahead} /> : null}
         {t.checkin ? null : <CheckIn initial={null} />}
         </div>
 
@@ -141,6 +144,13 @@ export default async function TodayPage() {
               {mi(t.week.distance_mi)} mi, {n0(t.week.gain_ft)} ft up, {n0(t.week.loss_ft)} ft down
             </div>
           </div>
+          {lw && lw.activities ? (
+            <div className="muted">
+              By this day last week:{" "}
+              <span className="mono">{mi(lw.distance_mi)} mi, {n0(lw.gain_ft)} ft up, {n0(lw.loss_ft)} ft down</span>
+              {" "}({weekDelta(t.week.distance_mi, lw.distance_mi, "mi")}, {weekDelta(t.week.gain_ft, lw.gain_ft, "ft up")})
+            </div>
+          ) : null}
           {t.week.activities.length === 0 ? (
             <div className="muted">No activities yet this week.</div>
           ) : (
@@ -185,4 +195,12 @@ export default async function TodayPage() {
       </div>
     </>
   );
+}
+
+/** "4.2 mi more" or "1,200 ft up less": this week so far against the same days last week. */
+function weekDelta(now: number, then: number, unit: string): string {
+  const d = now - then;
+  const fmt = unit === "mi" ? mi : n0;
+  if (Math.abs(d) < (unit === "mi" ? 0.05 : 0.5)) return `same ${unit}`;
+  return `${fmt(Math.abs(d))} ${unit} ${d > 0 ? "more" : "less"}`;
 }

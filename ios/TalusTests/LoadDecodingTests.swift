@@ -51,6 +51,22 @@ struct LoadDecodingTests {
         #expect(p.miles == 6)
     }
 
+    /// A demo engine with a race 59 days out and an accepted plan, and the coach's brief for that day.
+    @Test func todayDecodesWhatsAheadAndTheBrief() throws {
+        let t = try fixture("today_ahead", as: Today.self)
+        let a = try #require(t.ahead)
+        #expect(a.hasPlan)
+        #expect(a.objective?.daysToGo == 59 && a.objective?.event == true)
+        #expect(a.week?.target?.focus == "build")
+        #expect(a.days.map(\.runs.count) == [1, 0, 1])
+        #expect(a.days.last?.runs.first?.kind == "long")
+        #expect(t.week.lastWeekToDate?.activities == 2)
+        #expect(t.call.focus == nil && t.call.ahead == nil)
+        let b = try fixture("coach_brief", as: CoachReply.self)
+        #expect(b.source == "coach")
+        #expect(b.reply.focus?.isEmpty == false && b.reply.ahead?.isEmpty == false)
+    }
+
     @Test func weekChange() {
         #expect(WeeklyStatsCard.change(12, 10) == "↑ 20%")
         #expect(WeeklyStatsCard.change(8, 10) == "↓ 20%")

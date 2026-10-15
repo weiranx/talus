@@ -21,6 +21,7 @@ struct TodayView: View {
                             if let p = t.planned, t.call.planned != true, p.kind != "rest" {
                                 ScheduledTodayCard(planned: p, call: t.call.call)
                             }
+                            if let a = t.ahead { ComingUpCard(ahead: a) }
                             // Until it's done the check-in sits under the call; after, at the bottom.
                             if t.checkin == nil { CheckInCard(initial: nil, onSaved: reload) }
                             ReadinessCard(readiness: t.readiness, score: t.score)
@@ -182,7 +183,16 @@ struct CoachCallCard: View {
             }
             Text(call.session).font(.title.bold()).foregroundStyle(.white)
             CoachText(text: call.detail).foregroundStyle(.white.opacity(0.92))
-            CoachText(text: "**Why:** \(call.why)").font(.subheadline).foregroundStyle(.white.opacity(0.75))
+            Divider().overlay(.white.opacity(0.25))
+            ForEach([("Why", call.why), ("Focus", call.focus), ("Ahead", call.ahead)], id: \.0) { label, text in
+                if let text, !text.isEmpty {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(label.uppercased()).font(.caption2.weight(.bold)).tracking(0.8)
+                            .foregroundStyle(.white.opacity(0.6))
+                        CoachText(text: text).font(.subheadline).foregroundStyle(.white.opacity(0.88))
+                    }
+                }
+            }
             HStack(spacing: 8) {
                 if waiting { ProgressView().controlSize(.small).tint(.white.opacity(0.7)) }
                 Text(note).font(.caption).foregroundStyle(.white.opacity(0.6))
@@ -531,6 +541,98 @@ struct ScheduledTodayCard: View {
     }
 }
 
+/// Today's place in the bigger picture: days to the objective, this week against its target, and
+/// the next few days on the calendar. Same as web/components/ComingUp.tsx.
+struct ComingUpCard: View {
+    let ahead: TodayAhead
+
+    private static let bars: [(key: String, label: String, ledger: String)] = [
+        ("miles", "Miles", "distance"), ("gain_ft", "Ft up", "climb"), ("loss_ft", "Ft down", "descent")]
+
+    var body: some View {
+        Card {
+            SectionLabel("Coming up")
+            if !ahead.hasPlan && ahead.week == nil && ahead.days.allSatisfy({ $0.runs.isEmpty }) {
+                Text("Nothing scheduled in the next \(ahead.days.count) days. Plan your week and the coach reads today against it.")
+                    .font(.subheadline).foregroundStyle(.secondary)
+            } else {
+                if let o = ahead.objective {
+                    HStack(alignment: .firstTextBaseline) {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(o.name).fontWeight(.semibold)
+                            Text((o.event ? o.goalText : "\(o.goalText), to") + " "
+                                 + Fmt.day(o.day, .dateTime.weekday(.abbreviated).month(.abbreviated).day().year()))
+                                .font(.caption).foregroundStyle(.secondary)
+                        }
+                        Spacer()
+                        if o.event && o.daysToGo >= 0 {
+                            Text("\(o.daysToGo)").font(.title2.bold().monospacedDigit())
+                            + Text(o.daysToGo == 1 ? " day to go" : " days to go").font(.caption).foregroundStyle(.secondary)
+                        }
+                    }
+                }
+                if let w = ahead.week, let t = w.target, let d = w.done {
+                    Text("This week, a \(t.focus) week, against its target. The lighter part is still scheduled.")
+                        .font(.caption).foregroundStyle(.secondary)
+                    ForEach(Self.bars, id: \.key) { b in
+                        let (done, sched, goal) = Self.values(b.key, done: d, ahead: w.ahead, target: t)
+                        VStack(alignment: .leading, spacing: 4) {
+                            HStack {
+                                Text(b.label).font(.caption)
+                                Spacer()
+                                Text(b.key == "miles" ? Fmt.mi(done) : Fmt.n0(done)).font(.caption.bold().monospacedDigit())
+                                + Text(" of " + (b.key == "miles" ? Fmt.mi(goal) : Fmt.n0(goal)))
+                                    .font(.caption.monospacedDigit()).foregroundStyle(.secondary)
+                            }
+                            GeometryReader { g in
+                                let top = max(goal, done + sched, 1)
+                                ZStack(alignment: .leading) {
+                                    Capsule().fill(Color.secondary.opacity(0.2))
+                                    Capsule().fill(Ledger.color(b.ledger).opacity(0.35))
+                                        .frame(width: g.size.width * min(1, (done + sched) / top))
+                                    Capsule().fill(Ledger.color(b.ledger))
+                                        .frame(width: g.size.width * min(1, done / top))
+                                }
+                            }
+                            .frame(height: 8)
+                            .accessibilityElement()
+                            .accessibilityLabel("\(b.label): \(Fmt.n0(done)) done, \(Fmt.n0(sched)) still scheduled, target \(Fmt.n0(goal))")
+                        }
+                    }
+                }
+                ForEach(ahead.days, id: \.day) { d in
+                    Divider()
+                    HStack(alignment: .firstTextBaseline, spacing: 10) {
+                        Text(Fmt.day(d.day).uppercased()).font(.caption.weight(.bold)).foregroundStyle(.secondary)
+                            .frame(width: 40, alignment: .leading)
+                        if d.runs.isEmpty {
+                            Text(ahead.hasPlan ? "Rest" : "Nothing scheduled").font(.subheadline).foregroundStyle(.secondary)
+                        } else {
+                            VStack(alignment: .leading, spacing: 2) {
+                                ForEach(d.runs, id: \.self) { r in
+                                    Text(r.title).font(.subheadline)
+                                    Text("\(Fmt.mi(r.miles)) mi, \(Fmt.n0(r.gainFt)) ft up"
+                                         + (r.minutes.map { ", " + Fmt.duration($0 * 60) } ?? ""))
+                                        .font(.caption.monospacedDigit()).foregroundStyle(.secondary)
+                                }
+                            }
+                        }
+                        Spacer(minLength: 0)
+                    }
+                }
+            }
+        }
+    }
+
+    private static func values(_ key: String, done d: WeekActual, ahead a: Vol, target t: WeekTarget) -> (Double, Double, Double) {
+        switch key {
+        case "miles": return (d.miles, a.miles, t.miles)
+        case "gain_ft": return (d.gainFt, a.gainFt, t.gainFt)
+        default: return (d.lossFt, a.lossFt, t.lossFt)
+        }
+    }
+}
+
 struct WeekCard: View {
     let week: Week
 
@@ -539,6 +641,10 @@ struct WeekCard: View {
             SectionLabel("This week, from \(Fmt.day(week.start, .dateTime.month(.abbreviated).day()))")
             Text(Fmt.distVert(mi: week.distanceMi, gain: week.gainFt, loss: week.lossFt))
                 .font(.subheadline.monospacedDigit())
+            if let lw = week.lastWeekToDate, lw.activities > 0 {
+                Text("By this day last week: \(Fmt.distVert(mi: lw.distanceMi, gain: lw.gainFt, loss: lw.lossFt))")
+                    .font(.caption.monospacedDigit()).foregroundStyle(.secondary)
+            }
             if week.activities.isEmpty {
                 Text("No activities yet this week.").foregroundStyle(.secondary)
             } else {

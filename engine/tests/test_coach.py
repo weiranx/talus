@@ -196,7 +196,43 @@ def test_brief_reply_never_lets_the_coach_write_the_session():
     assert (same["session"], same["detail"], same["why"]) == ("Easy aerobic", "60 to 75 min in Zone 1.", "w")
     rest = coach.brief_reply({"call": "rest", "why": "w"}, rules, 150)
     assert rest["call"] == "rest" and "under 150 bpm" in rest["detail"] and rest["detail"] != rules["detail"]
-    assert set(coach.BRIEF_SCHEMA["properties"]) == {"call", "why"}
+    assert set(coach.BRIEF_SCHEMA["properties"]) == {"call", "why", "focus", "ahead"}
+    full = coach.brief_reply({"call": "modify", "why": "w", "focus": "f", "ahead": "a"}, rules, 150)
+    assert (full["focus"], full["ahead"]) == ("f", "a")
+
+
+def test_brief_reads_the_plan_and_the_rules_say_how_and_what_is_next(tmp_path, monkeypatch):
+    client = _demo(tmp_path, monkeypatch)
+    monkeypatch.setattr(api, "coach_client", lambda: None)
+    day = date.today() + timedelta(days=2)
+    assert client.post("/api/schedule", json={"day": day.isoformat(), "kind": "long", "miles": 9,
+                                              "gain_ft": 2400, "loss_ft": 2400}).status_code == 200
+    t = client.get("/api/today").json()
+    assert [d["day"] for d in t["ahead"]["days"]] == [(date.today() + timedelta(days=k)).isoformat() for k in (1, 2, 3)]
+    assert t["ahead"]["days"][1]["runs"][0]["miles"] == 9 and t["ahead"]["objective"] is None
+    assert "last_week_to_date" in t["week"]
+    packet = coach.brief_packet(t, api._activities(api.get_store()))
+    assert packet["plan"]["next_days"][1]["planned"][0]["distance_mi"] == 9
+    assert packet["plan"]["next_days"][1]["weekday"] == day.strftime("%A")
+    assert packet["readiness_score_last_7_days"] and "same_days_last_week" in packet["week_so_far"]
+    b = client.get("/api/coach/brief").json()
+    assert b["source"] == "rules" and b["reply"]["focus"] and b["reply"]["ahead"]
+    assert f"on {day.strftime('%A')}" in b["reply"]["ahead"]
+
+
+def test_rules_brief_without_a_plan():
+    packet = {"rule_call": {"call": "rest", "session": "s", "detail": "d", "why": "w"},
+              "athlete": {"hr_aet": 150}, "readiness": {"legs": {"state": "overreached", "limiter": "descent"}},
+              "intensity_28d_pct": {"below_aet": 70}, "plan": None,
+              "week_so_far": {"distance_mi": 12.5, "gain_ft": 3100, "loss_ft": 3000,
+                              "same_days_last_week": {"distance_mi": 20.1, "gain_ft": 5200, "loss_ft": 5100}},
+              "rest": {"training_days_in_a_row_before_today": 7}}
+    r = coach.rules_brief(packet)
+    assert r["call"] == "rest" and "rest count" in r["focus"]
+    assert "12.5 mi and 3,100 ft up" in r["ahead"] and "20.1 mi" in r["ahead"] and "in a row" not in r["ahead"]
+    packet["rule_call"]["call"] = "modify"
+    r = coach.rules_brief(packet)
+    assert "quads" in r["focus"] and "7 days in a row" in r["ahead"]
 
 
 def test_style_is_saved_in_settings_and_drives_the_coach(tmp_path, monkeypatch):

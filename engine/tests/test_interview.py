@@ -5,7 +5,7 @@ from datetime import date, timedelta
 from talus import api, interview
 from talus import plan as planner
 from tests.test_coach import FakeClient
-from tests.test_plan import OBJ, TODAY, _acts, _history, _obj, _setup
+from tests.test_plan import DRAFT_IT, OBJ, TODAY, WORKOUTS_ANSWER, _acts, _history, _obj, _setup
 
 
 def test_objective_from_plain_words():
@@ -49,11 +49,12 @@ def test_edits_from_plain_words_change_the_constraints():
 
 
 def test_speed_work_can_be_asked_for_in_plain_words():
-    assert interview.rules_edits("add track workouts?") == [{"kind": "workout", "workout": "track"}]
+    # "add" puts a workout into the ones the plan takes turns with; naming one alone makes it the only one.
+    assert interview.rules_edits("add track workouts?") == [{"kind": "add_workout", "workout": "track"}]
     assert interview.rules_edits("I'd like a tempo run each week") == [{"kind": "workout", "workout": "tempo"}]
     assert interview.rules_edits("hill repeats please") == [{"kind": "workout", "workout": "hill_repeats"}]
     assert interview.rules_edits("no more speed work") == [{"kind": "workout", "workout": "none"}]
-    assert interview.rules_edits("add a fartlek") == [{"kind": "workout", "workout": "fartlek"}]
+    assert interview.rules_edits("add a fartlek") == [{"kind": "add_workout", "workout": "fartlek"}]
     assert interview.rules_edits("threshold intervals on tuesdays") == [{"kind": "workout", "workout": "threshold"}]
     c, done, _ = interview.apply_edits([{"kind": "workout", "workout": "track"}], asdict(planner.Constraints()), [])
     assert c["workout"] == "track" and "track intervals once a week" in done[0]
@@ -85,19 +86,47 @@ def test_plan_by_conversation(tmp_path, monkeypatch):
     assert r["step"] == "objective" and "feet of climbing" in r["messages"][-1]["text"]
     r = client.post("/api/plan/talk", json={"text": "4,000 ft up"}).json()
     assert r["step"] == "goal" and r["messages"][-2]["text"].startswith("Training for Fall 30k on ")
+    # The coach says what kind of plan the objective makes as soon as it's set.
+    assert "That makes this a trail race plan:" in r["messages"][-2]["text"]
     for step, answers in (("goal", {"goal": "Finish strong"}),
                           ("days", {"days": ["Tue", "Thu", "Sat", "Sun"], "long_day": "Sat"}),
                           ("time", {"weekday": "1 h", "weekend": "4 h"}),
                           ("terrain", {"terrain": "Rolling hills"})):
         assert r["step"] == step
         r = client.post("/api/plan/talk", json={"answers": answers}).json()
+    # Which workouts: the plan type's usual ones are already picked.
+    assert r["step"] == "workouts" and "trail race plan usually has" in r["messages"][-1]["text"]
+    groups = {g["key"]: g for g in r["messages"][-1]["groups"]}
+    assert groups["hills"]["value"] == ["Long climbs", "Power hiking", "Downhill repeats"] and groups["speed"]["multi"]
+    r = client.post("/api/plan/talk", json={"answers": {"speed": ["Tempo"], "hills": ["Long climbs", "Power hiking"],
+                                                        "extras": ["Strength"]}}).json()
+    assert r["messages"][-2]["text"] == "Tempo, Long climbs, Power hiking, Strength"
     r = client.post("/api/plan/talk", json={"answers": {"body": "Nothing to note", "feel": "Tired lately"}}).json()
+    # Nothing is drafted until the coach has said what it will build and asked what else they want.
+    assert r["step"] == "confirm" and client.get("/api/plan").json()["draft"] is None
+    text = r["messages"][-1]["text"]
+    assert text.startswith("Before I draft it, here's what I'll build: a trail race plan for Fall 30k")
+    assert "Workouts: tempo, long climbs, power hiking and strength." in text and "up to 1 h on weekdays" in text
+    r = client.post("/api/plan/talk", json={"text": "I'm away the first weekend of next month, and no runs on Thursdays"}).json()
     assert r["step"] == "draft" and "Here's your draft" in r["messages"][-1]["text"]
+    assert r["messages"][-1]["groups"][0]["key"] == "change_topic"
     assert "this week and next are a little lighter" in r["messages"][-1]["text"]
     assert [a["id"] for a in r["messages"][-1]["actions"]] == ["accept"]
     p = client.get("/api/plan").json()
-    assert p["objective"]["name"] == "Fall 30k" and p["draft"] and p["constraints"]["days"] == [1, 3, 5, 6]
+    # "No runs on Thursdays", typed at the last question, drops Thursday.
+    assert p["objective"]["name"] == "Fall 30k" and p["draft"] and p["constraints"]["days"] == [1, 5, 6]
     assert p["constraints"]["weekday_min"] == 60 and len(p["constraints"]["adjust"]) == 2
+    c = p["constraints"]
+    assert (c["workouts"], c["hill_sessions"], c["strides"], c["strength"]) == (["tempo"], ["vert_climb", "power_hike"], False, True)
+    assert p["draft"]["plan_type"]["key"] == "trail" and p["plan_type"]["label"] == "Trail race plan"
+    answers = api.get_store().settings()["plan_answers"]
+    assert answers["what_else_they_want"].startswith("I'm away the first weekend") and answers["speed"] == ["Tempo"]
+    # A quick change asks the setup question again and redrafts from the answer.
+    r = client.post("/api/plan/talk", json={"answers": {"change_topic": "Time limits"}}).json()
+    assert r["step"] == "time" and r["messages"][-2]["text"] == "Time limits"
+    r = client.post("/api/plan/talk", json={"answers": {"weekday": "3 h", "weekend": "12 h"}}).json()
+    assert r["step"] == "draft" and "Done: weekdays up to 3 h and weekend days up to 12 h." in r["messages"][-1]["text"]
+    assert (client.get("/api/plan").json()["constraints"]["weekend_min"]) == 720
     # A change by asking becomes a new draft.
     r = client.post("/api/plan/talk", json={"text": "move my long day to Sunday"}).json()
     assert "Done: long day on Sunday." in r["messages"][-1]["text"]
@@ -207,7 +236,8 @@ def test_goals_without_a_race_day(tmp_path, monkeypatch):
     r = client.post("/api/plan/talk", json={"answers": {"confirm": "Use this"}}).json()
     assert r["step"] == "days" and r["messages"][-2]["text"].startswith("Set: build base,")
     for answers in ({"days": ["Tue", "Thu", "Sat", "Sun"], "long_day": "Sat"}, {"weekday": "1 h", "weekend": "4 h"},
-                    {"terrain": "Rolling hills"}, {"body": "Nothing to note", "feel": "Fresh"}):
+                    {"terrain": "Rolling hills"}, {"speed": [], "hills": [], "extras": []},
+                    {"body": "Nothing to note", "feel": "Fresh"}, DRAFT_IT):
         r = client.post("/api/plan/talk", json={"answers": answers}).json()
     text = r["messages"][-1]["text"]
     assert r["step"] == "draft" and "weeks: Build base" in text and "taper" not in text and "race" not in text
@@ -260,8 +290,8 @@ def test_plan_questions_go_to_the_coach(tmp_path, monkeypatch):
     client.post("/api/plan/talk/restart", json={"mode": "setup"})
     client.post("/api/plan/talk", json={"answers": {"keep": "Keep it"}})
     for answers in ({"goal": "Finish strong"}, {"days": ["Tue", "Thu", "Sat", "Sun"], "long_day": "Sat"},
-                    {"weekday": "1 h", "weekend": "4 h"}, {"terrain": "Rolling hills"},
-                    {"body": "Nothing to note", "feel": "Fresh"}):
+                    {"weekday": "1 h", "weekend": "4 h"}, {"terrain": "Rolling hills"}, WORKOUTS_ANSWER,
+                    {"body": "Nothing to note", "feel": "Fresh"}, DRAFT_IT):
         r = client.post("/api/plan/talk", json={"answers": answers}).json()
     assert r["step"] == "draft"
     fake = FakeClient({"answer": "About nine to eleven hours on your recent pace.", "used": [], "actions": []})

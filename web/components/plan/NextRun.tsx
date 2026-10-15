@@ -1,3 +1,6 @@
+"use client";
+
+import { usePlanDetail } from "@/components/plan/PlanDetail";
 import { dayLabel, mi, n0 } from "@/lib/format";
 import { minutesText } from "@/lib/plan";
 import type { PlanSession } from "@/lib/types";
@@ -13,8 +16,10 @@ function when(day: string, today: string): string {
 }
 
 // The next run on the plan, big: distance and vert together, how long, and how to run it.
-// Then the next few after it, one line each.
+// Then the next few after it, one line each. Tap any of them for its detail, or to change it.
 export default function NextRun({ sessions, today }: { sessions: PlanSession[]; today: string }) {
+  const detail = usePlanDetail();
+  const open = (s: PlanSession) => detail?.openDay(s);
   const runs = sessions.filter((s) => s.day >= today && !OFF.has(s.kind));
   const next = runs[0];
   if (!next) {
@@ -50,13 +55,22 @@ export default function NextRun({ sessions, today }: { sessions: PlanSession[]; 
       {next.benefit ? (
         <div style={{ color: "var(--feature-soft)", fontSize: 14 }}><span style={{ fontWeight: 600 }}>Why: </span>{next.benefit}</div>
       ) : null}
+      {detail ? (
+        <div className="actions" style={{ gap: 8 }}>
+          <button type="button" className="btn light" style={{ minHeight: 36, padding: "0 14px" }} onClick={() => open(next)}>Change this run</button>
+          <button type="button" className="btn light outline" style={{ minHeight: 36, padding: "0 14px", background: "transparent", color: "var(--on-feature)" }}
+            onClick={() => detail.openWeek(sessions[0]?.day ?? today)}>This week, day by day</button>
+        </div>
+      ) : null}
       {runs.length > 1 ? (
         <div style={{ borderTop: "1px solid var(--feature-line)", paddingTop: 10, display: "flex", flexDirection: "column", gap: 4 }}>
           {runs.slice(1, 4).map((s) => (
-            <div key={s.day} style={{ display: "flex", justifyContent: "space-between", gap: 12, fontSize: 14 }}>
+            <button key={s.day} type="button" onClick={() => open(s)} disabled={!detail}
+              style={{ display: "flex", justifyContent: "space-between", gap: 12, fontSize: 14, background: "none", border: 0, padding: "2px 0",
+                color: "inherit", font: "inherit", textAlign: "left", cursor: detail ? "pointer" : "default" }}>
               <span><span style={{ color: "var(--feature-muted)" }}>{dayLabel(s.day, { weekday: "short" })}</span> {s.title}</span>
               <span className="mono" style={{ fontSize: 13 }}>{mi(s.miles)} mi · {n0(s.gain_ft)} ft</span>
-            </div>
+            </button>
           ))}
         </div>
       ) : null}

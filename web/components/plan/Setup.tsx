@@ -79,6 +79,7 @@ export function DraftDetail({ p }: { p: PlanPage }) {
         <div>
           <h2 style={{ fontSize: 18, fontWeight: 600 }}>The draft for {obj.name}</h2>
           <div className="muted">{objectiveWhen(obj)} · {objectiveSize(obj)}</div>
+          {draft.plan_type ? <div style={{ fontSize: 14, marginTop: 4 }}><span style={{ fontWeight: 600 }}>{draft.plan_type.label}:</span> {draft.plan_type.text}.</div> : null}
         </div>
         {!draft.building && (isEvent(obj) || obj.goal === "target") ? (
           <Pill tone={draft.reachable ? "good" : "bad"}>
@@ -92,7 +93,7 @@ export function DraftDetail({ p }: { p: PlanPage }) {
       <div className="row">
         <div style={{ flex: "2 1 520px", minWidth: 0, display: "flex", flexDirection: "column", gap: 12 }}>
           <h3 className="label">The first weeks</h3>
-          <WeeksTable weeks={draft.weeks} current={draft.weeks[0].start} limit={6} />
+          <WeeksTable weeks={draft.weeks} current={draft.weeks[0].start} limit={6} draft />
           <h3 className="label">Coach&apos;s read</h3>
           <Suspense fallback={<CoachPlanPending />}><CoachPlan /></Suspense>
         </div>
@@ -134,7 +135,7 @@ export default function Setup({ p, step }: { p: PlanPage; step: Step }) {
               The plan only puts runs on these days, keeps each day inside its time limit, and puts the long day where you choose.
             </div>
           </div>
-          <ConstraintsForm current={p.constraints} hasObjective={!!obj} next={obj ? "/plan?step=review" : "/plan?step=objective"}
+          <ConstraintsForm current={p.constraints} picks={p.workout_picks} hasObjective={!!obj} next={obj ? "/plan?step=review" : "/plan?step=objective"}
             submit={obj ? "Next: draft my plan" : "Next"} />
           <div><Link href="/plan?step=objective">Back to the objective</Link></div>
         </>
@@ -180,7 +181,7 @@ export default function Setup({ p, step }: { p: PlanPage; step: Step }) {
             <div className="row">
               <div style={{ flex: "2 1 520px", minWidth: 0, display: "flex", flexDirection: "column", gap: 12 }}>
                 <h3 className="label">The first weeks</h3>
-                <WeeksTable weeks={draft.weeks} current={draft.weeks[0].start} limit={6} />
+                <WeeksTable weeks={draft.weeks} current={draft.weeks[0].start} limit={6} draft />
                 <h3 className="label">Coach&apos;s read</h3>
                 <Suspense fallback={<CoachPlanPending />}><CoachPlan /></Suspense>
               </div>

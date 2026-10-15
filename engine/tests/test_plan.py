@@ -343,6 +343,10 @@ def _setup(tmp_path, monkeypatch, days=42):
 
 
 CHECK_OK = {"ok": True, "summary": "Sound as it is.", "issues": [], "weeks": []}
+# The plan conversation's workouts and last questions, answered with taps.
+WORKOUTS_ANSWER = {"speed": [], "hills": ["Long climbs", "Power hiking", "Downhill repeats"], "extras": ["Strides", "Strength"]}
+DRAFT_IT = {"draft_it": "Draft my plan"}
+
 OBJ = {"name": "Fall 30k", "distance_mi": 18.6, "gain_ft": 4000, "loss_ft": 4000, "longest_descent_ft": 1800,
        "high_point_ft": 7500}
 
@@ -740,8 +744,8 @@ def test_the_plan_chat_shows_the_coachs_plan_not_the_engines_while_it_builds(tmp
     client.post("/api/plan/talk/restart", json={"mode": "setup"})
     client.post("/api/plan/talk", json={"answers": {"keep": "Keep it"}})
     for answers in ({"goal": "Finish strong"}, {"days": ["Tue", "Thu", "Sat", "Sun"], "long_day": "Sat"},
-                    {"weekday": "1 h", "weekend": "4 h"}, {"terrain": "Rolling hills"},
-                    {"body": "Nothing to note", "feel": "Fresh"}):
+                    {"weekday": "1 h", "weekend": "4 h"}, {"terrain": "Rolling hills"}, WORKOUTS_ANSWER,
+                    {"body": "Nothing to note", "feel": "Fresh"}, DRAFT_IT):
         r = client.post("/api/plan/talk", json={"answers": answers}).json()
     # No engine summary and nothing to accept while the coach drafts.
     last = r["messages"][-1]
@@ -782,8 +786,8 @@ def test_the_coach_builds_after_the_draft_is_saved_and_the_chat_says_when(tmp_pa
     client.post("/api/plan/talk/restart", json={"mode": "setup"})
     client.post("/api/plan/talk", json={"answers": {"keep": "Keep it"}})
     for answers in ({"goal": "Finish strong"}, {"days": ["Tue", "Thu", "Sat", "Sun"], "long_day": "Sat"},
-                    {"weekday": "1 h", "weekend": "4 h"}, {"terrain": "Rolling hills"},
-                    {"body": "Nothing to note", "feel": "Fresh"}):
+                    {"weekday": "1 h", "weekend": "4 h"}, {"terrain": "Rolling hills"}, WORKOUTS_ANSWER,
+                    {"body": "Nothing to note", "feel": "Fresh"}, DRAFT_IT):
         r = client.post("/api/plan/talk", json={"answers": answers}).json()
     # The answer comes back at once with the engine's draft; the coach is still working.
     assert r["step"] == "draft" and r["building"] and "drafting your plan" in r["messages"][-1]["text"]
@@ -895,3 +899,165 @@ def test_each_sync_reads_the_latest_training_against_the_plan(tmp_path, monkeypa
     sent = fake.calls[-1]["messages"][0]["content"]
     assert "Mode: plan fit." in sent and "recent_days" in sent and "this_week" in sent
     assert client.get("/api/coach/fit").json()["source"] == "coach" and len(fake.calls) == 2  # cached
+
+
+def test_the_plan_type_names_what_the_plan_trains_for():
+    kinds = {(d, g, goal): planner.plan_type({"distance_mi": d, "gain_ft": g, "goal": goal})
+             for d, g, goal in ((3.1, 50, "race"), (13.1, 300, "race"), (26.2, 800, "race"), (50, 3000, "race"),
+                                (31, 8000, "race"), (18, 4000, "race"), (14, 6000, "trip"), (100, 20000, "race"),
+                                (200, 40000, "race"), (30, 5000, "base"))}
+    assert list(kinds.values()) == ["fast_5k", "half", "marathon", "ultra", "mountain_ultra", "trail",
+                                    "mountain_day", "hundred", "multiday", "base"]
+    assert planner.plan_type_text({"distance_mi": 31, "gain_ft": 8000})["label"] == "Mountain ultra plan"
+    assert planner.plan_type_text({"distance_mi": 30, "gain_ft": 5000, "goal": "base"})["label"] == "Build base plan"
+    assert planner.build(_obj(), _acts(), _history(_acts()), planner.Constraints(), TODAY)["plan_type"]["key"] == "mountain_ultra"
+
+
+def test_the_workouts_picked_rotate_and_nothing_else_is_added():
+    acts = _acts()
+    c = planner.Constraints(workouts=["tempo", "fartlek"], hill_sessions=["power_hike", "downhill"], strides=False,
+                            strength=False)
+    p = planner.build(_obj(weeks=12), acts, _history(acts), c, TODAY)
+    speed = [w["workout"] for w in p["weeks"][1:] if w["focus"] in ("build", "peak", "taper")]
+    assert set(speed) == {"tempo", "fartlek"} and speed[0] != speed[1]
+    hills = {w["hill_session"] for w in p["weeks"]}
+    assert hills <= {"power_hike", "downhill", "vert_climb"} and {"power_hike", "downhill"} <= hills
+    # A session the coach picks that the athlete didn't is replaced by one they did.
+    proposal = [{"start": w["start"], "focus": w["focus"], "miles": w["miles"], "gain_ft": w["gain_ft"],
+                 "loss_ft": w["loss_ft"], "workout": "track", "hill_session": "hill_sprints"} for w in p["weeks"]]
+    q = planner.build(_obj(weeks=12), acts, _history(acts), c, TODAY, proposal)
+    assert not {w["workout"] for w in q["weeks"]} - {"tempo", "fartlek", None}
+    assert not {w["hill_session"] for w in q["weeks"]} - {"power_hike", "downhill", "vert_climb"}
+    # Strides and strength turned off stay off the days.
+    p["status"] = "accepted"
+    day = date.fromisoformat(next(w["start"] for w in p["weeks"][2:] if w["focus"] == "build"))
+    ss = planner.upcoming_sessions(p, acts, day, 7)
+    assert not any(s.get("strength") for s in ss) and "strides" not in {s.get("type") for s in ss}
+    # None picked: no speed work, even for a road race that would default to one.
+    road = _obj(distance_mi=13.1, gain_ft=200, loss_ft=200, longest_descent_ft=None)
+    assert {w["workout"] for w in planner.build(road, acts, _history(acts), planner.Constraints(workouts=[]),
+                                                TODAY)["weeks"]} == {None}
+
+
+def test_higher_time_limits_hold():
+    c = planner.Constraints.from_json({"weekday_min": 700, "weekend_min": 1400})
+    assert (c.weekday_min, c.weekend_min) == (700, 1400)
+    c = planner.Constraints.from_json({"weekday_min": 5000, "weekend_min": 5000})
+    assert (c.weekday_min, c.weekend_min) == (planner.MAX_WEEKDAY_MIN, planner.MAX_WEEKEND_MIN)
+
+
+def _accepted_plan():
+    acts = _acts()
+    p = planner.build(_obj(weeks=12), acts, _history(acts), planner.Constraints(), TODAY)
+    return p | {"status": "accepted"}, acts
+
+
+def test_a_day_off_moves_the_week_around_it_and_eases_the_next():
+    p, acts = _accepted_plan()
+    i = next(i for i, w in enumerate(p["weeks"][1:-3], 1) if w["focus"] == "build" and p["weeks"][i + 1]["focus"] == "build")
+    start = date.fromisoformat(p["weeks"][i]["start"])
+    week = planner.week_sessions(p, acts, TODAY, start, {})
+    long_day = next(s["day"] for s in week if s["kind"] == "long")
+    rest = {"kind": "rest", "miles": 0.0, "gain_ft": 0.0, "loss_ft": 0.0, "minutes": 0.0}
+    own = {long_day: rest}
+    after = {s["day"]: s for s in planner.week_sessions(p, acts, TODAY, start, own)}
+    assert after[long_day]["kind"] == "rest" and after[long_day]["own"]
+    # The long day moves to another free day, so one day off loses little and the next week holds.
+    assert any(s["kind"] == "long" for d, s in after.items() if d != long_day)
+    assert "adapted" not in planner.adapt(p, acts, TODAY, own)["weeks"][i + 1]
+    # Three days off and the week comes in well under, so the next one doesn't jump to make it up.
+    own |= {s["day"]: rest for s in [s for s in week if s["kind"] not in ("rest", "long")][:2]}
+    q = planner.adapt(p, acts, TODAY, own)
+    nxt, was = q["weeks"][i + 1], p["weeks"][i + 1]
+    assert nxt["adapted"]["reason"] == "under" and nxt["miles"] < was["miles"] and "lighter" in nxt["notes"][0]
+    assert q["weeks"][i] == p["weeks"][i] and p["weeks"][i + 1] == was  # only the next week, and a copy
+    # A much bigger day than planned eases the next week too; a day as planned changes nothing.
+    big = {long_day: {"kind": "long", "miles": 40.0, "gain_ft": 12000.0, "loss_ft": 12000.0, "minutes": None}}
+    assert planner.adapt(p, acts, TODAY, big)["weeks"][i + 1]["adapted"]["reason"] == "over"
+    same = {long_day: next({k: s[k] for k in ("kind", "miles", "gain_ft", "loss_ft", "minutes")}
+                           for s in week if s["day"] == long_day)}
+    assert "adapted" not in planner.adapt(p, acts, TODAY, same)["weeks"][i + 1]
+
+
+def test_days_can_be_seen_changed_and_taken_off_and_the_plan_adapts(tmp_path, monkeypatch):
+    client = _setup(tmp_path, monkeypatch)
+    draft = client.put("/api/plan/objective", json=OBJ | {"day": (date.today() + timedelta(weeks=10)).isoformat()}).json()["draft"]
+    client.post(f"/api/plan/{draft['id']}/accept")
+    # Any week, seen day by day with each session's detail.
+    later = draft["weeks"][4]["start"]
+    w = client.get(f"/api/plan/week?start={later}").json()
+    assert len(w["days"]) == 7 and not w["dated"] and w["week"]["start"] == later
+    long = next(d for d in w["days"] if d["kind"] == "long")
+    assert long["steps"] and long["benefit"] and long["title"] == "Long day"
+    # Take that long day off: it shows as yours and the long day moves to another day.
+    r = client.post("/api/schedule", json={"day": long["day"], "kind": "rest", "miles": 0})
+    assert r.status_code == 200
+    w = client.get(f"/api/plan/week?start={later}").json()
+    off = next(d for d in w["days"] if d["day"] == long["day"])
+    assert off["kind"] == "rest" and off["own"] and off["run_id"]
+    assert any(d["kind"] == "long" for d in w["days"] if d["day"] != long["day"])
+    # A day changed to much more than planned eases the week after it.
+    easy = next(d for d in w["days"] if d["kind"] in ("easy", "hills"))
+    client.post("/api/schedule", json={"day": easy["day"], "kind": "long", "miles": 30, "gain_ft": 8000})
+    nxt = next(x for x in client.get("/api/plan").json()["accepted"]["weeks"] if x["start"] > later)
+    assert nxt["adapted"]["from"] == later and nxt["adapted"]["reason"] == "over"
+    assert client.get(f"/api/plan/week?start={nxt['start']}").json()["week"]["adapted"]
+    # A day off asked for in the plan chat goes on the calendar the same way.
+    client.get("/api/plan/talk?mode=change")
+    r = client.post("/api/plan/talk", json={"text": "skip tomorrow"}).json()
+    tomorrow = date.today() + timedelta(days=1)
+    assert "is a rest day" in r["messages"][-1]["text"] and client.get("/api/plan").json()["draft"] is None
+    assert any(r.day == tomorrow and r.kind == "rest" for r in api.get_store().planned_runs(tomorrow, tomorrow))
+    # The calendar's plan sessions carry their steps for the detail view.
+    items = client.get("/api/schedule").json()["items"]
+    plan_items = [it for it in items if it["source"] == "plan"]
+    assert plan_items and all(it["steps"] for it in plan_items) and all("session" in it for it in plan_items)
+    # Longer days are allowed: up to 12 h on weekdays and 24 h on weekend days.
+    body = {"days": [1, 3, 5, 6], "weekday_min": 720, "weekend_min": 1440, "long_day": 5}
+    assert client.put("/api/plan/constraints", json=body).status_code == 200
+    assert client.put("/api/plan/constraints", json=body | {"weekend_min": 1500}).status_code == 422
+    c = client.put("/api/plan/constraints", json=body | {"workouts": ["tempo"], "hill_sessions": [],
+                                                          "strength": False}).json()["constraints"]
+    assert (c["workouts"], c["hill_sessions"], c["strength"], c["strides"]) == (["tempo"], [], False, True)
+    assert client.put("/api/plan/constraints", json=body | {"workouts": ["sprint"]}).status_code == 422
+
+
+def test_the_coach_drafts_with_everything_known_on_the_admins_plan_model(tmp_path, monkeypatch):
+    client = _setup(tmp_path, monkeypatch)
+    api.get_accounts().set_config("coach_models", {"brief_model": "claude-haiku-5-5", "analysis_model": "claude-opus-5-5",
+                                                   "plan_model": "claude-sonnet-5-5"})
+    client.post("/api/checkin", json={"soreness": 2, "energy": 4, "pain": 3})
+    client.post("/api/schedule", json={"day": (date.today() + timedelta(days=20)).isoformat(), "kind": "race",
+                                       "miles": 13.1, "gain_ft": 1500, "notes": "Tune-up half"})
+    draft = client.put("/api/plan/objective", json=OBJ | {"day": (date.today() + timedelta(weeks=10)).isoformat()}).json()["draft"]
+    weeks = [{"start": w["start"], "focus": w["focus"], "miles": w["miles"], "gain_ft": w["gain_ft"],
+              "loss_ft": w["loss_ft"], "workout": "none", "hill_session": "vert_climb", "note": "Steady."}
+             for w in draft["weeks"]]
+    fake = FakeClient({"approach": "Steady.", "weeks": weeks}, CHECK_OK)
+    monkeypatch.setattr(api, "coach_client", lambda: fake)
+    client.post("/api/plan/draft", json={"reason": "request"})
+    assert [c["model"] for c in fake.calls] == ["claude-sonnet-5-5", "claude-sonnet-5-5"]
+    for call in fake.calls:
+        packet = __import__("json").loads(call["messages"][0]["content"].split("Data:\n", 1)[1])
+        ctx = packet["athlete_context"]
+        assert ctx["athlete"]["hr_aet"] == 150 and ctx["checkins_last_14_days"][-1]["pain"] == 3
+        assert ctx["runs_they_scheduled_ahead"][0]["notes"] == "Tune-up half" and ctx["ledgers"] and ctx["last_14_days"]
+        assert packet["plan_type"]["name"] == "Trail race plan"
+
+
+def test_a_moved_workout_stays_that_workout_and_isnt_doubled():
+    acts = _acts()
+    c = planner.Constraints(workouts=["fartlek"])
+    p = planner.build(_obj(weeks=12), acts, _history(acts), c, TODAY) | {"status": "accepted"}
+    i = next(i for i, w in enumerate(p["weeks"][1:], 1) if w["workout"] == "fartlek")
+    start = date.fromisoformat(p["weeks"][i]["start"])
+    week = planner.week_sessions(p, acts, TODAY, start, {})
+    was = next(s for s in week if s["kind"] == "fartlek")
+    to = next(s for s in week if s["kind"] == "rest" and s["day"] > was["day"])
+    run = {k: was[k] for k in ("miles", "gain_ft", "loss_ft")} | {"kind": "intervals", "minutes": None}
+    rest = {"kind": "rest", "miles": 0.0, "gain_ft": 0.0, "loss_ft": 0.0, "minutes": 0.0}
+    moved = {s["day"]: s for s in planner.week_sessions(p, acts, TODAY, start, {to["day"]: run, was["day"]: rest})}
+    assert moved[to["day"]]["kind"] == "fartlek" and moved[to["day"]]["own"]
+    assert sum(s["kind"] == "fartlek" for s in moved.values()) == 1 and moved[was["day"]]["kind"] == "rest"
+    text = planner.session_text(moved[to["day"]], 150, "Test 50k", 172)
+    assert text["title"] == "Fartlek" and len(text["steps"]) == 3

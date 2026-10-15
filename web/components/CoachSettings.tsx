@@ -25,8 +25,9 @@ export default function CoachSettings({ coach }: { coach: Settings["coach"] }) {
   const capValid = capValue == null || (Number.isFinite(capValue) && capValue >= 0 && capValue <= 1000);
   const dirty = capDirty || enabled !== coach.enabled || style !== coach.style || aiPlans !== (coach.ai_plans ?? true);
   // A draft is the coach's build plus its second check of the plan.
-  const buildOnly = coach.estimate.build?.[coach.analysis_model]?.per_call ?? null;
-  const buildCost = buildOnly == null ? null : buildOnly + (coach.estimate.check?.[coach.analysis_model]?.per_call ?? 0);
+  const planModel = coach.plan_model ?? coach.analysis_model;
+  const buildOnly = coach.estimate.build?.[planModel]?.per_call ?? null;
+  const buildCost = buildOnly == null ? null : buildOnly + (coach.estimate.check?.[planModel]?.per_call ?? 0);
   const capped = coach.cap.limit != null && coach.cap.spent >= coach.cap.limit;
 
   async function save() {

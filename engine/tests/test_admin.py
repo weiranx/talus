@@ -176,8 +176,16 @@ def test_the_admin_sets_the_coach_models_for_everyone():
     body = {"brief_model": "claude-haiku-5-5", "analysis_model": "claude-opus-5-5"}
     assert friend.put("/api/admin/coach-models", json=body).status_code == 404
     assert admin.put("/api/admin/coach-models", json={**body, "brief_model": "gpt"}).status_code == 422
-    assert admin.put("/api/admin/coach-models", json=body).json() == body
+    # Plan drafting follows the analysis model until the admin picks its own.
+    assert admin.put("/api/admin/coach-models", json=body).json() == body | {"plan_model": "claude-opus-5-5"}
     for c in (owner, friend):
         coach = c.get("/api/settings").json()["coach"]
         assert (coach["brief_model"], coach["analysis_model"]) == ("claude-haiku-5-5", "claude-opus-5-5")
     assert admin.get("/api/admin").json()["log"][0]["action"] == "coach_models"
+    assert set(admin.get("/api/admin").json()["coach_models"]["estimate"]["plan"]) == {x["id"] for x in m["models"]}
+    assert admin.put("/api/admin/coach-models", json={**body, "plan_model": "gpt"}).status_code == 422
+    picked = admin.put("/api/admin/coach-models", json={**body, "plan_model": "claude-sonnet-5-5"}).json()
+    assert picked["plan_model"] == "claude-sonnet-5-5"
+    # An older app that doesn't send plan_model keeps the admin's pick.
+    assert admin.put("/api/admin/coach-models", json=body).json()["plan_model"] == "claude-sonnet-5-5"
+    assert friend.get("/api/settings").json()["coach"]["plan_model"] == "claude-sonnet-5-5"

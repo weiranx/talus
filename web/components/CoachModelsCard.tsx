@@ -10,24 +10,25 @@ function money(v: number | null): string {
   return v < 1 ? `${Math.round(v * 100)}¢` : `$${v.toFixed(2)}`;
 }
 
-function costLine(e: CostEstimate | undefined): string {
+function costLine(e: CostEstimate | undefined, unit = "a call"): string {
   if (!e) return "";
   const call = money(e.per_call);
-  return `${call.startsWith("under") ? "Under 1¢" : `About ${call}`} a call, ${money(e.per_month)} a month on your account`;
+  return `${call.startsWith("under") ? "Under 1¢" : `About ${call}`} ${unit}, ${money(e.per_month)} a month on your account`;
 }
 
 const MODES = [
   { key: "brief_model", mode: "brief", label: "Daily brief and quick replies", when: "Today's call, the Load take, activity names and reading typed answers." },
-  { key: "analysis_model", mode: "analysis", label: "Longer reads", when: "Workout analysis, plan, weekly review and coach chat." },
+  { key: "analysis_model", mode: "analysis", label: "Longer reads", when: "Workout analysis, the plan's read, weekly review and coach chat." },
+  { key: "plan_model", mode: "plan", label: "Plan drafting", when: "Building each training plan draft and checking it a second time, from everything known about the athlete." },
 ] as const;
 
 // The coach's models, set once for every account on the admin page.
 export default function CoachModelsCard({ data }: { data: AdminOverview["coach_models"] }) {
   const router = useRouter();
-  const [models, setModels] = useState({ brief_model: data.brief_model, analysis_model: data.analysis_model });
+  const [models, setModels] = useState({ brief_model: data.brief_model, analysis_model: data.analysis_model, plan_model: data.plan_model });
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null);
-  const dirty = models.brief_model !== data.brief_model || models.analysis_model !== data.analysis_model;
+  const dirty = (Object.keys(models) as (keyof typeof models)[]).some((k) => models[k] !== data[k]);
 
   async function save() {
     setBusy(true);
@@ -52,7 +53,7 @@ export default function CoachModelsCard({ data }: { data: AdminOverview["coach_m
             <select value={models[m.key]} disabled={busy} onChange={(e) => setModels({ ...models, [m.key]: e.target.value })}>
               {data.models.map((o) => <option key={o.id} value={o.id}>{o.label}</option>)}
             </select>
-            <span className="muted">{m.when} {costLine(data.estimate[m.mode][models[m.key]])}.</span>
+            <span className="muted">{m.when} {costLine(data.estimate[m.mode]?.[models[m.key]], m.mode === "plan" ? "a draft" : "a call")}.</span>
           </label>
         ))}
       </div>

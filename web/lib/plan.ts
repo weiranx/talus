@@ -1,5 +1,5 @@
 import { dayLabel, mi, n0 } from "@/lib/format";
-import type { Dim, DimStatus, Focus, Goal, HillSession, Objective, SessionKind, WeekProgress, Workout } from "@/lib/types";
+import type { Dim, DimStatus, Focus, Goal, HillSession, Objective, RunKind, SessionKind, WeekProgress, Workout } from "@/lib/types";
 
 export const DAY_NAMES = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"];
 export const DAY_SHORT = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
@@ -16,8 +16,23 @@ export const KIND_COLOR: Record<SessionKind, string> = {
   long: "var(--climb)", long2: "var(--climb)", hills: "var(--descent)", easy: "var(--cardio)", rest: "var(--line)",
   track: "var(--target)", tempo: "var(--target)", hill_repeats: "var(--descent)", race_pace: "var(--target)",
   threshold: "var(--target)", fartlek: "var(--target)", progression: "var(--target)",
-  objective: "var(--ink)", done: "var(--z1)",
+  objective: "var(--ink)", done: "var(--z1)", past: "var(--z1)",
 };
+
+// Your own runs on the calendar, by kind, and the kind a plan session becomes when you change it.
+export const RUN_KIND_TEXT: Record<RunKind, string> = {
+  easy: "Easy run", long: "Long run", hills: "Hills", tempo: "Tempo", intervals: "Intervals", hike: "Hike", race: "Race",
+  other: "Run", rest: "Rest day",
+};
+export const PLAN_RUN_KIND: Record<SessionKind, RunKind> = {
+  long: "long", long2: "long", hills: "hills", easy: "easy", track: "intervals", fartlek: "intervals", tempo: "tempo",
+  race_pace: "tempo", threshold: "tempo", progression: "tempo", hill_repeats: "hills", objective: "race", rest: "rest",
+  done: "rest", past: "rest",
+};
+
+// The longest a day can be: 12 h on a weekday, a whole day on a weekend.
+export const MAX_WEEKDAY_MIN = 720;
+export const MAX_WEEKEND_MIN = 1440;
 
 // Units sit under the dimension's name, so the cells stay narrow.
 export function dimValue(d: Dim, v: number | null): string {

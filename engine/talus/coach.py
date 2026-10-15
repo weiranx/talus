@@ -18,7 +18,7 @@ from dataclasses import dataclass, field
 from datetime import date, timedelta
 from typing import Any, Protocol
 
-PROMPT_VERSION = "coach-v1.0"
+PROMPT_VERSION = "coach-v1.1"
 # The daily brief is short and mostly explains the engine's call, so it runs on Haiku; the
 # workout analysis has more to read and judge, so it stays on Opus. Both can be changed in
 # Settings, and TALUS_COACH_MODEL overrides both defaults.
@@ -176,7 +176,10 @@ INTAKE_FIELDS = {"name": "string", "date": "string", "distance_mi": "number", "d
                  "gain_ft": "number", "gain_m": "number", "loss_ft": "number", "loss_m": "number"}
 INTAKE_SCHEMA = {"type": "object", "properties": {k: _maybe(t) for k, t in INTAKE_FIELDS.items()},
                  "required": list(INTAKE_FIELDS), "additionalProperties": False}
-EDIT_KINDS = ("long_day", "add_day", "drop_day", "weekday_minutes", "weekend_minutes", "week", "workout")
+EDIT_KINDS = ("long_day", "add_day", "drop_day", "weekday_minutes", "weekend_minutes", "week", "workout",
+              "add_workout", "drop_workout", "back_to_back", "rest_day")
+EDIT_WORKOUTS = ("none", "track", "tempo", "hill_repeats", "race_pace", "threshold", "fartlek", "progression",
+                 "vert_climb", "power_hike", "downhill", "muscular_endurance", "hill_sprints", "strides", "strength")
 EDIT_SCHEMA = {
     "type": "object",
     "properties": {"edits": {"type": "array", "items": {
@@ -184,11 +187,11 @@ EDIT_SCHEMA = {
         "properties": {"kind": {"type": "string", "enum": list(EDIT_KINDS)}, "day": _maybe("integer"),
                        "minutes": _maybe("integer"), "week": _maybe("integer"),
                        "dims": {"type": "array", "items": {"type": "string", "enum": ["miles", "vert"]}},
-                       "direction": {"anyOf": [{"type": "string", "enum": ["less", "more"]}, {"type": "null"}]},
-                       "workout": {"anyOf": [{"type": "string", "enum": ["none", "track", "tempo", "hill_repeats", "race_pace",
-                                                                              "threshold", "fartlek", "progression"]},
-                                             {"type": "null"}]}},
-        "required": ["kind", "day", "minutes", "week", "dims", "direction", "workout"], "additionalProperties": False}},
+                       "direction": {"anyOf": [{"type": "string", "enum": ["less", "more", "recovery"]}, {"type": "null"}]},
+                       "workout": {"anyOf": [{"type": "string", "enum": list(EDIT_WORKOUTS)}, {"type": "null"}]},
+                       "date": _maybe("string"), "on": _maybe("boolean")},
+        "required": ["kind", "day", "minutes", "week", "dims", "direction", "workout", "date", "on"],
+        "additionalProperties": False}},
         "cannot": _maybe("string")},
     "required": ["edits", "cannot"],
     "additionalProperties": False,
@@ -197,7 +200,7 @@ EDIT_SCHEMA = {
 # Reading the athlete's own words into fields. These replies hold no prose, so the number check
 # doesn't apply; the engine checks every field before using it.
 INTAKE_PROMPT = """Read the athlete's text, which describes the race or mountain day they are training for, into fields. Use null for anything the text doesn't say; never guess. Put a distance in kilometers in distance_km and climbing in meters in gain_m or loss_m, unconverted. A "50k" is a distance of 50 km. date is YYYY-MM-DD: when the text gives no year, use the first such date after today (in the data). name is the event or route name as written, without the date or numbers. athlete_note, when present, is the athlete's own training note: when the text points at a race or day the note names (like "my race" or "the 100"), read that one from the note; never fill a field from the note otherwise."""
-EDIT_PROMPT = """Read the athlete's request to change their training plan into edits. Days are 0 (Monday) to 6 (Sunday). Kinds: long_day (move the long day to day), add_day or drop_day (a training day), weekday_minutes or weekend_minutes (the most time on one such day, in minutes), week (week number counted from this week as week 1, with dims miles and/or vert and direction less or more), workout (a weekly speed session: track for track or interval work, tempo for tempo runs, threshold for threshold or cruise intervals, fartlek for fartlek, progression for progression runs, hill_repeats for hill repeats or uphill intervals, race_pace for miles at goal race or marathon pace, none to drop speed work). Leave unused fields null and dims empty when not a week edit. Anything else, such as a new objective, a pace or a session on one date, can't be done: return no edits for it and put what was asked in cannot, in a few plain words (like "a long run on Nov 3"); otherwise cannot is null. athlete_note, when present, is the athlete's own training note: use it to read a vague request (like "more of what my note says" or "less of the thing I want to cut"), but never add an edit the request doesn't ask for."""
+EDIT_PROMPT = """Read the athlete's request to change their training plan into edits. Days are 0 (Monday) to 6 (Sunday). Kinds: long_day (move the long day to day), add_day or drop_day (a training day), weekday_minutes or weekend_minutes (the most time on one such day, in minutes), week (week number counted from this week as week 1, with dims miles and/or vert and direction less or more), week with direction recovery (make that week a recovery week), workout (the only speed session to use from now on: track for track or interval work, tempo for tempo runs, threshold for threshold or cruise intervals, fartlek for fartlek, progression for progression runs, hill_repeats for hill repeats or uphill intervals, race_pace for miles at goal race or marathon pace, none to drop all speed work), add_workout or drop_workout (add one workout to the ones the plan rotates through, or take one out: a speed session as above, or a hill session: vert_climb for long steady climbs, power_hike for power-hiking intervals, downhill for downhill repeats, muscular_endurance for weighted-pack hiking, hill_sprints for short hill sprints; or strides or strength), back_to_back (on true or false: pair the long day with a second long day for long objectives), rest_day (date YYYY-MM-DD: one day off, like "skip this Saturday" or "I'm away on Nov 3"; the rest of that week and the next adapt; use the first such date on or after today in the data). Leave unused fields null and dims empty when not a week edit. Anything else, such as a new objective, a pace or a bigger session on one date, can't be done: return no edits for it and put what was asked in cannot, in a few plain words (like "a long run on Nov 3"); otherwise cannot is null. athlete_note, when present, is the athlete's own training note: use it to read a vague request (like "more of what my note says" or "less of the thing I want to cut"), but never add an edit the request doesn't ask for."""
 
 # Looking up a named race: the analysis model with web search, for the date, distance and vert of
 # the next edition. Its numbers are shown for the athlete to confirm before anything uses them.
@@ -328,7 +331,7 @@ BUILD_SCHEMA = {
     },
     "required": ["approach", "weeks"], "additionalProperties": False,
 }
-BUILD_PROMPT = """Build this athlete's training plan, week by week, as their coach. The data holds the objective or goal (objective.event false means a block with no race day: no taper and no race week), the athlete's training days and time limits, their last 12 weeks and biggest days, athlete_note and athlete_answers when they gave them, and engine_draft: the engine's own plan, one entry per week, as a safe reference. weekly_targets_the_objective_needs is the weekly volume the engine sizes the peak weeks to; readiness_now and engine_draft_readiness_at_taper show each readiness dimension against what the objective asks, now and at the taper on the engine's draft: shape the weeks so the plan closes the dimensions still short (the limiter first), within the limits. A second coach checks your plan before the athlete sees it. Write exactly one entry per engine_draft week, in the same order with the same start. For each week choose the focus, the week's miles, gain_ft and loss_ft, the one speed session (or none), the hill day's session, and a note of one short sentence for the athlete on the week's purpose and its key sessions. Speed sessions: track (800 m repeats over AnT), threshold (6 min repeats at AnT), tempo (blocks just under AnT), fartlek (mixed surges on rolling trail), progression (easy building to tempo), hill_repeats (2 min hard uphill), race_pace (miles at goal pace). Hill day sessions: vert_climb (a long zone 2 climb, also the easy option for recovery and taper weeks), power_hike (6 min steep power-hike intervals), downhill (downhill repeats for quad durability), muscular_endurance (weighted-pack hiking on the steepest climb, best in the last build and peak weeks), hill_sprints (10 to 15 s uphill sprints, for road races). Vary them through the build so the athlete trains climbing, hiking, descending and leg strength; the engine also adds strides, recovery runs after long days and two strength sessions a week on its own. Shape the plan the way a good mountain coach would for this athlete and this goal: how fast to build, where the recovery weeks fall, when to peak, how long to taper, when to lean on vert or on miles, and which speed work fits (none for most ultra and mountain builds; track or tempo for road races and getting faster; hill repeats for steep objectives). Respect the note and answers: an injury or niggle, tired lately, little vert near home, a preference they state. The engine checks every week and holds anything that breaks its limits: no week may add more than 10% in any of miles, gain or loss over the last build week, and a week that would ramp a load too fast or overreach is cut. So plan within those limits; a week you ask for above them is cut back. Recovery weeks run about 60 to 75% of the build level. For an event, the last week is the race week (focus race) and the weeks before it taper. Miles and feet only. approach is two or three sentences on how you shaped the plan and why, for the athlete."""
+BUILD_PROMPT = """Build this athlete's training plan, week by week, as their coach. The data holds the objective or goal (objective.event false means a block with no race day: no taper and no race week), the athlete's training days and time limits, their last 12 weeks and biggest days, athlete_note and athlete_answers when they gave them, and engine_draft: the engine's own plan, one entry per week, as a safe reference. weekly_targets_the_objective_needs is the weekly volume the engine sizes the peak weeks to; readiness_now and engine_draft_readiness_at_taper show each readiness dimension against what the objective asks, now and at the taper on the engine's draft: shape the weeks so the plan closes the dimensions still short (the limiter first), within the limits. A second coach checks your plan before the athlete sees it. Write exactly one entry per engine_draft week, in the same order with the same start. For each week choose the focus, the week's miles, gain_ft and loss_ft, the one speed session (or none), the hill day's session, and a note of one short sentence for the athlete on the week's purpose and its key sessions. Speed sessions: track (800 m repeats over AnT), threshold (6 min repeats at AnT), tempo (blocks just under AnT), fartlek (mixed surges on rolling trail), progression (easy building to tempo), hill_repeats (2 min hard uphill), race_pace (miles at goal pace). Hill day sessions: vert_climb (a long zone 2 climb, also the easy option for recovery and taper weeks), power_hike (6 min steep power-hike intervals), downhill (downhill repeats for quad durability), muscular_endurance (weighted-pack hiking on the steepest climb, best in the last build and peak weeks), hill_sprints (10 to 15 s uphill sprints, for road races). Vary them through the build so the athlete trains climbing, hiking, descending and leg strength; the engine also adds strides, recovery runs after long days and two strength sessions a week on its own. Shape the plan the way a good mountain coach would for this athlete and this goal: how fast to build, where the recovery weeks fall, when to peak, how long to taper, when to lean on vert or on miles, and which speed work fits (none for most ultra and mountain builds; track or tempo for road races and getting faster; hill repeats for steep objectives). Respect the note and answers: an injury or niggle, tired lately, little vert near home, a preference they state, and what_else_they_want in their own words. plan_type names the kind of plan the athlete was told they're getting; build that kind of plan. workouts_the_athlete_picked, when present, holds the workouts they asked for: use only those speed sessions (none when the list is empty) and only those hill sessions, varied through the build; a session they didn't pick is replaced by the engine. athlete_context is everything else known about them: thresholds and zones, today's load against normal with any flags, readiness and the overnight trend, their check-ins (pain and soreness), their last two weeks, rest pattern and intensity mix, runs they've scheduled themselves, and how they did against their last plan's weeks. Use it: start lighter when they're fatigued, flagged, sore or in pain, or when they've been falling short of their last plan's weeks; build on it when they've been absorbing more; fit around the runs they've scheduled. The engine checks every week and holds anything that breaks its limits: no week may add more than 10% in any of miles, gain or loss over the last build week, and a week that would ramp a load too fast or overreach is cut. So plan within those limits; a week you ask for above them is cut back. Recovery weeks run about 60 to 75% of the build level. For an event, the last week is the race week (focus race) and the weeks before it taper. Miles and feet only. approach is two or three sentences on how you shaped the plan and why, for the athlete."""
 
 # A second read of the plan before the athlete sees it: the coach checks the weeks the engine
 # held to its limits and, when something is off, sends back a revised plan the engine checks again.
@@ -340,7 +343,7 @@ CHECK_SCHEMA = {
     "required": ["ok", "summary", "issues", "weeks"], "additionalProperties": False,
 }
 CHECK_MAX_ISSUES = 5
-CHECK_PROMPT = """Check this training plan as a second coach, before the athlete sees it. plan_to_check is the plan as it stands after the engine held every week to its limits: each week's focus, miles, feet up and down, hours, long day, speed session, hill session, the note to the athlete (coach_note) and the engine's own notes (a week held to the 10% build limit, or cut for a load limit). coach_approach is how the builder says it shaped the plan. Check it against the objective, readiness now and projected at the taper (which dimension is still a gap, and does the plan train it), the athlete's training days, time limits, note and answers, and their last 12 weeks and biggest days. Look for: a week or long day their history doesn't support; a build too fast or too timid for the time there is; a missing or misplaced recovery week; a taper too short or too long for the distance; a gap dimension (climbing volume, descent durability, time on feet, the big day) the weeks don't close; speed work that doesn't fit the goal or the note; hill sessions that never vary or don't suit the week; a week the engine cut that leaves the shape odd, such as a jump right after it; a coach_note that no longer matches its week; an injury, tiredness or preference the plan ignores. ok is true when the plan is sound as it is: then weeks is empty and issues holds at most minor points. When something should change, ok is false, issues names each problem in one short sentence (at most five), and weeks is the whole revised plan: exactly one entry per engine_draft week, in the same order with the same start, in the builder's form (focus, miles, gain_ft, loss_ft, workout, hill_session, note), each week still inside the engine's limits (no more than 10% over the last build week in any of miles, gain or loss; recovery weeks about 60 to 75% of the build level). Change only what the issues need and keep the rest of the plan as it is. summary is one or two sentences for the athlete on what the check found and, when ok is false, what it changed. Miles and feet only."""
+CHECK_PROMPT = """Check this training plan as a second coach, before the athlete sees it. plan_to_check is the plan as it stands after the engine held every week to its limits: each week's focus, miles, feet up and down, hours, long day, speed session, hill session, the note to the athlete (coach_note) and the engine's own notes (a week held to the 10% build limit, or cut for a load limit). coach_approach is how the builder says it shaped the plan. Check it against the objective, readiness now and projected at the taper (which dimension is still a gap, and does the plan train it), the athlete's training days, time limits, note and answers, and their last 12 weeks and biggest days. Look for: a week or long day their history doesn't support; a build too fast or too timid for the time there is; a missing or misplaced recovery week; a taper too short or too long for the distance; a gap dimension (climbing volume, descent durability, time on feet, the big day) the weeks don't close; speed work that doesn't fit the goal or the note; hill sessions that never vary or don't suit the week; a week the engine cut that leaves the shape odd, such as a jump right after it; a coach_note that no longer matches its week; an injury, tiredness, preference or wish (what_else_they_want) the plan ignores; speed or hill sessions outside workouts_the_athlete_picked; a start that ignores today's load, flags, readiness or pain in athlete_context. ok is true when the plan is sound as it is: then weeks is empty and issues holds at most minor points. When something should change, ok is false, issues names each problem in one short sentence (at most five), and weeks is the whole revised plan: exactly one entry per engine_draft week, in the same order with the same start, in the builder's form (focus, miles, gain_ft, loss_ft, workout, hill_session, note), each week still inside the engine's limits (no more than 10% over the last build week in any of miles, gain or loss; recovery weeks about 60 to 75% of the build level). Change only what the issues need and keep the rest of the plan as it is. summary is one or two sentences for the athlete on what the check found and, when ok is false, what it changed. Miles and feet only."""
 
 # After each sync with a plan accepted: does the latest training help the plan?
 FIT_FIELDS = ("helps", "week", "next")
@@ -352,6 +355,8 @@ FIT_PROMPT = """Plan fit: the athlete just synced. Say whether their latest trai
 
 # Reads that run on the brief's cheaper model: short, once a day or once an activity.
 CHEAP_MODES = {"load", "name", "fit"}
+# Building and checking a plan run on the admin's plan drafting model.
+PLAN_MODES = {"build", "check"}
 
 MODES = {
     # Short reply, so low effort keeps it quick; analysis gets more thought.
@@ -799,14 +804,51 @@ def plan_packet(plan: dict, now: dict, today: date, reason: str, changes: list[d
     }
 
 
+def athlete_context(today: dict | None, acts: list[dict], day: date, checkins: dict, scheduled: list[dict],
+                    last_plan: list[dict]) -> dict:
+    """Everything else the coach knows about the athlete, for building and checking a plan:
+    thresholds and zones, load and readiness today, overnight trends, the last two weeks of
+    check-ins and activities, rest pattern, intensity mix, runs they've scheduled themselves and
+    how their last plan's weeks went against target. `today` is the Today screen's data, or None
+    before thresholds are set."""
+    since = (day - timedelta(days=13)).isoformat()
+    out = {
+        "checkins_last_14_days": [{"day": d.isoformat(), **v} for d, v in sorted(checkins.items())],
+        "last_14_days": [_activity_line(a) for a in sorted(acts, key=lambda a: a["start_time"]) if a["day"] >= since],
+        "rest": rest_pattern(acts, day),
+        "runs_they_scheduled_ahead": scheduled,
+        "last_plan_weeks_vs_target": last_plan,
+    }
+    if today:
+        out |= {
+            "athlete": _athlete(today["thresholds"], today.get("zone_model")),
+            "readiness_today": {k: {"state": today["readiness"][k]["state"], "reason": today["readiness"][k]["reason"]}
+                                for k in ("engine", "legs")},
+            "readiness_score_today": _score(today.get("score")),
+            "todays_call": {k: today["call"][k] for k in ("call", "session", "why")},
+            "overnight": _overnight(today.get("wellness")),
+            "ledgers": {name: _ledger(d, name) for name, d in today["ledgers"].items()},
+            "intensity_28d_pct": _intensity(today),
+        }
+    return out
+
+
 def build_packet(plan: dict, acts: list[dict], today: date) -> dict:
     """Context for building a plan: the goal, the athlete's limits and history, and the engine's
     draft of the same weeks as a reference."""
     from .plan import BUILD_RATE, DAY_NAMES
 
     c = plan["constraints"]
+    pt = plan.get("plan_type") or {}
+    picked = None  # speed and hill sessions by their keys in the schema, as the athlete picked them
+    if c.get("workouts") is not None or c.get("hill_sessions") is not None:
+        picked = {"speed_sessions": c.get("workouts"), "hill_sessions": c.get("hill_sessions"),
+                  "strides": c.get("strides", True), "strength": c.get("strength", True)}
     return {
         "objective": _objective(plan, today),
+        "plan_type": {"name": pt.get("label"), "trains": pt.get("text")} if pt else None,
+        "workouts_the_athlete_picked": picked,
+        "athlete_training_notes": c.get("notes") or None,
         "race_type": plan.get("race_type"),
         "training_days": [DAY_NAMES[d] for d in c["days"]], "long_day": DAY_NAMES[c["long_day"]],
         "weekday_max_minutes": c["weekday_min"], "weekend_max_minutes": c["weekend_min"],
@@ -1328,6 +1370,7 @@ def default_client() -> Client | None:
 
 
 def default_model(mode: str) -> str:
+    """brief, analysis or plan (building and checking plans, on the analysis model until the admin picks)."""
     return os.environ.get("TALUS_COACH_MODEL") or (BRIEF_MODEL if mode == "brief" else ANALYSIS_MODEL)
 
 

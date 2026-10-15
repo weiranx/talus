@@ -11,6 +11,8 @@ type Picks = Record<string, string | string[]>;
 
 const PLACEHOLDER: Record<string, string> = {
   objective: "Baldy 50k on Jan 2, 31 mi, 8,000 ft",
+  workouts: "Or name them, like \"tempo and hill sprints\"",
+  confirm: "Like \"a 25k tune-up on Nov 8\" or \"I'm away Dec 20 to 27\"",
   draft: "Ask a question, or tell me what to change",
   stuck: "Or tell me what to change",
 };
@@ -84,7 +86,8 @@ export default function PlanTalk({ initial }: { initial: Talk }) {
     const t = text.trim();
     if (!t) return;
     send({ text: t, answers: groups.length ? picks : undefined },
-      talk.step === "objective" || talk.step === "draft" ? "The coach is reading that." : "One moment.", t);
+      talk.step === "objective" || talk.step === "draft" ? "The coach is reading that."
+        : talk.step === "confirm" ? "Drafting your plan." : "One moment.", t);
   }
 
   function tap(g: TalkGroup, option: string) {
@@ -95,7 +98,7 @@ export default function PlanTalk({ initial }: { initial: Talk }) {
     const next = { ...picks, [g.key]: option };
     setPicks(next);
     // A question with a single one-tap answer goes straight on.
-    if (groups.length === 1) send({ answers: next }, talk.step === "body" ? "Drafting your plan." : "One moment.");
+    if (groups.length === 1) send({ answers: next }, talk.step === "confirm" ? "Drafting your plan." : "One moment.");
   }
 
   async function upload(e: React.ChangeEvent<HTMLInputElement>) {

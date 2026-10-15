@@ -743,7 +743,8 @@ MODEL_KEYS = ("brief_model", "analysis_model")
 def coach_models(accounts: Accounts | None = None) -> dict:
     """The coach's models: one choice for every account, made on the admin page. Before the admin
     first picks, the owner's old per-account picks carry over as that choice; with neither,
-    TALUS_COACH_MODEL or the built-in defaults."""
+    TALUS_COACH_MODEL or the built-in defaults. plan_model builds and checks plans; until the
+    admin picks one it is the analysis model."""
     accounts = accounts or get_accounts()
     chosen = accounts.config("coach_models")
     if chosen is None:
@@ -752,8 +753,10 @@ def coach_models(accounts: Accounts | None = None) -> dict:
         chosen = {k: saved[k] for k in MODEL_KEYS if saved.get(k) in app_settings.MODELS}
         if chosen:
             accounts.set_config("coach_models", chosen)
-    return {k: chosen.get(k) if chosen.get(k) in app_settings.MODELS else coach.default_model(k.removesuffix("_model"))
-            for k in MODEL_KEYS}
+    out = {k: chosen.get(k) if chosen.get(k) in app_settings.MODELS else coach.default_model(k.removesuffix("_model"))
+           for k in MODEL_KEYS}
+    return out | {"plan_model": chosen.get("plan_model") if chosen.get("plan_model") in app_settings.MODELS
+                  else out["analysis_model"]}
 
 
 def _coach_settings(store: Store) -> dict:
@@ -822,7 +825,8 @@ def _coach(store: Store, mode: str, subject: str, packet: dict, fallback: dict, 
     # Plan, weekly review and chat are longer reads, so they run on the analysis model; reading
     # typed answers into fields is short work for the brief's cheaper model.
     cheap = mode in coach.FIELD_MODES or mode in coach.CHEAP_MODES
-    model_id = cfg["brief_model"] if cheap else cfg.get(f"{mode}_model", cfg["analysis_model"])
+    model_id = (cfg["brief_model"] if cheap else cfg["plan_model"] if mode in coach.PLAN_MODES
+                else cfg.get(f"{mode}_model", cfg["analysis_model"]))
     style = cfg["coach_style"]
     if style not in coach.STYLES:
         style = coach.DEFAULT_STYLE
@@ -955,6 +959,19 @@ def _readiness_json(r: dict) -> dict:
     return {k: r[k] for k in ("dims", "limiter", "verdict")}
 
 
+def _accepted(store: Store, acts: list[dict] | None = None, day: date | None = None) -> dict | None:
+    """The accepted plan as the athlete sees it: the week after each changed week adapted to the
+    change (a day they edited, moved or took off, or the current week as it's run)."""
+    p = store.plan("accepted")
+    if p is None:
+        return None
+    day = day or date.today()
+    acts = _activities(store, day - timedelta(days=day.weekday() + 7)) if acts is None else acts
+    own = schedule.own_by_day(store.planned_runs(day - timedelta(days=day.weekday() + 7),
+                                                 date.fromisoformat(p["objective"]["day"])))
+    return planner.adapt(p, acts, day, own)
+
+
 def _own(store: Store, day: date) -> dict[str, dict]:
     """The athlete's own runs in the weeks the plan's dated sessions touch."""
     return schedule.own_by_day(store.planned_runs(day - timedelta(days=day.weekday()),
@@ -978,7 +995,7 @@ def _calendar(store: Store, start: date, days: int, acts: list[dict] | None = No
     day = date.today()
     acts = _activities(store, min(start, day) - timedelta(days=planner.CAPACITY_DAYS)) if acts is None else acts
     th = store.thresholds()
-    return schedule.calendar(store.planned_runs(start, start + timedelta(days=days - 1)), store.plan("accepted"),
+    return schedule.calendar(store.planned_runs(start, start + timedelta(days=days - 1)), _accepted(store, acts, day),
                              acts, start, days, day, planner.pace(acts, day)["min_per_effort_mi"],
                              th.aet if th else None, _zone_text(_zone_model(store)), own=_own(store, day),
                              ant=th.ant if th else None)
@@ -990,7 +1007,7 @@ def _planned_today(store: Store, day: date, aet: float) -> dict | None:
     items = [it for it in _calendar(store, day, 1, acts) if it["status"] == "today"]
     if not items:
         # A plan rest day is still the plan: on a go day the call follows it.
-        rest = [s for s in _sessions(store, store.plan("accepted"), acts, day, aet, 1) if s["kind"] == "rest"]
+        rest = [s for s in _sessions(store, _accepted(store, acts, day), acts, day, aet, 1) if s["kind"] == "rest"]
         return None if not rest else {"title": "Rest", "detail": "Your plan has no run today. Rest, or an easy walk.",
                                       "source": "plan", "kind": "rest", "miles": 0.0, "gain_ft": 0.0, "loss_ft": 0.0}
     it = items[0]
@@ -1025,13 +1042,45 @@ def _build_draft(store: Store, obj: planner.Objective, reason: str) -> dict:
     body["id"] = store.save_draft(obj.id, reason, body)
     if ai:
         engine_plan = {k: v for k, v in body.items() if k not in ("id", "building")}
-        job = functools.partial(_ai_build_job, store.dir, body["id"], obj, acts, history, c, day, engine_plan)
+        context = _athlete_context(store, acts, day)
+        job = functools.partial(_ai_build_job, store.dir, body["id"], obj, acts, history, c, day, engine_plan, context)
         if AI_BUILD_INLINE:
             job()
         else:
             ctx = contextvars.copy_context()  # the account, for the coach's settings and spending cap
             threading.Thread(target=ctx.run, args=(job,), name=f"plan build {body['id']}", daemon=True).start()
     return body
+
+
+def _athlete_context(store: Store, acts: list[dict], day: date) -> dict:
+    """Everything known about the athlete for the coach that builds the plan, read here in the
+    request so the build can run in the background: Today's readiness, loads and overnight
+    trend, check-ins, recent days, their own scheduled runs and how the last plan went."""
+    try:
+        t = today()
+    except HTTPException:
+        t = None  # no thresholds yet
+    checkins = store.checkins(day - timedelta(days=13), day)
+    ahead = [{"day": r.day.isoformat(), "kind": r.kind, "distance_mi": round(r.miles, 1), "gain_ft": round(r.gain_ft),
+              "notes": r.notes or None} for r in store.planned_runs(day, day + timedelta(days=180))]
+    last = []
+    accepted = store.plan("accepted")
+    if accepted is not None:
+        for w in accepted["weeks"]:
+            start = date.fromisoformat(w["start"])
+            if day - timedelta(weeks=6) <= start < day - timedelta(days=day.weekday()):
+                a = planner.week_actual(acts, start)
+                last.append({"week_start": w["start"], "focus": w["focus"],
+                             "target": {"distance_mi": round(w["miles"], 1), "gain_ft": round(w["gain_ft"])},
+                             "done": {"distance_mi": round(a["miles"], 1), "gain_ft": round(a["gain_ft"])}})
+    return coach.athlete_context(t, acts, day, checkins, ahead, last)
+
+
+def _plan_answers(store: Store) -> dict | None:
+    """What the athlete told the coach when planning: every answer for the builder and checker,
+    typed words included (older setups kept only the taps)."""
+    saved = store.settings()
+    return saved.get("plan_answers") or saved.get("plan_context")
 
 
 def _ai_builds(store: Store) -> bool:
@@ -1050,12 +1099,12 @@ def _draft_extras(store: Store, obj: planner.Objective, acts: list[dict], histor
 
 
 def _ai_build_job(folder, draft_id: int, obj: planner.Objective, acts: list[dict], history: list,
-                  c: planner.Constraints, day: date, engine_plan: dict) -> None:
+                  c: planner.Constraints, day: date, engine_plan: dict, context: dict | None = None) -> None:
     """Replace the saved draft with the coach's version, or mark the engine's as final. A draft
     accepted, declined or replaced meanwhile is left alone."""
     store = Store(folder)
     try:
-        body = _ai_build(store, obj, acts, history, c, day, engine_plan)
+        body = _ai_build(store, obj, acts, history, c, day, engine_plan, context)
         if body.get("builder") == "coach":
             body = _draft_extras(store, obj, acts, history, c, day, body)
     except Exception as e:  # noqa: BLE001 - any failure leaves the engine's draft standing
@@ -1074,14 +1123,17 @@ def _building(p: dict) -> bool:
 
 
 def _ai_build(store: Store, obj: planner.Objective, acts: list[dict], history: list, c: planner.Constraints,
-              day: date, engine_plan: dict) -> dict:
-    """The AI coach builds the weeks from the engine's draft, the athlete's history, note and
-    answers; the engine then holds every week to its rules. The engine's draft stands when the
-    coach is off, over its cap, or its plan doesn't line up."""
+              day: date, engine_plan: dict, context: dict | None = None) -> dict:
+    """The AI coach builds the weeks from the engine's draft, the athlete's history, note,
+    answers and everything else known about them (`context`); the engine then holds every week
+    to its rules. The engine's draft stands when the coach is off, over its cap, or its plan
+    doesn't line up."""
     packet = coach.build_packet(engine_plan, acts, day)
     _noted(store, packet)
-    if answers := store.settings().get("plan_context"):
+    if answers := _plan_answers(store):
         packet["athlete_answers"] = answers
+    if context:
+        packet["athlete_context"] = context
     out = _coach(store, "build", f"build-{obj.id}", packet, {"approach": "", "weeks": []}, False)
     if out["source"] != "coach":
         return engine_plan | {"builder_note": out["fallback_reason"]}
@@ -1091,7 +1143,7 @@ def _ai_build(store: Store, obj: planner.Objective, acts: list[dict], history: l
         return engine_plan | {"builder_note": f"rejected: {e}"}
     approach = out["reply"]["approach"][:800]
     try:
-        plan, check, check_cost = _ai_check(store, obj, acts, history, c, day, engine_plan, plan, approach)
+        plan, check, check_cost = _ai_check(store, obj, acts, history, c, day, engine_plan, plan, approach, context)
     except Exception:  # noqa: BLE001 - a failed check leaves the coach's plan as the engine held it
         check, check_cost = None, None
     held = sum(1 for w in plan["weeks"] if any(n.startswith("The coach asked for more") for n in w["notes"]))
@@ -1100,15 +1152,18 @@ def _ai_build(store: Store, obj: planner.Objective, acts: list[dict], history: l
 
 
 def _ai_check(store: Store, obj: planner.Objective, acts: list[dict], history: list, c: planner.Constraints,
-              day: date, engine_plan: dict, plan: dict, approach: str) -> tuple[dict, dict | None, dict | None]:
+              day: date, engine_plan: dict, plan: dict, approach: str,
+              context: dict | None = None) -> tuple[dict, dict | None, dict | None]:
     """A second read by the coach of its plan as the engine held it. When the check finds
     problems it sends a revised plan, which the engine builds and holds to its limits again; the
     revision stands unless the engine refuses it or it puts a reachable objective out of reach.
     Returns the plan, what the check found (None when it didn't run) and its cost."""
     packet = coach.check_packet(engine_plan, plan, approach, acts, day)
     _noted(store, packet)
-    if answers := store.settings().get("plan_context"):
+    if answers := _plan_answers(store):
         packet["athlete_answers"] = answers
+    if context:
+        packet["athlete_context"] = context
     out = _coach(store, "check", f"check-{obj.id}", packet, {"ok": True, "summary": "", "issues": [], "weeks": []}, False)
     if out["source"] != "coach":
         return plan, None, None
@@ -1154,7 +1209,7 @@ def _plan_json(p: dict | None) -> dict | None:
         return None
     return {k: p.get(k) for k in ("id", "status", "reason", "created_at", "decided_at", "built_on", "constraints",
                                   "baseline", "pace", "demand", "peak", "weeks", "projected", "reachable",
-                                  "back_to_back", "race_type", "goal", "target",
+                                  "back_to_back", "race_type", "goal", "target", "plan_type",
                                   "builder", "approach", "build_cost", "held_weeks", "check",
                                   "options", "now", "changes")} | {"reason_text": planner.REPLAN_TEXT.get(p["reason"], p["reason"]),
                                                                    "building": _building(p)}
@@ -1169,9 +1224,25 @@ def _with_own_runs(store: Store, sessions: list[dict], acts: list[dict]) -> list
     out = []
     for s in sessions:
         it = own.get(s["day"])
+        if it is not None and s.get("own") and it["kind"] in ("tempo", "intervals", "hills", "long") and not it["notes"]:
+            # A workout moved or changed on the calendar: the plan counts it as that week's session
+            # of its kind, with its steps. Any other run of your own reads as you wrote it.
+            out.append(s | {"run_id": it["id"], "notes": it["notes"]})
+            continue
         out.append(s if it is None else s | {k: it[k] for k in ("kind", "miles", "gain_ft", "loss_ft", "minutes", "title")}
-                   | {"how": it["notes"] or "Your own run.", "detail": it["detail"], "steps": [], "own": True})
+                   | {"how": it["notes"] or "Your own run.", "detail": it["detail"], "steps": [], "own": True,
+                      "run_id": it["id"], "notes": it["notes"]})
     return out
+
+
+def _workout_picks(c: planner.Constraints, ptype: str) -> dict:
+    """The workouts the plan rotates through as they stand: the athlete's picks, or the plan
+    type's defaults until they pick."""
+    d = planner.default_workouts(ptype)
+    return {"workouts": c.workouts if c.workouts is not None else [c.workout] if c.workout in planner.WORKOUTS
+            else d["workouts"],
+            "hill_sessions": c.hill_sessions if c.hill_sessions is not None else d["hill_sessions"],
+            "picked": c.workouts is not None or c.hill_sessions is not None}
 
 
 @app.get("/api/plan")
@@ -1182,14 +1253,15 @@ def get_plan() -> dict:
     obj = store.objective()
     c = _constraints(store)
     acts = _activities(store)
-    accepted = store.plan("accepted")
+    accepted = _accepted(store, acts, day)
     out = {"date": day.isoformat(), "constraints": asdict(c), "objective": None, "readiness": None,
            "accepted": None, "draft": None, "sessions": [], "review": None,
-           "fitness_only": planner.FITNESS_ONLY, "thresholds": _thresholds(store)}
+           "fitness_only": planner.FITNESS_ONLY, "thresholds": _thresholds(store),
+           "workout_picks": _workout_picks(c, planner.plan_type(obj) if obj else "base")}
     if obj is None:
         return out
     if obj.goal == "rolling" and _roll(store, obj, day):
-        obj, accepted = store.objective(), store.plan("accepted")
+        obj, accepted = store.objective(), _accepted(store, acts, day)
     history = _plan_history(store, day)
     readiness = None
     if planner.is_event(obj):
@@ -1204,11 +1276,49 @@ def get_plan() -> dict:
         "sessions": _with_own_runs(store, _sessions(store, accepted, acts, day, th.aet if th else 150), acts),
         "review": _last_week_review(store, accepted, acts, day) if accepted else None,
         "this_week": _this_week(store, accepted, acts, day),
+        "plan_type": planner.plan_type_text(obj),
         "actuals": {} if accepted is None else {
             w["start"]: {k: a[k] for k in ("miles", "gain_ft", "loss_ft", "below_aet_pct")}
             for w in accepted["weeks"] if w["start"] <= day.isoformat()
             for a in [planner.week_actual(acts, date.fromisoformat(w["start"]))]},
     }
+
+
+@app.get("/api/plan/week")
+def get_plan_week(start: date, draft: bool = False) -> dict:
+    """One week of the plan, day by day, each with its session's detail: what was done on the
+    days gone, then the plan's sessions around the athlete's own runs and rest days. A week
+    further out than the calendar's dated days is the shape it would take from its targets."""
+    store = get_store()
+    day = date.today()
+    start = start - timedelta(days=start.weekday())
+    acts = _activities(store, start - timedelta(days=7))
+    p = store.plan("draft") if draft else _accepted(store, None, day)
+    if p is None:
+        raise HTTPException(404, "No plan yet.")
+    w = planner.plan_for_day(p, start)
+    if w is None:
+        raise HTTPException(404, "That week isn't in the plan.")
+    own = {} if draft else schedule.own_by_day(store.planned_runs(start, start + timedelta(days=6)))
+    th = store.thresholds()
+    aet, ant = (th.aet, th.ant) if th else (150, None)
+    name = p["objective"]["name"]
+    runs = {} if draft else {r.day.isoformat(): r for r in store.planned_runs(start, start + timedelta(days=6))}
+    days = []
+    for s in planner.week_sessions(p, acts, day, start, own):
+        if s["kind"] == "past":
+            did = [a for a in acts if a["day"] == s["day"] and planner.is_foot(a["sport"])]
+            days.append(s | {"title": "Done" if did else "Rest", "steps": [], "how": "", "benefit": None,
+                             "activities": [{k: a[k] for k in ("id", "name", "distance_mi", "gain_ft", "loss_ft",
+                                                               "moving_time_s")} for a in did]})
+            continue
+        text = planner.session_text(s, aet, name, ant)
+        own_run = runs.get(s["day"]) if s.get("own") else None
+        days.append(s | text | {"run_id": own_run.id if own_run else None,
+                                "notes": own_run.notes if own_run else ""})
+    dated = start < day + timedelta(days=schedule.plan_days(day))
+    return {"week": w, "days": days, "dated": dated, "date": day.isoformat(), "objective": name,
+            "plan_type": p.get("plan_type")}
 
 
 def _roll(store: Store, obj: planner.Objective, day: date) -> bool:
@@ -1304,12 +1414,17 @@ async def parse_route(request: Request) -> dict:
 
 class ConstraintsIn(BaseModel):
     days: list[int] = Field(min_length=1, max_length=7)
-    weekday_min: int = Field(ge=15, le=600)
-    weekend_min: int = Field(ge=15, le=900)
+    weekday_min: int = Field(ge=15, le=planner.MAX_WEEKDAY_MIN)
+    weekend_min: int = Field(ge=15, le=planner.MAX_WEEKEND_MIN)
     long_day: int = Field(ge=0, le=6)
     notes: str = Field(default="", max_length=500)
     back_to_back: bool | None = None  # left out: keep the current setting
     workout: str | None = Field(default=None, pattern="^(none|track|tempo|hill_repeats|race_pace|threshold|fartlek|progression)$")  # left out: keep
+    # The workouts to rotate through, by key; left out: keep. An empty list: none of that kind.
+    workouts: list[str] | None = Field(default=None, max_length=len(planner.WORKOUTS))
+    hill_sessions: list[str] | None = Field(default=None, max_length=len(planner.HILL_SESSIONS))
+    strides: bool | None = None
+    strength: bool | None = None
 
 
 @app.put("/api/plan/constraints")
@@ -1321,8 +1436,11 @@ def put_constraints(body: ConstraintsIn) -> dict:
         raise HTTPException(422, "Your long day has to be one of your training days.")
     store = get_store()
     now = _constraints(store)
-    keep = {"adjust": now.adjust} | {k: getattr(now, k) for k in ("back_to_back", "workout")
-                                     if getattr(body, k) is None}
+    if any(w not in planner.WORKOUTS for w in body.workouts or []) or any(
+            h not in planner.HILL_SESSIONS for h in body.hill_sessions or []):
+        raise HTTPException(422, "Unknown workout.")
+    keep = {"adjust": now.adjust} | {k: getattr(now, k) for k in ("back_to_back", "workout", "workouts", "hill_sessions",
+                                                                  "strides", "strength") if getattr(body, k) is None}
     c = planner.Constraints.from_json(body.model_dump(exclude_none=True) | keep)
     store.save_settings({"plan_constraints": asdict(c)})
     obj = store.objective()
@@ -1397,7 +1515,7 @@ def _talk_caught_up(store: Store, st: dict) -> bool:
     st.pop("building")
     if draft is not None and draft["id"] == draft_id and st.get("step") == "draft":
         text = interview.built_text(draft, st.get("mode", "setup"), st.get("answers"))
-        st["messages"] = (st["messages"] + [interview.coach(text, "draft",
+        st["messages"] = (st["messages"] + [interview.coach(text, "draft", [interview.CHANGE_GROUP],
                                                             actions=_draft_actions(store))
                                             | ({"cost": draft["build_cost"]} if draft.get("build_cost") else {})])[-TALK_KEEP:]
     return True
@@ -1476,7 +1594,8 @@ def _talk_objective(store: Store, st: dict, body: TalkIn, day: date) -> list[dic
         # A goal with no race day, confirmed: on to the training days (no "goal for the day" to ask).
         st["objective"] = o
         st["step"] = "days"
-        return [interview.coach(f"Set: {interview.block_line(o)}."), interview.ask("days", st["defaults"])]
+        return [interview.coach(f"Set: {interview.block_line(o)}. {interview.type_line(o)}"),
+                interview.ask("days", st["defaults"])]
     chip = interview.GOAL_CHIPS.get(str((body.answers or {}).get("goal_kind") or ""))
     kind = chip or (interview.goal_kind(body.text) if body.text else None)
     if kind and kind != "target" and body.text and interview.rules_objective(body.text, day).get("distance_mi"):
@@ -1541,10 +1660,65 @@ def _talk_objective(store: Store, st: dict, body: TalkIn, day: date) -> list[dic
     o.setdefault("loss_ft", o["gain_ft"])
     if not planner.is_event(o):  # kept a goal with no race day
         st["step"] = "days"
-        return [interview.coach(f"Set: {interview.block_line(o)}."), interview.ask("days", st["defaults"])]
+        return [interview.coach(f"Set: {interview.block_line(o)}. {interview.type_line(o)}"),
+                interview.ask("days", st["defaults"])]
     st["step"] = "goal"
-    return [interview.coach(f"Training for {interview.objective_line(o)}.") | (meta or {}),
+    return [interview.coach(f"Training for {interview.objective_line(o)}. {interview.type_line(o)}") | (meta or {}),
             interview.ask("goal")]
+
+
+def _ptype(o: dict) -> str:
+    """The plan type of an objective in the conversation, which may not say its goal yet."""
+    return planner.plan_type({"goal": "race"} | {k: v for k, v in o.items() if v is not None})
+
+
+def _talk_ask(store: Store, st: dict, step: str) -> dict:
+    """The question for a step. The workouts question starts from the plan type's usual picks
+    (or the athlete's own); the last one sums up what the coach will build."""
+    if step == "workouts":
+        o = st["objective"] or (store.objective().json() if store.objective() else {"goal": "base"})
+        defaults = interview.workout_defaults(asdict(_constraints(store)) if st.get("changing") else {}, _ptype(o))
+        return interview.ask_workouts(planner.plan_type_text({"goal": "race"} | o), defaults)
+    if step == "confirm":
+        return interview.ask_confirm({"goal": "race"} | st["objective"], st["answers"])
+    return interview.ask(step, st["defaults"])
+
+
+def _talk_apply(store: Store, st: dict, step: str, got: dict, day: date) -> list[dict]:
+    """A quick change after a draft: the answer to one setup question, made to the plan's inputs,
+    then a new draft."""
+    st.pop("changing", None)
+    st["step"] = "draft"
+    obj = store.objective()
+    if obj is None:
+        st["step"] = "done"
+        return [interview.coach("There's no plan to change. Start a new one from the Plan page.")]
+    c = _constraints(store)
+    if step == "days":
+        c.days = sorted(interview.DAY_SHORT.index(d) for d in got["days"])
+        c.long_day = interview.DAY_SHORT.index(got["long_day"])
+        done = [f"training {', '.join(got['days'])} with the long day on {planner.DAY_NAMES[c.long_day]}"]
+    elif step == "time":
+        c.weekday_min, c.weekend_min = got["weekday_min"], got["weekend_min"]
+        done = [f"weekdays up to {interview._time(c.weekday_min)} and weekend days up to {interview._time(c.weekend_min)}"]
+    else:
+        for k, v in interview.workout_constraints(got).items():
+            setattr(c, k, v)
+        picked = [*got.get("speed", []), *got.get("hills", []), *got.get("extras", [])]
+        done = ["workouts set to " + (interview._join_words([p.lower() for p in picked]) if picked else "easy running only")]
+        answers = store.settings().get("plan_answers") or {}
+        store.save_settings({"plan_answers": answers | {k: got[k] for k in ("speed", "hills", "extras") if k in got}})
+    before = store.plan("draft") or store.plan("accepted")
+    store.save_settings({"plan_constraints": asdict(planner.Constraints.from_json(asdict(c)))})
+    try:
+        plan = _build_draft(store, obj, "constraints")
+    except HTTPException as e:
+        return [interview.coach(str(e.detail), "draft", [interview.CHANGE_GROUP])]
+    if plan.get("building"):
+        st["building"] = plan["id"]
+        return [interview.coach(interview.change_text(done, [], None) + "\n" + interview.BUILDING_TEXT, "draft")]
+    return [interview.coach(interview.change_text(done, [], planner.diff(before, plan)), "draft", [interview.CHANGE_GROUP],
+                            actions=_draft_actions(store))]
 
 
 def _talk_finish(store: Store, st: dict, day: date) -> list[dict]:
@@ -1556,7 +1730,16 @@ def _talk_finish(store: Store, st: dict, day: date) -> list[dict]:
     c.weekday_min, c.weekend_min = a["weekday_min"], a["weekend_min"]
     c.notes = interview.notes(a)
     c.adjust = interview.lighter_start(day) if a.get("feel") == "Tired lately" else []
-    store.save_settings({"plan_constraints": asdict(c), "plan_context": interview.context(a)})
+    if any(k in a for k in ("speed", "hills", "extras")):
+        for k, v in interview.workout_constraints(a).items():
+            setattr(c, k, v)
+    if a.get("wants"):
+        # What else they want, in their words: days, time limits and workouts it names change the
+        # plan's inputs now; all of it goes to the coach that builds the plan.
+        edits = [e for e in interview.rules_edits(a["wants"], day) if e["kind"] not in ("week", "rest_day")]
+        c = planner.Constraints.from_json(interview.apply_edits(edits, asdict(c), [], _ptype(o))[0])
+    store.save_settings({"plan_constraints": asdict(c), "plan_context": interview.context(a),
+                         "plan_answers": interview.full_context(a)})
     current = store.objective()
     goal = o.get("goal") or ("trip" if interview.TRIP.search(o.get("name") or "") else "race")
     fields = {k: o.get(k) for k in ("name", "distance_mi", "gain_ft", "loss_ft", "longest_climb_ft",
@@ -1578,7 +1761,7 @@ def _talk_finish(store: Store, st: dict, day: date) -> list[dict]:
         # The AI coach's plan is what the athlete sees; the engine's draft only if the coach fails.
         st["building"] = plan["id"]
         return [interview.coach("Your answers are in. " + interview.BUILDING_TEXT, "draft")]
-    return [interview.coach(interview.draft_summary(plan, obj.name, c.long_day, a), "draft",
+    return [interview.coach(interview.draft_summary(plan, obj.name, c.long_day, a), "draft", [interview.CHANGE_GROUP],
                             actions=_draft_actions(store))]
 
 
@@ -1588,24 +1771,32 @@ def _talk_change(store: Store, st: dict, text: str, day: date) -> list[dict]:
     if obj is None or before is None:
         st["step"] = "done"
         return [interview.coach("There's no plan to change. Start a new one from the Plan page.")]
-    if interview.is_question(text) and not interview.rules_edits(text):
+    if interview.is_question(text) and not interview.rules_edits(text, day):
         return [_talk_question(store, text, day, obj, before)]
     c = _constraints(store)
     # Week 1 is this week, even in a plan accepted weeks ago.
     ahead = [w for w in before["weeks"] if w["start"] >= (day - timedelta(days=day.weekday())).isoformat()]
     packet = {"today": day.isoformat(), "text": text, "training_days": c.days, "long_day": c.long_day,
               "weeks_in_plan": len(ahead)}
-    read, meta = _talk_read(store, "edit", text, packet, {"edits": interview.rules_edits(text)})
+    read, meta = _talk_read(store, "edit", text, packet, {"edits": interview.rules_edits(text, day)})
     edits = read["edits"] if meta is None else interview.from_edits(read["edits"])
+    rest_note = _rest_days(store, [e for e in edits if e["kind"] == "rest_day"], day)
+    edits = [e for e in edits if e["kind"] != "rest_day"]
+    if rest_note and not edits:
+        return [interview.coach(rest_note, "draft", [interview.CHANGE_GROUP],
+                                actions=_draft_actions(store) if store.plan("draft") else []) | (meta or {})]
     # The rules can't tell "What pace should my tempo runs be?" from a change; only the coach can.
     if interview.is_question(text) and (not edits or meta is None):
         return [_talk_question(store, text, day, obj, before)]
     if not edits:
         asked = read.get("cannot") if meta is not None and isinstance(read.get("cannot"), str) else None
-        return [interview.coach(interview.cant_text(asked), "draft") | (meta or {})]
-    new_c, done, skipped = interview.apply_edits(edits, asdict(c), ahead)
+        return [interview.coach(interview.cant_text(asked), "draft", [interview.CHANGE_GROUP]) | (meta or {})]
+    new_c, done, skipped = interview.apply_edits(edits, asdict(c), ahead, planner.plan_type(obj))
+    if rest_note:
+        done.insert(0, rest_note.removeprefix("Done: ").rstrip("."))
     if not done:
-        return [interview.coach(interview.change_text(done, skipped, []) + "\n" + interview.EDIT_HELP, "draft") | (meta or {})]
+        return [interview.coach(interview.change_text(done, skipped, []) + "\n" + interview.EDIT_HELP, "draft",
+                                [interview.CHANGE_GROUP]) | (meta or {})]
     store.save_settings({"plan_constraints": asdict(planner.Constraints.from_json(new_c))})
     try:
         plan = _build_draft(store, obj, "constraints")
@@ -1617,7 +1808,24 @@ def _talk_change(store: Store, st: dict, text: str, day: date) -> list[dict]:
         return [interview.coach(interview.change_text(done, skipped, None) + "\n" + interview.BUILDING_TEXT, "draft")
                 | (meta or {})]
     return [interview.coach(interview.change_text(done, skipped, planner.diff(before, plan)), "draft",
-                            actions=_draft_actions(store)) | (meta or {})]
+                            [interview.CHANGE_GROUP], actions=_draft_actions(store)) | (meta or {})]
+
+
+def _rest_days(store: Store, edits: list[dict], day: date) -> str | None:
+    """One-off days off asked for in the plan chat, put on the calendar as rest days: the plan
+    works the rest of that week around them and eases the next. What was done, in words."""
+    days = sorted({e["date"] for e in edits if e["date"] >= day.isoformat()})
+    if not days:
+        return None
+    have = {r.day.isoformat() for r in store.planned_runs(date.fromisoformat(days[0]), date.fromisoformat(days[-1]))
+            if r.kind == "rest"}
+    for d in days:
+        if d not in have:
+            store.save_planned_run(schedule.PlannedRun(date.fromisoformat(d), "rest", 0.0, notes="Asked for in the plan chat"))
+    names = [f"{planner.DAY_NAMES[date.fromisoformat(d).weekday()]}, {date.fromisoformat(d):%b} {date.fromisoformat(d).day}"
+             for d in days]
+    return (f"Done: {interview._join_words(names)} {'is a rest day' if len(names) == 1 else 'are rest days'}. The rest "
+            "of that week moves around it and the week after adapts. It's on your calendar; delete it there to undo.")
 
 
 def _talk_question(store: Store, text: str, day: date, obj: planner.Objective, plan: dict) -> dict:
@@ -1671,7 +1879,8 @@ def post_talk(body: TalkIn) -> dict:
     step = st["step"]
     text = (body.text or "").strip()
     body.text = text or None
-    answers = {k: v for k, v in (body.answers or {}).items() if v not in (None, "", [])}
+    # An empty list is an answer too: no workouts of that kind.
+    answers = {k: v for k, v in (body.answers or {}).items() if v not in (None, "")}
     if body.action == "accept" or body.action == "keep":
         line = "Accept plan" if body.action == "accept" else "Keep my current plan"
     elif body.route:
@@ -1706,6 +1915,8 @@ def post_talk(body: TalkIn) -> dict:
         if problem:
             reply = [interview.coach(problem, step, [g | {"value": answers.get(g["key"]) or st["defaults"].get(g["key"])}
                                                      for g in interview.QUESTIONS[step]["groups"]])]
+        elif st.get("changing"):
+            reply = _talk_apply(store, st, step, got, day)
         else:
             st["answers"] |= got
             nxt = interview.next_step(step)
@@ -1713,7 +1924,13 @@ def post_talk(body: TalkIn) -> dict:
                 reply = _talk_finish(store, st, day)
             else:
                 st["step"] = nxt
-                reply = [interview.ask(nxt, st["defaults"])]
+                reply = [_talk_ask(store, st, nxt)]
+    elif answers.get("change_topic") in interview.CHANGE_TOPICS and not text:
+        # A quick change: ask that setup question again, starting from the plan's current inputs.
+        topic = interview.CHANGE_TOPICS[str(answers["change_topic"])]
+        st["changing"], st["step"] = topic, topic
+        st["defaults"] = interview.days_defaults(asdict(_constraints(store)))
+        reply = [_talk_ask(store, st, topic)]
     else:  # a draft is up: typed changes
         if not text:
             raise HTTPException(422, "Tell me what to change.")
@@ -1807,7 +2024,7 @@ def get_schedule(start: date | None = None, days: int = 35) -> dict:
     items = _calendar(store, start, days, acts)
     return {"date": day.isoformat(), "start": start.isoformat(), "days": days, "items": items,
             "activities": schedule.unscheduled(items, acts, start, days),
-            "weeks": schedule.weeks(items, acts, store.plan("accepted"), start, days, day),
+            "weeks": schedule.weeks(items, acts, _accepted(store, acts, day), start, days, day),
             "warnings": _ahead(store, day, None)["projection"]["warnings"],
             "kinds": [{"key": k, "label": v} for k, v in schedule.KINDS.items()],
             "zone_model": _zone_model_json(_zone_model(store))}
@@ -1828,6 +2045,8 @@ def _run(body: PlannedRunIn, run_id: int | None = None) -> schedule.PlannedRun:
     day = date.today()
     if body.day < day - timedelta(days=7) or body.day > day + timedelta(days=schedule.MAX_AHEAD_DAYS):
         raise HTTPException(422, "Schedule runs from a week ago to a year ahead.")
+    if body.kind == "rest":  # a day off: nothing on it
+        return schedule.PlannedRun(body.day, "rest", 0.0, 0.0, 0.0, None, None, body.notes.strip(), run_id)
     if body.miles == 0 and not body.minutes:
         raise HTTPException(422, "Give the run a distance or a time.")
     return schedule.PlannedRun(body.day, body.kind, body.miles, body.gain_ft,
@@ -1891,7 +2110,7 @@ def post_chat(body: ChatIn) -> dict:
         t = today()
     except HTTPException:
         t = None
-    accepted = store.plan("accepted")
+    accepted = _accepted(store)
     obj = store.objective()
     acts = _activities(store)
     now = None
@@ -2181,6 +2400,7 @@ def get_settings() -> dict:
             "key_set": bool(os.environ.get("ANTHROPIC_API_KEY")),
             "brief_model": cfg["brief_model"],
             "analysis_model": cfg["analysis_model"],
+            "plan_model": cfg["plan_model"],
             "style": cfg["coach_style"],
             "ai_plans": saved.get("ai_plans", True),
             "styles": [{"key": k, "label": v["label"], "description": v["description"]}
@@ -3490,19 +3710,33 @@ def _admin_models(accounts: Accounts) -> dict:
                    for k, v in app_settings.MODELS.items()],
         # What each model would cost on the admin's own account, the same estimate Settings used to show.
         "estimate": {mode: {m: _usage_estimate(store, mode, m, calls) for m in app_settings.MODELS}
-                     for mode, calls in (("brief", 60), ("analysis", analyses))},
+                     for mode, calls in (("brief", 60), ("analysis", analyses))} | {"plan": _plan_estimate(store)},
     }
+
+
+def _plan_estimate(store: Store, drafts: int = 4) -> dict:
+    """What a plan draft costs on each model: the coach's build plus its second check."""
+    out = {}
+    for m in app_settings.MODELS:
+        build, check = _usage_estimate(store, "build", m, drafts), _usage_estimate(store, "check", m, drafts)
+        per_call = None if build["per_call"] is None else build["per_call"] + (check["per_call"] or 0)
+        out[m] = {"per_call": per_call, "per_month": None if per_call is None else per_call * drafts,
+                  "calls_per_month": drafts, "from_log": build["from_log"]}
+    return out
 
 
 class ModelsIn(BaseModel):
     brief_model: str
     analysis_model: str
+    plan_model: str | None = None  # left out (older apps): keep the current choice
 
 
 @app.put("/api/admin/coach-models")
 def admin_coach_models(body: ModelsIn) -> dict:
     accounts, me = _admin()
-    values = body.model_dump()
+    values = body.model_dump(exclude_none=True)
+    if body.plan_model is None and (chosen := (accounts.config("coach_models") or {}).get("plan_model")):
+        values["plan_model"] = chosen
     for m in values.values():
         if m not in app_settings.MODELS:
             raise HTTPException(422, f"Unknown model {m}")

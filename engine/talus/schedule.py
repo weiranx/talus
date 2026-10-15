@@ -19,7 +19,7 @@ from .loads import effort_miles
 
 KINDS = {
     "easy": "Easy run", "long": "Long run", "hills": "Hills", "tempo": "Tempo", "intervals": "Intervals",
-    "hike": "Hike", "race": "Race", "other": "Run",
+    "hike": "Hike", "race": "Race", "other": "Run", "rest": "Rest day",
 }
 PLAN_KIND = {"long": "long", "long2": "long", "track": "intervals", "tempo": "tempo", "hill_repeats": "hills", "race_pace": "tempo", "threshold": "tempo", "fartlek": "intervals", "progression": "tempo", "hills": "hills", "easy": "easy", "objective": "race"}
 MAX_AHEAD_DAYS = 366
@@ -85,6 +85,8 @@ def match(items: list[dict], acts: list[dict]) -> None:
 
 
 def _text(r: dict, aet: float | None, zone_text: dict[int, str]) -> str:
+    if r["kind"] == "rest":
+        return "A day off. The plan moves the rest of the week around it."
     vol = f"{r['miles']:.1f} mi, {round(r['gain_ft'], -1):,.0f} ft up, {round(r['loss_ft'], -1):,.0f} ft down"
     mins = f"about {round(r['minutes'] / 5) * 5:.0f} min" if r["minutes"] else ""
     effort = zone_text.get(r["zone"]) if r.get("zone") else "" if r.get("workout") else (f"under {aet:.0f} bpm" if aet and r["kind"] in
@@ -112,11 +114,13 @@ def calendar(runs: list[PlannedRun], plan: dict | None, acts: list[dict], start:
             d = date.fromisoformat(s["day"])
             if start <= d <= end and s["day"] not in mine and s["kind"] in PLAN_KIND:
                 text = planner.session_text(s, aet or 150, plan["objective"]["name"], ant)
+                w = planner.plan_for_day(plan, d) or {}
                 items.append({"id": None, "day": s["day"], "kind": PLAN_KIND[s["kind"]], "miles": s["miles"],
                               "gain_ft": s["gain_ft"], "loss_ft": s["loss_ft"], "minutes": s["minutes"],
                               "zone": None, "notes": "", "source": "plan", "title": text["title"],
                               "estimated_minutes": True, "how": text["how"], "benefit": text["benefit"],
-                              "workout": s["kind"] in planner.WORKOUTS})
+                              "workout": s["kind"] in planner.WORKOUTS, "steps": text["steps"],
+                              "session": s["kind"], "focus": s.get("focus"), "week_note": w.get("coach_note")})
     items.sort(key=lambda it: (it["day"], it["source"] != "manual", it["id"] or 0))
     match(items, acts)
     for it in items:
@@ -124,10 +128,14 @@ def calendar(runs: list[PlannedRun], plan: dict | None, acts: list[dict], start:
         it.setdefault("how", None)
         it.setdefault("benefit", None)
         it.setdefault("workout", False)
+        it.setdefault("steps", [])
+        it.setdefault("session", None)
+        it.setdefault("focus", None)
+        it.setdefault("week_note", None)
         it["detail"] = _text(it, aet, zone_text)
         d = date.fromisoformat(it["day"])
-        it["status"] = ("done" if it["activity"] else "today" if d == today else "missed" if d < today
-                        else "planned")
+        it["status"] = ("done" if it["activity"] else "today" if d == today else
+                        "missed" if d < today and it["kind"] != "rest" else "planned")
     return items
 
 
@@ -203,7 +211,7 @@ def weeks(items: list[dict], acts: list[dict], plan: dict | None, start: date, d
             "start": monday.isoformat(),
             # The plan's sessions reach this week, so done plus scheduled can be read against it.
             "dated": plan is None or sunday < today + timedelta(days=plan_days(today)),
-            "target": None if w is None else {k: w[k] for k in (*dims, "focus")},
+            "target": None if w is None else {k: w[k] for k in (*dims, "focus")} | {"adapted": w.get("adapted")},
             "done": None if actual is None else {k: actual[k] for k in (*dims, "below_aet_pct")},
             "ahead": {k: sum(it[k] for it in ahead) for k in dims},
         })

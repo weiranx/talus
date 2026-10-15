@@ -15,6 +15,7 @@ import Review from "@/components/plan/Review";
 import PlanTalk from "@/components/plan/PlanTalk";
 import Setup, { DraftDetail, type Step } from "@/components/plan/Setup";
 import NextRun from "@/components/plan/NextRun";
+import PlanDetailProvider from "@/components/plan/PlanDetail";
 import ReadinessCompact from "@/components/plan/ReadinessCompact";
 import RoadChart from "@/components/plan/RoadChart";
 import ThisWeek from "@/components/plan/ThisWeek";
@@ -74,7 +75,7 @@ function DraftBody({ draft, hasAccepted }: { draft: Plan; hasAccepted: boolean }
           </div>
         ) : <div className="muted">No week moves by more than 5% against your accepted plan.</div>
       ) : (
-        <WeeksTable weeks={draft.weeks} current={draft.weeks[0].start} limit={8} />
+        <WeeksTable weeks={draft.weeks} current={draft.weeks[0].start} limit={8} draft />
       )}
       <div className="muted">Nothing changes until you accept. The coach&apos;s read of this draft is below.</div>
       <PlanActions draftId={draft.id} />
@@ -105,7 +106,7 @@ export default async function PlanPageView({ searchParams }: { searchParams: Pro
       return <EngineDown message={engineFailed(e)} />;
     }
     return (
-      <>
+      <PlanDetailProvider today={p.date}>
         <header className="page-head">
           <div>
             <div className="eyebrow">Plan with the coach</div>
@@ -114,9 +115,9 @@ export default async function PlanPageView({ searchParams }: { searchParams: Pro
           <div style={{ paddingBottom: 6 }}><Link href="/plan?step=objective">Skip to the form</Link></div>
         </header>
         <section className="card"><PlanTalk initial={talk} /></section>
-        {talk.step === "draft" ? <DraftDetail p={p} /> : null}
+        {talk.step === "draft" || p.draft ? <DraftDetail p={p} /> : null}
         <Calendar initial={schedule} />
-      </>
+      </PlanDetailProvider>
     );
   }
 
@@ -125,7 +126,7 @@ export default async function PlanPageView({ searchParams }: { searchParams: Pro
     const at: Step = !obj ? (step === "days" ? "days" : "objective")
       : step === "objective" || step === "days" ? step : "review";
     return (
-      <>
+      <PlanDetailProvider today={p.date}>
         <header className="page-head">
           <div>
             <div className="eyebrow">Build a plan in three steps</div>
@@ -136,16 +137,17 @@ export default async function PlanPageView({ searchParams }: { searchParams: Pro
         <Setup p={p} step={at} />
         <Calendar initial={schedule} />
         <div className="row"><div style={{ flex: "1 1 360px", minWidth: 0 }}><Chat initial={chat.messages} /></div></div>
-      </>
+      </PlanDetailProvider>
     );
   }
 
   const talk = edit === "coach" ? await engine<Talk>("/api/plan/talk?mode=change").catch(() => null) : null;
+  const ptype = p.accepted.plan_type ?? p.plan_type;
   return (
-    <>
+    <PlanDetailProvider today={p.date}>
       <header className="page-head">
         <div>
-          <div className="eyebrow">{objectiveWhen(obj)}</div>
+          <div className="eyebrow">{objectiveWhen(obj)}{ptype ? ` · ${ptype.label}` : ""}</div>
           <h1 className="title">{obj.name}</h1>
         </div>
         <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 8, paddingBottom: 6 }}>
@@ -189,7 +191,7 @@ export default async function PlanPageView({ searchParams }: { searchParams: Pro
             <Link href="/plan">Close</Link>
           </div>
           <div className="muted">Saving drafts a new plan to review against this one.</div>
-          <ConstraintsForm current={p.constraints} hasObjective next="/plan" />
+          <ConstraintsForm current={p.constraints} picks={p.workout_picks} hasObjective next="/plan" />
         </section>
       ) : null}
 
@@ -214,9 +216,10 @@ export default async function PlanPageView({ searchParams }: { searchParams: Pro
             <Link href="/plan/weeks">Every week</Link>
           </div>
           <div className="muted" style={{ fontSize: 14 }}>
-            {isEvent(obj) ? "Peak" : "Target"} {mi(p.accepted.peak.miles)} mi and {n0(p.accepted.peak.gain_ft)} ft up a week. {isEvent(obj) ? "Lighter weeks are recovery and taper" : "Lighter weeks are recovery weeks"}; this week is outlined.
+            {ptype ? <><span style={{ fontWeight: 600 }}>{ptype.label}:</span> {ptype.text}. </> : null}
+            {isEvent(obj) ? "Peak" : "Target"} {mi(p.accepted.peak.miles)} mi and {n0(p.accepted.peak.gain_ft)} ft up a week. {isEvent(obj) ? "Lighter weeks are recovery and taper" : "Lighter weeks are recovery weeks"}; this week is outlined. Tap a week to see its days.
             {p.accepted.back_to_back ? " Long weekends are back-to-back long days, so no single day has to carry the whole distance." : ""}
-            {RACE_TYPE_TEXT[p.accepted.race_type ?? ""] ?? ""}
+            {ptype ? "" : RACE_TYPE_TEXT[p.accepted.race_type ?? ""] ?? ""}
             {p.accepted.builder === "coach" ? " The AI coach built these weeks inside the engine's limits." : ""}
           </div>
           <RoadChart weeks={p.accepted.weeks} current={weekStart(p.date)} actuals={p.actuals} />
@@ -236,6 +239,6 @@ export default async function PlanPageView({ searchParams }: { searchParams: Pro
         </div>
         <div style={{ flex: "2 1 320px", minWidth: 0 }}><Chat initial={chat.messages} /></div>
       </div>
-    </>
+    </PlanDetailProvider>
   );
 }

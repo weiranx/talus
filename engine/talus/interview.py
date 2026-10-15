@@ -1,6 +1,8 @@
 """Planning with the coach: a short conversation that fills the same inputs as the plan form.
 
-The coach asks six questions, most answered with a tap. Its questions and confirmations are
+The coach asks eight questions, most answered with a tap: the objective (and says what kind of
+plan it makes), the goal, training days and time, terrain, the workouts to include, the body, and
+last, a summary of what it will build and anything else the athlete wants, before it drafts. Its questions and confirmations are
 written here, so they cost nothing; only free text (the objective in your own words, or a change
 you ask for after the draft) goes to the cheaper model, and only to be read into fields. The
 engine drafts every number. Without a model, simple rules read the common phrasings.
@@ -13,19 +15,33 @@ import re
 from datetime import date, timedelta
 
 from . import plan as planner
-from .plan import DAY_NAMES, GOAL_KINDS, WORKOUTS
+from .plan import DAY_NAMES, GOAL_KINDS, HILL_SESSIONS, MAX_WEEKDAY_MIN, MAX_WEEKEND_MIN, WORKOUTS
 
 DAY_SHORT = ("Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun")
 KM_PER_MI = 1.609344
-STEPS = ("objective", "goal", "days", "time", "terrain", "body")
+STEPS = ("objective", "goal", "days", "time", "terrain", "workouts", "body", "confirm")
 
 GOALS = ("Finish strong", "A time goal", "Just get round")
 TERRAIN = ("Big climbs nearby", "Rolling hills", "Mostly flat or treadmill")
 BODY = ("Nothing to note", "A small niggle", "An injury I'm managing")
 FEEL = ("Fresh", "Normal", "Tired lately")
-WEEKDAY_MIN = {"45 min": 45, "1 h": 60, "1 h 30": 90, "2 h": 120}
-WEEKEND_MIN = {"2 h": 120, "3 h": 180, "4 h": 240, "6 h": 360, "8 h": 480}
+WEEKDAY_MIN = {"45 min": 45, "1 h": 60, "1 h 30": 90, "2 h": 120, "3 h": 180, "4 h": 240}
+WEEKEND_MIN = {"2 h": 120, "3 h": 180, "4 h": 240, "6 h": 360, "8 h": 480, "10 h": 600, "12 h": 720}
 LESS, MORE = 0.85, 1.10  # "less" or "more" for a single week; the engine still checks the limits
+RECOVERY_WEEK = 0.70  # "make week 3 a recovery week"
+
+# The workouts question: speed sessions and hill sessions rotate through the build, extras go on
+# easy days. Chip labels to engine keys.
+SPEED_CHIPS = {"Track intervals": "track", "Threshold": "threshold", "Tempo": "tempo", "Fartlek": "fartlek",
+               "Progression runs": "progression", "Race pace": "race_pace", "Hill repeats": "hill_repeats"}
+HILL_CHIPS = {"Long climbs": "vert_climb", "Power hiking": "power_hike", "Downhill repeats": "downhill",
+              "Weighted-pack hiking": "muscular_endurance", "Hill sprints": "hill_sprints"}
+EXTRA_CHIPS = {"Strides": "strides", "Strength": "strength", "Back-to-back long days": "back_to_back"}
+WORKOUT_GROUPS = (("speed", SPEED_CHIPS, "Speed"), ("hills", HILL_CHIPS, "Hill day"), ("extras", EXTRA_CHIPS, "Extras"))
+DRAFT_IT = "Draft my plan"
+# After a draft, quick changes that ask the setup question again and redraft from the answer.
+CHANGE_TOPICS = {"Workouts": "workouts", "Training days": "days", "Time limits": "time"}
+CHANGE_GROUP = {"key": "change_topic", "options": list(CHANGE_TOPICS), "label": "Quick changes", "value": None}
 
 # Goals with no race day, as chips on the first question.
 GOAL_CHIPS = {"Build base": "base", "Maintain fitness": "maintain", "Come back from a break": "comeback",
@@ -47,6 +63,10 @@ QUESTIONS = {
     "body": {"text": "Anything hurting, and how has training felt lately?",
              "groups": [{"key": "body", "options": list(BODY), "label": "Body"},
                         {"key": "feel", "options": list(FEEL), "label": "Lately"}]},
+    "workouts": {"text": "Which workouts do you want in your plan?",
+                 "groups": [{"key": k, "options": list(chips), "label": label, "multi": True}
+                            for k, chips, label in WORKOUT_GROUPS]},
+    "confirm": {"text": "Anything else you want from this plan?", "groups": [{"key": "draft_it", "options": [DRAFT_IT]}]},
 }
 
 
@@ -75,15 +95,22 @@ def start(c: dict, current: dict | None = None) -> dict:
 
 def change(name: str, c: dict) -> dict:
     """A conversation about changing the plan you have."""
-    return {"messages": [coach(f"What would you like to change in your plan for {name}? " + CHANGE_EXAMPLES, "draft")],
+    return {"messages": [coach(f"What would you like to change in your plan for {name}? Tap a quick change, or tell "
+                               "me. " + CHANGE_EXAMPLES, "draft", [CHANGE_GROUP])],
             "step": "draft", "mode": "change", "answers": {}, "objective": {}, "defaults": days_defaults(c)}
 
 
-CHANGE_EXAMPLES = "For example: \"move my long day to Sunday\", \"I can't run Tuesdays\" or \"less vert in week 3\"."
+CHANGE_EXAMPLES = ("For example: \"move my long day to Sunday\", \"I can't run Tuesdays\", \"add hill sprints\", "
+                   "\"make week 3 a recovery week\" or \"skip this Saturday\".")
 
 
 def said(step: str, answers: dict) -> str:
     """Chip answers as the athlete's line in the conversation."""
+    if step == "workouts" and any(k in answers for k, _, _ in WORKOUT_GROUPS):
+        picked = [v for k, _, _ in WORKOUT_GROUPS for v in (answers.get(k) or [])]
+        return ", ".join(picked) if picked else "None of these"
+    if answers.get("change_topic"):
+        return str(answers["change_topic"])
     parts = []
     for g in QUESTIONS[step]["groups"] if step in QUESTIONS else []:
         v = answers.get(g["key"])
@@ -161,6 +188,22 @@ def chip_answers(step: str, answers: dict, text: str, defaults: dict) -> tuple[d
         if long_day not in days:
             days = [d for d in DAY_SHORT if d in days + [long_day]]
         return {"days": days, "long_day": long_day}, None
+    if step == "workouts":
+        if text and not any(k in (answers or {}) for k, _, _ in WORKOUT_GROUPS):
+            # Typed instead of tapped: the workouts the words name, on top of the plan type's picks.
+            t = text.lower()
+            for k, chips, _ in WORKOUT_GROUPS:
+                named = [label for label in chips if label.lower().rstrip("s") in t or chips[label] in t.replace(" ", "_")]
+                a[k] = list(dict.fromkeys([*(defaults.get(k) or []), *named]))
+            if re.search(r"\b(?:no|none|nothing|skip)\b", t) and not any(a.get(k) for k, _, _ in WORKOUT_GROUPS[:2]):
+                a = {k: [] for k, _, _ in WORKOUT_GROUPS}
+        out = {k: [o for o in chips if o in (a.get(k) if k in a else (answers or {}).get(k) or [])]
+               for k, chips, _ in WORKOUT_GROUPS}
+        if text:
+            out["workouts_note"] = text[:200]
+        return out, None
+    if step == "confirm":
+        return ({"wants": text[:600]} if text else {}), None
     if step == "time":
         wd, we = a.get("weekday") or defaults.get("weekday"), a.get("weekend") or defaults.get("weekend")
         out = {}
@@ -176,8 +219,9 @@ def chip_answers(step: str, answers: dict, text: str, defaults: dict) -> tuple[d
                 out.setdefault("weekday_min", v)
         if "weekday_min" not in out or "weekend_min" not in out:
             return None, "Pick how long you can go on a weekday and on a weekend day."
-        if not 15 <= out["weekday_min"] <= 600 or not 15 <= out["weekend_min"] <= 900:
-            return None, "Weekdays can be 15 to 600 min and weekend days 15 to 900 min."
+        if not 15 <= out["weekday_min"] <= MAX_WEEKDAY_MIN or not 15 <= out["weekend_min"] <= MAX_WEEKEND_MIN:
+            return None, (f"Weekdays can be 15 min to {MAX_WEEKDAY_MIN // 60} h and weekend days 15 min to "
+                          f"{MAX_WEEKEND_MIN // 60} h.")
         return out, None
     return None, None
 
@@ -216,16 +260,162 @@ def from_edits(edits: list[dict]) -> list[dict]:
             out.append({"kind": k, "minutes": e["minutes"]})
         elif k == "workout" and e.get("workout") in (*WORKOUTS, "none"):
             out.append({"kind": "workout", "workout": e["workout"]})
-        elif k == "week" and isinstance(e.get("week"), int) and e.get("direction") in ("less", "more"):
+        elif k == "week" and isinstance(e.get("week"), int) and e.get("direction") in ("less", "more", "recovery"):
             out.append({"kind": "week", "week": e["week"], "dims": [d for d in e.get("dims") or [] if d in ("miles", "vert")]
-                        or ["miles", "vert"], "factor": LESS if e["direction"] == "less" else MORE})
+                        or ["miles", "vert"],
+                        "factor": {"less": LESS, "more": MORE, "recovery": RECOVERY_WEEK}[e["direction"]]})
+        elif k in ("add_workout", "drop_workout") and e.get("workout") in PICKABLE:
+            out.append({"kind": k, "workout": e["workout"]})
+        elif k == "back_to_back" and isinstance(e.get("on"), bool):
+            out.append({"kind": k, "on": e["on"]})
+        elif k == "rest_day" and isinstance(e.get("date"), str):
+            try:
+                out.append({"kind": k, "date": date.fromisoformat(e["date"]).isoformat()})
+            except ValueError:
+                pass
     return out
+
+
+PICKABLE = (*WORKOUTS, *HILL_SESSIONS, "strides", "strength")
+# Words for each workout in a typed change, most specific first.
+WORKOUT_WORDS = (
+    ("hill_repeats", r"hill (?:repeats|reps|intervals)|uphill (?:repeats|intervals)"),
+    ("hill_sprints", r"hill sprints?"),
+    ("race_pace", r"(?:race|goal|marathon) pace"),
+    ("track", r"track|800s?\b"),
+    ("threshold", r"threshold|cruise"),
+    ("tempo", r"tempo"),
+    ("fartlek", r"fartlek"),
+    ("progression", r"progression"),
+    ("power_hike", r"power[- ]?hik\w*"),
+    ("downhill", r"downhill|descent repeats"),
+    ("muscular_endurance", r"weighted|pack hik\w*|muscular endurance"),
+    ("vert_climb", r"long climbs?|steady climbs?"),
+    ("strides", r"strides"),
+    ("strength", r"strength|gym|weights"),
+)
+ADD_WORDS = r"\b(?:add|include|also|plus|more|want|with|put in|start)\b"
+DROP_WORDS = r"\b(?:no|drop|remove|without|stop|skip|cut|less|fewer|don't|do not|take out|hate)\b"
+
+
+def rules_workouts(t: str) -> list[dict]:
+    """Workouts added or dropped in typed words: "add hill sprints", "no strength", "more power
+    hiking". Each mention reads the words just before it in its clause."""
+    out, seen = [], set()
+    taken: list[tuple[int, int]] = []
+    for key, words in WORKOUT_WORDS:
+        for m in re.finditer(r"\b(?:" + words + r")", t):
+            if any(a <= m.start() < b for a, b in taken):
+                continue
+            taken.append(m.span())
+            before = re.split(r"[.;,]|\band\b|\bbut\b", t[:m.start()])[-1][-40:]
+            kind = "drop_workout" if re.search(DROP_WORDS, before) else "add_workout" if re.search(ADD_WORDS, before) else None
+            if kind and key not in seen:
+                seen.add(key)
+                out.append({"kind": kind, "workout": key})
+    return out
+
+
+def rules_rest_days(t: str, today: date) -> tuple[list[dict], str]:
+    """One-off days off: "skip this Saturday", "I'm away tomorrow", "rest on Nov 3". Returns the
+    edits and the text without those phrases, so a day named once isn't read as dropped every week."""
+    out = []
+    off = r"\b(?:skip|rest|off|can't|cannot|can not|miss|away|busy|travel\w*)\b"
+    if not re.search(off, t):
+        return out, t
+    for m in list(re.finditer(r"\b(this|next|coming)\s+" + DAY_RE.replace("s?\\b", "\\b") + r"|\btomorrow\b|\btoday\b", t)):
+        if m.group(0) in ("tomorrow", "today"):
+            d = today + timedelta(days=1 if m.group(0) == "tomorrow" else 0)
+        else:
+            want = DAY_WORDS[m[2]]
+            d = today + timedelta(days=(want - today.weekday()) % 7)
+            if m[1] == "next" and d - timedelta(days=d.weekday()) == today - timedelta(days=today.weekday()):
+                d += timedelta(weeks=1)
+        out.append({"kind": "rest_day", "date": d.isoformat()})
+        t = t.replace(m.group(0), " ")
+    if not out and (d := parse_date(t, today)) and d >= today:
+        out.append({"kind": "rest_day", "date": d.isoformat()})
+    return out, t
 
 
 def days_defaults(c: dict) -> dict:
     return {"days": [DAY_SHORT[d] for d in c.get("days", [])], "long_day": DAY_SHORT[c.get("long_day", 5)],
             "weekday": next((k for k, v in WEEKDAY_MIN.items() if v == c.get("weekday_min")), None),
             "weekend": next((k for k, v in WEEKEND_MIN.items() if v == c.get("weekend_min")), None)}
+
+
+def workout_defaults(c: dict, ptype: str) -> dict:
+    """The workouts chips picked to start with: the athlete's own picks when they have made them,
+    otherwise what the plan type usually has."""
+    d = planner.default_workouts(ptype)
+    speed = c.get("workouts") if c.get("workouts") is not None else (
+        [c["workout"]] if c.get("workout") in WORKOUTS else d["workouts"])
+    hills = c.get("hill_sessions") if c.get("hill_sessions") is not None else d["hill_sessions"]
+    extras = {"strides": c.get("strides", True), "strength": c.get("strength", True),
+              "back_to_back": c.get("back_to_back", True) if c.get("workouts") is not None else d["back_to_back"]}
+    return {"speed": [k for k, v in SPEED_CHIPS.items() if v in speed],
+            "hills": [k for k, v in HILL_CHIPS.items() if v in hills],
+            "extras": [k for k, v in EXTRA_CHIPS.items() if extras[v]]}
+
+
+def ask_workouts(ptype: dict, defaults: dict) -> dict:
+    """The workouts question, with the plan type's usual picks already on."""
+    text = (f"Which workouts do you want in your plan? I've picked what a {ptype['label'].lower()} usually has; tap to "
+            "add or drop any. Speed sessions take turns one a week through the build, hill sessions take turns on the "
+            "hill day, and strides and strength go on easy days. With no hill session picked, the hill day is a "
+            "steady climb.")
+    return coach(text, "workouts", [g | {"value": defaults.get(g["key"])} for g in QUESTIONS["workouts"]["groups"]])
+
+
+def workout_constraints(a: dict) -> dict:
+    """The workouts answers as constraints for the engine."""
+    extras = {EXTRA_CHIPS[x] for x in a.get("extras") or [] if x in EXTRA_CHIPS}
+    speed = [SPEED_CHIPS[x] for x in a.get("speed") or [] if x in SPEED_CHIPS]
+    return {"workouts": speed, "hill_sessions": [HILL_CHIPS[x] for x in a.get("hills") or [] if x in HILL_CHIPS],
+            "strides": "strides" in extras, "strength": "strength" in extras, "back_to_back": "back_to_back" in extras,
+            "workout": speed[0] if speed else "none"}
+
+
+def type_line(o: dict) -> str:
+    """What kind of plan an objective makes, told as soon as the objective is set."""
+    t = planner.plan_type_text(o)
+    return f"That makes this a {t['label'].lower()}: {t['text']}."
+
+
+def _time(minutes: int) -> str:
+    h, m = divmod(int(minutes), 60)
+    return f"{h} h {m:02d}" if h and m else f"{h} h" if h else f"{m} min"
+
+
+def confirm_text(o: dict, a: dict) -> str:
+    """Before drafting: what the coach will build from the answers, and the question of what else
+    the athlete wants."""
+    t = planner.plan_type_text(o)
+    what = objective_line(o | {"loss_ft": o.get("loss_ft") or o["gain_ft"]}) if planner.is_event(o) else block_line(o)
+    days = [d for d in DAY_SHORT if d in a.get("days", [])]
+    long_day = DAY_NAMES[DAY_SHORT.index(a["long_day"])] if a.get("long_day") in DAY_SHORT else None
+    picked = [*(a.get("speed") or []), *(a.get("hills") or []), *(a.get("extras") or [])]
+    lines = [f"Before I draft it, here's what I'll build: a {t['label'].lower()} for {what}. It's built around {t['text']}."]
+    if a.get("goal"):
+        lines.append(f"Goal for the day: {a['goal'].lower()}.")
+    if days:
+        lines.append(f"Training {', '.join(days)}" + (f", long day on {long_day}" if long_day else "")
+                     + (f", up to {_time(a['weekday_min'])} on weekdays and {_time(a['weekend_min'])} on weekend days"
+                        if a.get("weekday_min") and a.get("weekend_min") else "") + ".")
+    if a.get("terrain"):
+        lines.append(f"Vert near home: {a['terrain'].lower()}.")
+    lines.append(f"Workouts: {_join_words([p.lower() for p in picked])}." if picked else
+                 "Workouts: easy running and a steady climb on the hill day, no speed sessions.")
+    if a.get("body"):
+        lines.append(f"Body: {a['body'].lower()}" + (f", lately {a['feel'].lower()}" if a.get("feel") else "") + ".")
+    lines.append("I'll draft it from your last 12 weeks of training, your load and readiness today, your check-ins and "
+                 "your training note. Anything else you want from this plan, like a race on the way, a week you're "
+                 f"away, or how you like to train? Tell me, or tap {DRAFT_IT}.")
+    return " ".join(lines)
+
+
+def ask_confirm(o: dict, a: dict) -> dict:
+    return coach(confirm_text(o, a), "confirm", [g | {"value": None} for g in QUESTIONS["confirm"]["groups"]])
 
 
 def next_step(step: str) -> str | None:
@@ -486,11 +676,14 @@ def _minutes(text: str) -> int | None:
     return None
 
 
-def rules_edits(text: str) -> list[dict]:
-    """Changes in the common phrasings: the long day, adding or dropping a day, time limits, and
-    more or less miles or vert in a numbered week."""
+def rules_edits(text: str, today: date | None = None) -> list[dict]:
+    """Changes in the common phrasings: the long day, adding or dropping a day, time limits, more
+    or less miles or vert in a numbered week (or a recovery week), workouts added or dropped, and
+    one-off rest days."""
     t = text.lower()
     edits: list[dict] = []
+    rest, t = rules_rest_days(t, today or date.today())
+    edits += rest
     if m := re.search(r"long (?:day|run)[^.]*?\b(?:to|on)\s+" + DAY_RE, t):
         edits.append({"kind": "long_day", "day": DAY_WORDS[m[1]]})
     for m in re.finditer(r"\b(?:no|not|can't|cannot|can not|drop|skip|remove)\b[^.]*?" + DAY_RE, t):
@@ -502,9 +695,16 @@ def rules_edits(text: str) -> list[dict]:
         edits.append({"kind": "weekday_minutes", "minutes": v})
     if "weekend" in t and (v := _minutes(t.split("weekend", 1)[0][-40:] + t.split("weekend", 1)[1][:40])):
         edits.append({"kind": "weekend_minutes", "minutes": v})
-    if w := rules_workout(t):
+    picks = rules_workouts(t)
+    if picks:
+        edits += picks
+    elif w := rules_workout(t):
         edits.append({"kind": "workout", "workout": w})
-    if m := re.search(r"\b(less|fewer|lower|reduce|cut|easier|lighter|more|increase|add|bigger|harder)\b(.*?)\bweek\s+(\d{1,2})\b", t):
+    if re.search(r"back[- ]to[- ]back", t):
+        edits.append({"kind": "back_to_back", "on": not re.search(r"\b(?:no|drop|stop|without|don't|do not|off)\b[^.]*back[- ]to[- ]back", t)})
+    if m := re.search(r"\bweek\s+(\d{1,2})\b[^.]*\brecovery\b|\brecovery\b[^.]*\bweek\s+(\d{1,2})\b", t):
+        edits.append({"kind": "week", "week": int(m[1] or m[2]), "dims": ["miles", "vert"], "factor": RECOVERY_WEEK})
+    elif m := re.search(r"\b(less|fewer|lower|reduce|cut|easier|lighter|more|increase|add|bigger|harder)\b(.*?)\bweek\s+(\d{1,2})\b", t):
         less = m[1] in ("less", "fewer", "lower", "reduce", "cut", "easier", "lighter")
         what = m[2]
         dims = [d for d, words in (("miles", ("mile", "mileage", "distance", "volume")),
@@ -537,9 +737,14 @@ def rules_workout(t: str) -> str | None:
     return "track"
 
 
-def apply_edits(edits: list[dict], c: dict, weeks: list[dict]) -> tuple[dict, list[str], list[str]]:
+PICK_TEXT = {**WORKOUTS, **HILL_SESSIONS, "strides": "Strides", "strength": "Strength"}
+
+
+def apply_edits(edits: list[dict], c: dict, weeks: list[dict], ptype: str = "mountain_ultra") -> tuple[dict, list[str], list[str]]:
     """The constraints with the asked-for changes made, what changed in words, and anything that
-    couldn't be done and why. Week numbers count from this week as week 1."""
+    couldn't be done and why. Week numbers count from this week as week 1. Workouts added or
+    dropped start from the athlete's picks, or the plan type's (`ptype`) when they have none.
+    One-off rest days aren't constraints: they go on the calendar, so they're left out here."""
     c = {**c, "days": list(c["days"]), "adjust": list(c.get("adjust") or [])}
     done, skipped = [], []
     for e in edits:
@@ -575,8 +780,29 @@ def apply_edits(edits: list[dict], c: dict, weeks: list[dict]) -> tuple[dict, li
             if w not in (*WORKOUTS, "none"):
                 continue
             c["workout"] = w
+            c["workouts"] = [] if w == "none" else [w]
             done.append("no speed work" if w == "none" else
                         f"{WORKOUTS[w].lower()} once a week in build and taper weeks, on a weekday away from the long day")
+        elif k in ("add_workout", "drop_workout") and e.get("workout") in PICKABLE:
+            w, add = e["workout"], k == "add_workout"
+            name = PICK_TEXT[w].lower()
+            if w in ("strides", "strength"):
+                c[w] = add
+            else:
+                key = "workouts" if w in WORKOUTS else "hill_sessions"
+                d = planner.default_workouts(ptype)
+                now = list(c.get(key) if c.get(key) is not None else
+                           ([c["workout"]] if key == "workouts" and c.get("workout") in WORKOUTS else d[key]))
+                if add == (w in now):
+                    skipped.append(f"{name} {'is already' if add else 'is not'} in the plan")
+                    continue
+                c[key] = now + [w] if add else [x for x in now if x != w]
+                if key == "workouts":
+                    c["workout"] = c["workouts"][0] if c["workouts"] else "none"
+            done.append(f"{name} {'added' if add else 'taken out'}")
+        elif k == "back_to_back":
+            c["back_to_back"] = bool(e.get("on"))
+            done.append("back-to-back long days " + ("on" if c["back_to_back"] else "off"))
         elif k == "week":
             n = int(e.get("week") or 0)
             if not 1 <= n <= len(weeks):
@@ -586,14 +812,17 @@ def apply_edits(edits: list[dict], c: dict, weeks: list[dict]) -> tuple[dict, li
             dims = [d for d in e.get("dims", []) if d in ("miles", "vert")] or ["miles", "vert"]
             c["adjust"] = [a for a in c["adjust"] if not (a["week"] == start and set(a["dims"]) & set(dims))]
             c["adjust"].append({"week": start, "dims": dims, "factor": e.get("factor", LESS)})
-            done.append(f"{'less' if e.get('factor', LESS) < 1 else 'more'} {' and '.join(dims)} in week {n}")
+            f = e.get("factor", LESS)
+            done.append(f"week {n} a recovery week" if f == RECOVERY_WEEK else
+                        f"{'less' if f < 1 else 'more'} {' and '.join(dims)} in week {n}")
     return c, done, skipped
 
 
 EDIT_HELP = ("I can move your long day, add or drop a training day, change how long you can go on weekdays or "
-             "weekends, add a weekly speed session (track intervals, tempo or hill repeats), or give a single week "
-             "more or less miles or vert, like \"less vert in week 3\". To change the objective itself, use Edit "
-             "objective.")
+             "weekends, add or drop a workout (like \"add hill sprints\" or \"no strength\"), turn back-to-back long days "
+             "on or off, give a single week more or less miles or vert or make it a recovery week, like \"less vert in "
+             "week 3\", or take one day off, like \"skip this Saturday\". Or tap a quick change. To change the objective "
+             "itself, use Edit objective.")
 
 
 def _short(text: str, most: int = 80) -> str:
@@ -660,13 +889,26 @@ def notes(a: dict) -> str:
              f"Vert near home: {a['terrain']}" if a.get("terrain") else "",
              f"Body: {a['body']}" + (f" ({a['body_note']})" if a.get("body_note") and a["body_note"] != a["body"] else "")
              if a.get("body") else "",
-             f"Lately: {a['feel']}" if a.get("feel") else ""]
+             f"Lately: {a['feel']}" if a.get("feel") else "",
+             f"Also wants: {a['wants']}" if a.get("wants") else ""]
     return ". ".join(p for p in parts if p)[:500]
 
 
 def context(a: dict) -> dict:
     """The tap answers the coach may read when it explains the plan. Typed notes stay out."""
     return {k: a[k] for k in ("goal", "terrain", "body", "feel") if a.get(k)}
+
+
+def full_context(a: dict) -> dict:
+    """Every answer, typed words included, for the coach that builds and checks the plan: it
+    should know everything the athlete told it before it drafts."""
+    out = context(a) | {k: a[k] for k in ("speed", "hills", "extras") if k in a}
+    for k, label in (("goal_note", "goal_in_their_words"), ("terrain_note", "terrain_in_their_words"),
+                     ("body_note", "body_in_their_words"), ("workouts_note", "workouts_in_their_words"),
+                     ("wants", "what_else_they_want")):
+        if a.get(k):
+            out[label] = a[k]
+    return out
 
 
 def lighter_start(today: date) -> list[dict]:

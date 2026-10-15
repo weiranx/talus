@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { Fragment, useCallback, useEffect, useState } from "react";
 import { Spinner } from "@/components/Loading";
+import { type DayDetail, usePlanDetail } from "@/components/plan/PlanDetail";
 import { dayLabel, mi, n0 } from "@/lib/format";
 import { cover, DAY_SHORT, FOCUS_TEXT } from "@/lib/plan";
 import type { RunKind, Schedule, ScheduledRun, WeekProgress } from "@/lib/types";
@@ -12,8 +13,17 @@ const WEEKS = 5;  // fetched; `compact` shows the first two until asked for more
 const STATUS_TEXT = { done: "Done", missed: "Missed", today: "Today", planned: "" } as const;
 const KIND_COLOR: Record<RunKind, string> = {
   easy: "var(--cardio)", long: "var(--climb)", hills: "var(--descent)", tempo: "var(--target)", intervals: "var(--target)",
-  hike: "var(--climb)", race: "var(--ink)", other: "var(--muted)",
+  hike: "var(--climb)", race: "var(--ink)", other: "var(--muted)", rest: "var(--line)",
 };
+
+// A calendar item as the detail sheet shows it: a plan session with its steps, or your own run.
+function detailOf(it: ScheduledRun): DayDetail {
+  const own = it.source === "manual";
+  return { day: it.day, title: it.title, kind: own ? it.kind : it.session ?? it.kind, miles: it.miles, gain_ft: it.gain_ft,
+    loss_ft: it.loss_ft, minutes: it.minutes, steps: it.steps, how: it.how ?? (own ? it.detail : null), benefit: it.benefit,
+    focus: it.focus, week_note: it.week_note, own, run_id: own ? it.id : null, notes: it.notes,
+    activities: it.activity ? [it.activity] : undefined };
+}
 
 function addDays(iso: string, n: number): string {
   const [y, m, d] = iso.split("-").map(Number);
@@ -34,7 +44,7 @@ function formFor(r: ScheduledRun | null, day: string): Form {
 const COVER_COLOR = { covered: "var(--good-ink)", close: "var(--warn-ink)", short: "var(--bad-ink)", over: "var(--warn-ink)" } as const;
 
 // A line under each week: the plan's target against done plus scheduled, in mi and ft up.
-function WeekLine({ w, past }: { w: WeekProgress | undefined; past: boolean }) {
+function WeekLine({ w, past, onWeek }: { w: WeekProgress | undefined; past: boolean; onWeek?: (start: string) => void }) {
   if (!w) return null;
   const have = { miles: (w.done?.miles ?? 0) + w.ahead.miles, gain_ft: (w.done?.gain_ft ?? 0) + w.ahead.gain_ft };
   const all = cover(w);
@@ -45,12 +55,14 @@ function WeekLine({ w, past }: { w: WeekProgress | undefined; past: boolean }) {
       {w.target ? (
         <span>{FOCUS_TEXT[w.target.focus]} target <span className="mono">{mi(w.target.miles)} mi · {n0(w.target.gain_ft)} ft up</span></span>
       ) : null}
+      {w.target?.adapted ? <span style={{ color: "var(--warn-ink)" }} title={w.target.adapted.text}>Adapted: {Math.round((1 - w.target.adapted.factor) * 100)}% lighter</span> : null}
       <span className="muted">{sum}</span>
       {c ? <span style={{ color: COVER_COLOR[c.state], fontWeight: 600 }}>
         {c.state === "covered" ? "Covered" : c.state === "over"
           ? `Over target: ${Math.round(Math.max(...Object.values(c.share)) * 100)}%`
           : `${Math.round(Math.min(c.share.miles, c.share.gain_ft) * 100)}% of target`}
       </span> : w.target ? <span className="muted">The plan&apos;s days show a week ahead</span> : null}
+      {w.target && onWeek ? <button type="button" className="link-btn" onClick={() => onWeek(w.start)}>Days</button> : null}
     </div>
   );
 }
@@ -66,6 +78,7 @@ export default function Calendar({ initial, compact }: { initial: Schedule; comp
   const [busy, setBusy] = useState<"save" | "delete" | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+  const detail = usePlanDetail();
 
   const load = useCallback(async (s: string) => {
     setLoading(true);
@@ -74,6 +87,9 @@ export default function Calendar({ initial, compact }: { initial: Schedule; comp
     setLoading(false);
   }, []);
   useEffect(() => { if (start !== initial.start) load(start); }, [start, initial.start, load]);
+  // A day changed in the detail sheet: show the weeks as they now stand.
+  const version = detail?.version ?? 0;
+  useEffect(() => { if (version) load(start); }, [version]);  // eslint-disable-line react-hooks/exhaustive-deps
 
   const byDay = new Map<string, ScheduledRun[]>();
   for (const it of data.items) byDay.set(it.day, [...(byDay.get(it.day) ?? []), it]);
@@ -159,11 +175,12 @@ export default function Calendar({ initial, compact }: { initial: Schedule; comp
                     onClick={() => setForm(formFor(null, d))} style={{ fontSize: 14, minHeight: 20 }}>+</button>
                 </div>
                 {items.map((it, i) => (
-                  <button key={`${it.source}-${it.id ?? i}`} type="button" onClick={() => setForm(formFor(it, d))}
+                  <button key={`${it.source}-${it.id ?? i}`} type="button" onClick={() => (detail ? detail.openDay(detailOf(it)) : setForm(formFor(it, d)))}
                     style={{ textAlign: "left", border: 0, borderLeft: `3px solid ${KIND_COLOR[it.kind]}`, background: it.source === "plan" ? "var(--bg)" : "var(--past)",
                       borderRadius: 6, padding: "4px 6px", cursor: "pointer", font: "inherit", fontSize: 12, color: "var(--ink)" }}>
                     <div style={{ fontWeight: 600 }}>{it.title}{it.source === "plan" ? " · plan" : ""}</div>
-                    <div className="mono" style={{ fontSize: 11 }}>{mi(it.miles)} mi · {n0(it.gain_ft)} ft</div>
+                    {it.kind === "rest" ? <div style={{ fontSize: 11 }} className="muted">Day off</div>
+                      : <div className="mono" style={{ fontSize: 11 }}>{mi(it.miles)} mi · {n0(it.gain_ft)} ft</div>}
                     {STATUS_TEXT[it.status] ? (
                       <div style={{ fontSize: 11, color: it.status === "done" ? "var(--good-ink)" : it.status === "missed" ? "var(--bad-ink)" : "var(--muted)" }}>
                         {STATUS_TEXT[it.status]}{it.activity ? `: ${mi(it.activity.distance_mi)} mi, ${n0(it.activity.gain_ft)} ft` : ""}
@@ -181,7 +198,7 @@ export default function Calendar({ initial, compact }: { initial: Schedule; comp
                   </Link>
                 ))}
               </div>
-              {weekEnd ? <WeekLine w={weeks.get(days[i - 6])} past={d < data.date} /> : null}
+              {weekEnd ? <WeekLine w={weeks.get(days[i - 6])} past={d < data.date} onWeek={detail?.openWeek} /> : null}
               </Fragment>
             );
           })}
@@ -223,7 +240,9 @@ export default function Calendar({ initial, compact }: { initial: Schedule; comp
         </div>
       ) : null}
       <div className="muted">
-        Tap a day&apos;s + to add a run, or a run to change it; a new date moves it. Your own run replaces the plan&apos;s session that day.
+        {detail ? <>Tap a run to see how to run it and why, or to change it, move it or take the day off. Tap a day&apos;s + to add a run. </>
+          : <>Tap a day&apos;s + to add a run, or a run to change it; a new date moves it. </>}
+        Your own run or day off replaces the plan&apos;s session that day; the plan moves the rest of the week around it and eases the next week when the change is big.
         Runs match the activity you do that day.
       </div>
     </section>

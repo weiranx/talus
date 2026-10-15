@@ -301,7 +301,7 @@ struct ConstraintsFields: View {
             try await api.put("/api/plan/constraints", body)
             await onSaved()
         } catch APIError.server(422, let detail) where detail.hasPrefix("The engine answered") {
-            message = (false, "Check the days and minutes: weekdays 15 to 600, weekends 15 to 900.")
+            message = (false, "Check the days and minutes: weekdays 15 to 720, weekends 15 to 1440.")
         } catch {
             message = (false, error.localizedDescription)
         }

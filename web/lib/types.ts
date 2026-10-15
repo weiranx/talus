@@ -371,6 +371,8 @@ export interface Settings {
     key_set: boolean;
     brief_model: string;
     analysis_model: string;
+    // Builds and checks plan drafts; the admin picks it, and it follows the analysis model until then.
+    plan_model?: string;
     style: string;
     // The AI coach builds plan drafts (the engine checks them); off means the engine builds them.
     ai_plans?: boolean;
@@ -451,7 +453,13 @@ export type HillSession = "vert_climb" | "power_hike" | "downhill" | "muscular_e
 export interface Constraints {
   days: number[]; weekday_min: number; weekend_min: number; long_day: number; notes: string;
   back_to_back?: boolean; workout?: Workout;
+  // The workouts picked, taking turns through the build. null: not picked, so the plan type's defaults.
+  workouts?: Exclude<Workout, "none">[] | null; hill_sessions?: HillSession[] | null;
+  strides?: boolean; strength?: boolean;
 }
+
+// The kind of plan the objective makes: a mountain ultra plan, a marathon plan, and so on.
+export interface PlanType { key: string; label: string; text: string }
 
 export interface LongDay {
   day: string;
@@ -483,6 +491,8 @@ export interface PlanWeek {
   hill_session?: HillSession | null;
   // The AI coach's line for the week, when it built the plan.
   coach_note?: string | null;
+  // Eased because the week before it changed: a day edited, moved or taken off, or the week as run.
+  adapted?: { factor: number; from: string; reason: "over" | "under"; share: number; text: string } | null;
 }
 
 export interface WeekBrief { focus: Focus; miles: number; gain_ft: number; loss_ft: number; hours: number }
@@ -509,6 +519,7 @@ export interface Plan {
   goal?: Goal;
   target?: { done: Vol3; planned: Vol3; totals: Vol3 } | null;
   race_type?: "mountain" | "road" | "hundred" | "multiday";
+  plan_type?: PlanType;
   // "coach" when the AI coach built the weeks and the engine held them to its limits.
   builder?: "engine" | "coach" | null;
   // The AI coach is still building its version; the engine's weeks show until it's done.
@@ -523,7 +534,7 @@ export interface Plan {
 }
 
 export type SessionKind = "long" | "long2" | "hills" | "easy" | "track" | "tempo" | "hill_repeats" | "race_pace"
-  | "threshold" | "fartlek" | "progression" | "rest" | "objective" | "done";
+  | "threshold" | "fartlek" | "progression" | "rest" | "objective" | "done" | "past";
 
 export interface PlanSession {
   day: string;
@@ -543,6 +554,8 @@ export interface PlanSession {
   type?: string;
   strength?: boolean;
   own?: boolean;
+  // Your own run's id on the calendar, when the day is yours.
+  run_id?: number | null;
   detail: string;
   longest_descent_ft?: number | null;
 }
@@ -572,11 +585,30 @@ export interface PlanPage {
   thresholds: Thresholds | null;
   this_week?: WeekProgress;
   actuals?: Record<string, WeekActual>;
+  plan_type?: PlanType;
+  // The workouts the plan takes turns with: the athlete's picks, or the plan type's until they pick.
+  workout_picks?: { workouts: Exclude<Workout, "none">[]; hill_sessions: HillSession[]; picked: boolean };
+}
+
+// One week of the plan, day by day, from /api/plan/week.
+export interface PlanWeekDays {
+  week: PlanWeek;
+  days: (PlanSession & {
+    // An own run or rest day's id on the calendar, to change or undo it.
+    run_id?: number | null; notes?: string;
+    // Days gone: what was done.
+    activities?: { id: number; name: string | null; distance_mi: number; gain_ft: number; loss_ft: number; moving_time_s: number }[];
+  })[];
+  // False for a week further out than the calendar's dated days: the shape it would take from its targets.
+  dated: boolean;
+  date: string;
+  objective: string;
+  plan_type?: PlanType | null;
 }
 
 export interface Vol { miles: number; gain_ft: number; loss_ft: number }
 export interface WeekActual extends Vol { below_aet_pct: number | null }
-export interface WeekProgress { start: string; dated: boolean; target: (Vol & { focus: Focus }) | null; done: WeekActual | null; ahead: Vol }
+export interface WeekProgress { start: string; dated: boolean; target: (Vol & { focus: Focus; adapted?: PlanWeek["adapted"] }) | null; done: WeekActual | null; ahead: Vol }
 
 export interface PlanReply { verdict: string; limiter: string; plan: string }
 export interface ReviewReply { week: string; next: string }
@@ -585,7 +617,7 @@ export interface FitReply { helps: string; week: string; next: string }
 export interface CoachAction { id: number; kind: string; summary: string; status: "proposed" | "running" | "done" | "dismissed" | "failed"; result: string | null }
 export interface ChatMessage { id: number; created_at: string; role: "athlete" | "coach"; text: string; source: string | null; log_id: number | null; cost?: AiCost | null; actions?: CoachAction[] }
 
-export type RunKind = "easy" | "long" | "hills" | "tempo" | "intervals" | "hike" | "race" | "other";
+export type RunKind = "easy" | "long" | "hills" | "tempo" | "intervals" | "hike" | "race" | "other" | "rest";
 
 export interface ScheduledRun {
   id: number | null;
@@ -602,6 +634,11 @@ export interface ScheduledRun {
   title: string;
   how: string | null;
   benefit?: string | null;
+  // A plan session's steps, its own kind (like "hills" or "track"), the week's focus and the coach's line for it.
+  steps?: string[];
+  session?: SessionKind | null;
+  focus?: Focus | null;
+  week_note?: string | null;
   detail: string;
   status: "done" | "missed" | "today" | "planned";
   activity: { id: number; name: string | null; sport: string | null; distance_mi: number; gain_ft: number; loss_ft: number; moving_time_s: number } | null;
@@ -647,15 +684,16 @@ export interface AdminOverview {
   coach_models: {
     brief_model: string;
     analysis_model: string;
+    plan_model: string;
     chosen: boolean;
     env: string | null;
     models: { id: string; label: string; input: number; output: number }[];
-    estimate: Record<"brief" | "analysis", Record<string, CostEstimate>>;
+    estimate: Record<"brief" | "analysis" | "plan", Record<string, CostEstimate>>;
   };
   system: {
     revision: string | null;
     model_version: string;
-    coach: { prompt_version: string; brief_model: string; analysis_model: string; key_set: boolean };
+    coach: { prompt_version: string; brief_model: string; analysis_model: string; plan_model?: string; key_set: boolean };
     server_ceiling_usd: number;
     data_bytes: number;
     disk: { total: number; free: number };

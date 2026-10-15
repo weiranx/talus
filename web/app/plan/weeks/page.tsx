@@ -1,5 +1,6 @@
 import Link from "next/link";
 import EngineDown from "@/components/EngineDown";
+import PlanDetailProvider from "@/components/plan/PlanDetail";
 import WeeksTable from "@/components/plan/WeeksTable";
 import { engine, engineFailed } from "@/lib/api";
 import { dayLabel, mi, n0 } from "@/lib/format";
@@ -22,7 +23,7 @@ export default async function FullPlan() {
   const today = p.date;
   const current = plan.weeks.find((w) => w.start <= today && today < (plan.weeks[w.index + 1]?.start ?? "9999"))?.start ?? plan.weeks[0].start;
   return (
-    <>
+    <PlanDetailProvider today={today}>
       <header className="page-head">
         <div>
           <div className="eyebrow"><Link href="/plan">Plan</Link> · {p.accepted ? "accepted" : "draft"}, built {dayLabel(plan.built_on, { month: "short", day: "numeric" })}</div>
@@ -35,8 +36,8 @@ export default async function FullPlan() {
           a recovery week follows every three builds, and every week was checked against the load limits by projecting your ledgers forward.
           Starting point: your last four weeks, {mi(plan.baseline.miles)} mi and {n0(plan.baseline.gain_ft)} ft up a week.
         </div>
-        <WeeksTable weeks={plan.weeks} current={current} full actuals={p.accepted ? p.actuals : undefined} />
+        <WeeksTable weeks={plan.weeks} current={current} full actuals={p.accepted ? p.actuals : undefined} draft={!p.accepted} />
       </section>
-    </>
+    </PlanDetailProvider>
   );
 }

@@ -1,4 +1,7 @@
+"use client";
+
 import Link from "next/link";
+import { usePlanDetail } from "@/components/plan/PlanDetail";
 import { dayLabel, mi, n0 } from "@/lib/format";
 import { FOCUS_TEXT, HILL_TEXT, hours, WORKOUT_TEXT } from "@/lib/plan";
 import type { LongDay, PlanWeek, WeekActual } from "@/lib/types";
@@ -19,9 +22,12 @@ function longText(l: LongDay): string {
   return `${mi(l.miles)} + ${mi(l.second.miles)} mi, ${n0(l.gain_ft)} + ${n0(l.second.gain_ft)} ft`;
 }
 
-export default function WeeksTable({ weeks, current, limit, full, actuals }: {
+export default function WeeksTable({ weeks, current, limit, full, actuals, draft }: {
   weeks: PlanWeek[]; current: string; limit?: number; full?: boolean; actuals?: Record<string, WeekActual>;
+  // The weeks of a draft: tapping one shows the draft's days.
+  draft?: boolean;
 }) {
+  const detail = usePlanDetail();
   const showDone = !!actuals && weeks.some((w) => actuals[w.start]);
   const from = Math.max(0, weeks.findIndex((w) => w.start === current));
   const shown = limit ? weeks.slice(from, from + limit) : weeks;
@@ -44,7 +50,14 @@ export default function WeeksTable({ weeks, current, limit, full, actuals }: {
         <tbody>
           {shown.map((w) => (
             <tr key={w.start} className={w.start === current ? "hl" : undefined}>
-              <td>{dayLabel(w.start, { month: "short", day: "numeric" })}</td>
+              <td>
+                {detail ? (
+                  <button type="button" className="link-btn" style={{ fontSize: "inherit" }} onClick={() => detail.openWeek(w.start, draft)} aria-label={`See the days of the week of ${dayLabel(w.start, { month: "long", day: "numeric" })}`}>
+                    {dayLabel(w.start, { month: "short", day: "numeric" })}
+                  </button>
+                ) : dayLabel(w.start, { month: "short", day: "numeric" })}
+                {w.adapted ? <span title={w.adapted.text} style={{ color: "var(--warn-ink)" }}> †</span> : null}
+              </td>
               <td>{FOCUS_TEXT[w.focus]}{w.limited_by.length ? " *" : ""}{w.workout ? <span className="muted"> · {WORKOUT_TEXT[w.workout].toLowerCase()}</span> : null}{w.hill_session ? <span className="muted"> · {HILL_TEXT[w.hill_session].toLowerCase()}</span> : null}</td>
               <td className="num">{mi(w.miles)}</td>
               <td className="num">{n0(w.gain_ft)}</td>
@@ -64,6 +77,10 @@ export default function WeeksTable({ weeks, current, limit, full, actuals }: {
       {weeks.some((w) => w.limited_by.length) ? (
         <div className="muted" style={{ marginTop: 8 }}>* Held back so a load doesn&apos;t ramp too fast.</div>
       ) : null}
+      {weeks.some((w) => w.adapted) ? (
+        <div className="muted" style={{ marginTop: 4 }}>† Adapted to a change in the week before it.</div>
+      ) : null}
+      {detail ? <div className="muted" style={{ marginTop: 4 }}>Tap a week to see its days and each workout.</div> : null}
       {limit && weeks.length > from + limit ? (
         <div style={{ marginTop: 8 }}><Link href="/plan/weeks">All {weeks.length} weeks</Link></div>
       ) : null}

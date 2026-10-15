@@ -1,0 +1,1051 @@
+{
+ "date": "2026-10-14",
+ "constraints": {
+  "days": [
+   1,
+   3,
+   5,
+   6
+  ],
+  "weekday_min": 60,
+  "weekend_min": 240,
+  "long_day": 5,
+  "notes": "",
+  "back_to_back": true,
+  "workout": "fartlek",
+  "adjust": []
+ },
+ "objective": {
+  "name": "Fall 50k",
+  "day": "2027-02-03",
+  "distance_mi": 31.0,
+  "gain_ft": 8000.0,
+  "loss_ft": 8000.0,
+  "longest_climb_ft": null,
+  "longest_descent_ft": null,
+  "high_point_ft": null,
+  "source": "manual",
+  "id": 1,
+  "goal": "race",
+  "days_to_go": 112,
+  "event": true,
+  "goal_text": "Race"
+ },
+ "readiness": {
+  "dims": [
+   {
+    "key": "big_day",
+    "name": "Big-day size",
+    "demand_label": "Effort miles",
+    "capacity_label": "Largest single day, last 8 weeks",
+    "demand": 46.151515151515156,
+    "capacity": 7.205861471750502,
+    "unit": "effort mi",
+    "rule": 0.7,
+    "ratio": 0.15613488415480403,
+    "status": "gap",
+    "status_text": "Gap"
+   },
+   {
+    "key": "time_on_feet",
+    "name": "Time on feet",
+    "demand_label": "Estimated time",
+    "capacity_label": "Longest single day, last 8 weeks",
+    "demand": 4.376273495628203,
+    "capacity": 0.6663888888888889,
+    "unit": "h",
+    "rule": 0.6,
+    "ratio": 0.1522731359350818,
+    "status": "gap",
+    "status_text": "Gap"
+   },
+   {
+    "key": "climbing_volume",
+    "name": "Climbing volume",
+    "demand_label": "Total gain",
+    "capacity_label": "Average weekly gain, last 4 weeks",
+    "demand": 8000.0,
+    "capacity": 5600.8858267492515,
+    "unit": "ft",
+    "rule": 1.25,
+    "ratio": 0.7001107283436564,
+    "status": "gap",
+    "status_text": "Gap"
+   },
+   {
+    "key": "descent_durability",
+    "name": "Descent durability",
+    "demand_label": "Longest continuous descent",
+    "capacity_label": "Longest continuous descent, last 8 weeks",
+    "demand": null,
+    "capacity": 1178.1496062945005,
+    "unit": "ft",
+    "rule": 0.75,
+    "ratio": null,
+    "status": "unknown",
+    "status_text": "Not given"
+   },
+   {
+    "key": "descent_volume",
+    "name": "Descent volume",
+    "demand_label": "Total loss",
+    "capacity_label": "Descent normal times 7",
+    "demand": 8000.0,
+    "capacity": 5697.370306976384,
+    "unit": "ft",
+    "rule": 1.25,
+    "ratio": 0.712171288372048,
+    "status": "gap",
+    "status_text": "Gap"
+   },
+   {
+    "key": "altitude",
+    "name": "Altitude",
+    "demand_label": "High point",
+    "capacity_label": "Hours above 8,000 ft, last 4 weeks",
+    "demand": null,
+    "capacity": 0.0,
+    "unit": null,
+    "rule": null,
+    "ratio": null,
+    "status": "context",
+    "status_text": "Context"
+   }
+  ],
+  "limiter": "big_day",
+  "verdict": "gap",
+  "demand": {
+   "distance_mi": 31.0,
+   "gain_ft": 8000.0,
+   "loss_ft": 8000.0,
+   "effort_mi": 46.151515151515156,
+   "race_type": "mountain",
+   "longest_climb_ft": null,
+   "longest_descent_ft": null,
+   "high_point_ft": null,
+   "time": {
+    "low_h": 3.719832471283972,
+    "mid_h": 4.376273495628203,
+    "high_h": 4.813900845191023,
+    "pace_learned": true
+   },
+   "dims": {
+    "big_day": 46.151515151515156,
+    "time_on_feet": 4.376273495628203,
+    "climbing_volume": 8000.0,
+    "descent_durability": null,
+    "descent_volume": 8000.0,
+    "altitude": null
+   }
+  },
+  "capacity": {
+   "big_day": 7.205861471750502,
+   "time_on_feet": 0.6663888888888889,
+   "climbing_volume": 5600.8858267492515,
+   "descent_durability": 1178.1496062945005,
+   "descent_volume": 5697.370306976384,
+   "altitude": 0.0
+  },
+  "pace": {
+   "min_per_effort_mi": 5.548723562072625,
+   "learned": true,
+   "days": 30
+  }
+ },
+ "accepted": {
+  "id": 2,
+  "status": "accepted",
+  "reason": "constraints",
+  "created_at": "2026-10-14T20:53:02",
+  "decided_at": "2026-10-14T20:53:02",
+  "built_on": "2026-10-14",
+  "constraints": {
+   "days": [
+    1,
+    3,
+    5,
+    6
+   ],
+   "weekday_min": 60,
+   "weekend_min": 240,
+   "long_day": 5,
+   "notes": "",
+   "back_to_back": true,
+   "workout": "fartlek",
+   "adjust": []
+  },
+  "baseline": {
+   "miles": 24.863267034292278,
+   "gain_ft": 5895.669291315002,
+   "loss_ft": 5890.748031472503,
+   "hours": 3.3319444444444444
+  },
+  "pace": {
+   "min_per_effort_mi": 5.548723562072625,
+   "learned": true,
+   "days": 30
+  },
+  "demand": {
+   "distance_mi": 31.0,
+   "gain_ft": 8000.0,
+   "loss_ft": 8000.0,
+   "effort_mi": 46.151515151515156,
+   "race_type": "mountain",
+   "longest_climb_ft": null,
+   "longest_descent_ft": null,
+   "high_point_ft": null,
+   "time": {
+    "low_h": 3.719832471283972,
+    "mid_h": 4.376273495628203,
+    "high_h": 4.813900845191023,
+    "pace_learned": true
+   },
+   "dims": {
+    "big_day": 46.151515151515156,
+    "time_on_feet": 4.376273495628203,
+    "climbing_volume": 8000.0,
+    "descent_durability": null,
+    "descent_volume": 8000.0,
+    "altitude": null
+   }
+  },
+  "peak": {
+   "miles": 49.6,
+   "gain_ft": 11520.0,
+   "loss_ft": 11520.0
+  },
+  "weeks": [
+   {
+    "index": 0,
+    "start": "2026-10-12",
+    "focus": "build",
+    "miles": 24.863267034292278,
+    "gain_ft": 5895.669291315002,
+    "loss_ft": 5890.748031472503,
+    "hours": 3.331944444444445,
+    "below_aet_hours": 2.665555555555556,
+    "long": {
+     "day": "2026-10-17",
+     "miles": 8.95077613234522,
+     "gain_ft": 2358.2677165260006,
+     "loss_ft": 2356.299212589001,
+     "minutes": 74.44829084173541,
+     "effort_mi": 13.417192262129312,
+     "longest_descent_ft": null,
+     "second": null
+    },
+    "limited_by": [],
+    "notes": [],
+    "workout": "fartlek",
+    "hill_session": "power_hike",
+    "night": false
+   },
+   {
+    "index": 1,
+    "start": "2026-10-19",
+    "focus": "build",
+    "miles": 27.349593737721513,
+    "gain_ft": 6485.2362204465035,
+    "loss_ft": 6479.822834619754,
+    "hours": 3.6651388888888894,
+    "below_aet_hours": 2.932111111111112,
+    "long": {
+     "day": "2026-10-24",
+     "miles": 12.30731718197468,
+     "gain_ft": 3242.6181102232517,
+     "loss_ft": 3239.911417309877,
+     "minutes": 102.36639990738622,
+     "effort_mi": 18.44863936042781,
+     "longest_descent_ft": null,
+     "second": null
+    },
+    "limited_by": [],
+    "notes": [],
+    "workout": "fartlek",
+    "hill_session": "downhill",
+    "night": false
+   },
+   {
+    "index": 2,
+    "start": "2026-10-26",
+    "focus": "recovery",
+    "miles": 19.14471561640506,
+    "gain_ft": 4539.665354312551,
+    "loss_ft": 4535.875984233827,
+    "hours": 2.5655972222222223,
+    "below_aet_hours": 2.052477777777778,
+    "long": {
+     "day": "2026-10-31",
+     "miles": 8.615122027382276,
+     "gain_ft": 2269.8326771562756,
+     "loss_ft": 2267.9379921169134,
+     "minutes": 71.65647993517035,
+     "effort_mi": 12.914047552299465,
+     "longest_descent_ft": null,
+     "second": null
+    },
+    "limited_by": [],
+    "notes": [],
+    "workout": null,
+    "hill_session": "vert_climb",
+    "night": false
+   },
+   {
+    "index": 3,
+    "start": "2026-11-02",
+    "focus": "build",
+    "miles": 30.084553111493666,
+    "gain_ft": 7133.759842491153,
+    "loss_ft": 7127.805118081729,
+    "hours": 4.031652777777778,
+    "below_aet_hours": 3.225322222222223,
+    "long": {
+     "day": "2026-11-07",
+     "miles": 13.538048900172148,
+     "gain_ft": 3566.879921245577,
+     "loss_ft": 3563.902559040865,
+     "minutes": 112.60303989812485,
+     "effort_mi": 20.29350329647059,
+     "longest_descent_ft": null,
+     "second": null
+    },
+    "limited_by": [],
+    "notes": [],
+    "workout": "fartlek",
+    "hill_session": "vert_climb",
+    "night": false
+   },
+   {
+    "index": 4,
+    "start": "2026-11-09",
+    "focus": "build",
+    "miles": 33.09300842264303,
+    "gain_ft": 7847.13582674027,
+    "loss_ft": 7840.585629889903,
+    "hours": 4.4348180555555565,
+    "below_aet_hours": 3.5478544444444453,
+    "long": {
+     "day": "2026-11-14",
+     "miles": 14.891853790189364,
+     "gain_ft": 3923.567913370135,
+     "loss_ft": 3920.2928149449517,
+     "minutes": 123.86334388793733,
+     "effort_mi": 22.32285362611765,
+     "longest_descent_ft": null,
+     "second": null
+    },
+    "limited_by": [],
+    "notes": [],
+    "workout": "fartlek",
+    "hill_session": "power_hike",
+    "night": false
+   },
+   {
+    "index": 5,
+    "start": "2026-11-16",
+    "focus": "build",
+    "miles": 36.402309264907345,
+    "gain_ft": 8631.849409414299,
+    "loss_ft": 8624.644192878895,
+    "hours": 4.878299861111113,
+    "below_aet_hours": 3.9026398888888907,
+    "long": {
+     "day": "2026-11-21",
+     "miles": 16.473499562224795,
+     "gain_ft": 4356.115608868743,
+     "loss_ft": 4352.479452267016,
+     "minutes": 137.1850794851839,
+     "effort_mi": 24.723718518415595,
+     "longest_descent_ft": null,
+     "second": null
+    },
+    "limited_by": [],
+    "notes": [
+     "Tuesday is held to your 60 min limit"
+    ],
+    "workout": "fartlek",
+    "hill_session": "downhill",
+    "night": false
+   },
+   {
+    "index": 6,
+    "start": "2026-11-23",
+    "focus": "recovery",
+    "miles": 25.48161648543514,
+    "gain_ft": 6042.294586590009,
+    "loss_ft": 6037.250935015227,
+    "hours": 3.414809902777779,
+    "below_aet_hours": 2.7318479222222236,
+    "long": {
+     "day": "2026-11-28",
+     "miles": 11.466727418445814,
+     "gain_ft": 3021.1472932950046,
+     "loss_ft": 3018.6254675076134,
+     "minutes": 95.37477479371177,
+     "effort_mi": 17.188597292110593,
+     "longest_descent_ft": null,
+     "second": null
+    },
+    "limited_by": [],
+    "notes": [],
+    "workout": null,
+    "hill_session": "vert_climb",
+    "night": false
+   },
+   {
+    "index": 7,
+    "start": "2026-11-30",
+    "focus": "build",
+    "miles": 40.04254019139808,
+    "gain_ft": 9495.03435035573,
+    "loss_ft": 9487.108612166787,
+    "hours": 5.366129847222226,
+    "below_aet_hours": 4.292903877777781,
+    "long": {
+     "day": "2026-12-05",
+     "miles": 18.479341093148264,
+     "gain_ft": 4947.557142476761,
+     "loss_ft": 4943.427295112424,
+     "minutes": 154.5303668714194,
+     "effort_mi": 27.84971446905122,
+     "longest_descent_ft": null,
+     "second": null
+    },
+    "limited_by": [],
+    "notes": [
+     "Tuesday is held to your 60 min limit"
+    ],
+    "workout": "fartlek",
+    "hill_session": "vert_climb",
+    "night": false
+   },
+   {
+    "index": 8,
+    "start": "2026-12-07",
+    "focus": "build",
+    "miles": 39.64211478948411,
+    "gain_ft": 9400.084006852176,
+    "loss_ft": 9392.23752604512,
+    "hours": 5.3124685487500045,
+    "below_aet_hours": 4.249974839000004,
+    "long": {
+     "day": "2026-12-12",
+     "miles": 18.617190099447676,
+     "gain_ft": 5038.328546501024,
+     "loss_ft": 5034.122930018135,
+     "minutes": 156.24916469665064,
+     "effort_mi": 28.159479013275373,
+     "longest_descent_ft": null,
+     "second": null
+    },
+    "limited_by": [
+     "cardio",
+     "climb",
+     "descent",
+     "distance"
+    ],
+    "notes": [
+     "Cut to 90% to stay inside the cardio, climb, descent and distance load limit",
+     "Tuesday is held to your 60 min limit"
+    ],
+    "workout": "fartlek",
+    "hill_session": "power_hike",
+    "night": false
+   },
+   {
+    "index": 9,
+    "start": "2026-12-14",
+    "focus": "build",
+    "miles": 43.606326268432525,
+    "gain_ft": 10340.092407537395,
+    "loss_ft": 10331.461278649635,
+    "hours": 5.843715403625006,
+    "below_aet_hours": 4.674972322900005,
+    "long": {
+     "day": "2026-12-19",
+     "miles": 20.443059951922347,
+     "gain_ft": 5526.5784038790125,
+     "loss_ft": 5521.965233258079,
+     "minutes": 171.51140322254403,
+     "effort_mi": 30.910064504723508,
+     "longest_descent_ft": null,
+     "second": null
+    },
+    "limited_by": [],
+    "notes": [
+     "Tuesday is held to your 60 min limit"
+    ],
+    "workout": "fartlek",
+    "hill_session": "muscular_endurance",
+    "night": false
+   },
+   {
+    "index": 10,
+    "start": "2026-12-21",
+    "focus": "recovery",
+    "miles": 30.524428387902766,
+    "gain_ft": 7238.064685276176,
+    "loss_ft": 7232.0228950547435,
+    "hours": 4.0906007825375035,
+    "below_aet_hours": 3.272480626030003,
+    "long": {
+     "day": "2026-12-26",
+     "miles": 13.735992774556244,
+     "gain_ft": 3619.032342638088,
+     "loss_ft": 3616.0114475273717,
+     "minutes": 114.24944272538738,
+     "effort_mi": 20.59022069621929,
+     "longest_descent_ft": null,
+     "second": null
+    },
+    "limited_by": [],
+    "notes": [],
+    "workout": null,
+    "hill_session": "vert_climb",
+    "night": false
+   },
+   {
+    "index": 11,
+    "start": "2026-12-28",
+    "focus": "build",
+    "miles": 47.96695889527578,
+    "gain_ft": 11374.101648291136,
+    "loss_ft": 11364.6074065146,
+    "hours": 6.428086943987507,
+    "below_aet_hours": 5.142469555190006,
+    "long": {
+     "day": "2027-01-02",
+     "miles": 23.221411850784598,
+     "gain_ft": 6318.123432914644,
+     "loss_ft": 6312.849540232744,
+     "minutes": 195.2460139452392,
+     "effort_mi": 35.187554716153244,
+     "longest_descent_ft": null,
+     "second": null
+    },
+    "limited_by": [],
+    "notes": [
+     "Tuesday and Thursday are held to your 60 min limit"
+    ],
+    "workout": "fartlek",
+    "hill_session": "vert_climb",
+    "night": false
+   },
+   {
+    "index": 12,
+    "start": "2027-01-04",
+    "focus": "peak",
+    "miles": 49.6,
+    "gain_ft": 11520.000000000002,
+    "loss_ft": 11520.000000000002,
+    "hours": 6.60466247024887,
+    "below_aet_hours": 5.283729976199097,
+    "long": {
+     "day": "2027-01-09",
+     "miles": 24.319462912831685,
+     "gain_ft": 6469.406285647881,
+     "loss_ft": 6469.406285647881,
+     "minutes": 202.92861909690163,
+     "effort_mi": 36.57212633261934,
+     "longest_descent_ft": null,
+     "second": null
+    },
+    "limited_by": [],
+    "notes": [
+     "Tuesday and Thursday are held to your 60 min limit"
+    ],
+    "workout": "fartlek",
+    "hill_session": "muscular_endurance",
+    "night": false
+   },
+   {
+    "index": 13,
+    "start": "2027-01-11",
+    "focus": "peak",
+    "miles": 49.6,
+    "gain_ft": 11520.000000000002,
+    "loss_ft": 11520.000000000002,
+    "hours": 6.60466247024887,
+    "below_aet_hours": 5.283729976199097,
+    "long": {
+     "day": "2027-01-16",
+     "miles": 24.319462912831685,
+     "gain_ft": 6469.406285647881,
+     "loss_ft": 6469.406285647881,
+     "minutes": 202.92861909690163,
+     "effort_mi": 36.57212633261934,
+     "longest_descent_ft": null,
+     "second": null
+    },
+    "limited_by": [],
+    "notes": [
+     "Tuesday and Thursday are held to your 60 min limit"
+    ],
+    "workout": "fartlek",
+    "hill_session": "downhill",
+    "night": false
+   },
+   {
+    "index": 14,
+    "start": "2027-01-18",
+    "focus": "peak",
+    "miles": 49.6,
+    "gain_ft": 11520.000000000002,
+    "loss_ft": 11520.000000000002,
+    "hours": 6.60466247024887,
+    "below_aet_hours": 5.283729976199097,
+    "long": {
+     "day": "2027-01-23",
+     "miles": 24.319462912831685,
+     "gain_ft": 6469.406285647881,
+     "loss_ft": 6469.406285647881,
+     "minutes": 202.92861909690163,
+     "effort_mi": 36.57212633261934,
+     "longest_descent_ft": null,
+     "second": null
+    },
+    "limited_by": [],
+    "notes": [
+     "Tuesday and Thursday are held to your 60 min limit"
+    ],
+    "workout": "fartlek",
+    "hill_session": "muscular_endurance",
+    "night": false
+   },
+   {
+    "index": 15,
+    "start": "2027-01-25",
+    "focus": "taper",
+    "miles": 34.72,
+    "gain_ft": 8064.000000000002,
+    "loss_ft": 8064.000000000002,
+    "hours": 4.62326372917421,
+    "below_aet_hours": 3.6986109833393677,
+    "long": {
+     "day": "2027-01-30",
+     "miles": 15.624,
+     "gain_ft": 4032.000000000001,
+     "loss_ft": 4032.000000000001,
+     "minutes": 129.0653277714682,
+     "effort_mi": 23.26036363636364,
+     "longest_descent_ft": null,
+     "second": null
+    },
+    "limited_by": [],
+    "notes": [],
+    "workout": "fartlek",
+    "hill_session": "vert_climb",
+    "night": false
+   },
+   {
+    "index": 16,
+    "start": "2027-02-01",
+    "focus": "race",
+    "miles": 7.50984629773685,
+    "gain_ft": 1744.2223659259782,
+    "loss_ft": 1744.2223659259782,
+    "hours": 0.9999999999999998,
+    "below_aet_hours": 0.7999999999999998,
+    "long": null,
+    "limited_by": [],
+    "notes": [
+     "Tuesday is held to your 60 min limit",
+     "The week doesn't fit in your available time, so it comes in under target"
+    ],
+    "workout": null,
+    "hill_session": "vert_climb",
+    "night": false
+   }
+  ],
+  "projected": {
+   "capacity": {
+    "big_day": 36.57212633261934,
+    "time_on_feet": 3.382143651615027,
+    "climbing_volume": 11483.525412072786,
+    "descent_durability": 0.0,
+    "descent_volume": 9820.796488700322,
+    "altitude": 0.0
+   },
+   "dims": [
+    {
+     "key": "big_day",
+     "name": "Big-day size",
+     "demand_label": "Effort miles",
+     "capacity_label": "Largest single day, last 8 weeks",
+     "demand": 46.151515151515156,
+     "capacity": 36.57212633261934,
+     "unit": "effort mi",
+     "rule": 0.7,
+     "ratio": 0.7924360925649626,
+     "status": "ready",
+     "status_text": "Ready"
+    },
+    {
+     "key": "time_on_feet",
+     "name": "Time on feet",
+     "demand_label": "Estimated time",
+     "capacity_label": "Longest single day, last 8 weeks",
+     "demand": 4.376273495628203,
+     "capacity": 3.382143651615027,
+     "unit": "h",
+     "rule": 0.6,
+     "ratio": 0.7728364452070263,
+     "status": "ready",
+     "status_text": "Ready"
+    },
+    {
+     "key": "climbing_volume",
+     "name": "Climbing volume",
+     "demand_label": "Total gain",
+     "capacity_label": "Average weekly gain, last 4 weeks",
+     "demand": 8000.0,
+     "capacity": 11483.525412072786,
+     "unit": "ft",
+     "rule": 1.25,
+     "ratio": 1.4354406765090983,
+     "status": "ready",
+     "status_text": "Ready"
+    },
+    {
+     "key": "descent_durability",
+     "name": "Descent durability",
+     "demand_label": "Longest continuous descent",
+     "capacity_label": "Longest continuous descent, last 8 weeks",
+     "demand": null,
+     "capacity": 0.0,
+     "unit": "ft",
+     "rule": 0.75,
+     "ratio": null,
+     "status": "unknown",
+     "status_text": "Not given"
+    },
+    {
+     "key": "descent_volume",
+     "name": "Descent volume",
+     "demand_label": "Total loss",
+     "capacity_label": "Descent normal times 7",
+     "demand": 8000.0,
+     "capacity": 9820.796488700322,
+     "unit": "ft",
+     "rule": 1.25,
+     "ratio": 1.2275995610875403,
+     "status": "close",
+     "status_text": "Close"
+    },
+    {
+     "key": "altitude",
+     "name": "Altitude",
+     "demand_label": "High point",
+     "capacity_label": "Hours above 8,000 ft, last 4 weeks",
+     "demand": null,
+     "capacity": 0.0,
+     "unit": null,
+     "rule": null,
+     "ratio": null,
+     "status": "context",
+     "status_text": "Context"
+    }
+   ],
+   "limiter": "descent_volume",
+   "verdict": "close"
+  },
+  "reachable": true,
+  "back_to_back": false,
+  "race_type": "mountain",
+  "goal": "race",
+  "target": null,
+  "builder": "engine",
+  "approach": null,
+  "build_cost": null,
+  "held_weeks": null,
+  "options": {
+   "smaller": null,
+   "later": null
+  },
+  "now": {
+   "dims": [
+    {
+     "key": "big_day",
+     "name": "Big-day size",
+     "demand_label": "Effort miles",
+     "capacity_label": "Largest single day, last 8 weeks",
+     "demand": 46.151515151515156,
+     "capacity": 7.205861471750502,
+     "unit": "effort mi",
+     "rule": 0.7,
+     "ratio": 0.15613488415480403,
+     "status": "gap",
+     "status_text": "Gap"
+    },
+    {
+     "key": "time_on_feet",
+     "name": "Time on feet",
+     "demand_label": "Estimated time",
+     "capacity_label": "Longest single day, last 8 weeks",
+     "demand": 4.376273495628203,
+     "capacity": 0.6663888888888889,
+     "unit": "h",
+     "rule": 0.6,
+     "ratio": 0.1522731359350818,
+     "status": "gap",
+     "status_text": "Gap"
+    },
+    {
+     "key": "climbing_volume",
+     "name": "Climbing volume",
+     "demand_label": "Total gain",
+     "capacity_label": "Average weekly gain, last 4 weeks",
+     "demand": 8000.0,
+     "capacity": 5600.8858267492515,
+     "unit": "ft",
+     "rule": 1.25,
+     "ratio": 0.7001107283436564,
+     "status": "gap",
+     "status_text": "Gap"
+    },
+    {
+     "key": "descent_durability",
+     "name": "Descent durability",
+     "demand_label": "Longest continuous descent",
+     "capacity_label": "Longest continuous descent, last 8 weeks",
+     "demand": null,
+     "capacity": 1178.1496062945005,
+     "unit": "ft",
+     "rule": 0.75,
+     "ratio": null,
+     "status": "unknown",
+     "status_text": "Not given"
+    },
+    {
+     "key": "descent_volume",
+     "name": "Descent volume",
+     "demand_label": "Total loss",
+     "capacity_label": "Descent normal times 7",
+     "demand": 8000.0,
+     "capacity": 5697.370306976384,
+     "unit": "ft",
+     "rule": 1.25,
+     "ratio": 0.712171288372048,
+     "status": "gap",
+     "status_text": "Gap"
+    },
+    {
+     "key": "altitude",
+     "name": "Altitude",
+     "demand_label": "High point",
+     "capacity_label": "Hours above 8,000 ft, last 4 weeks",
+     "demand": null,
+     "capacity": 0.0,
+     "unit": null,
+     "rule": null,
+     "ratio": null,
+     "status": "context",
+     "status_text": "Context"
+    }
+   ],
+   "limiter": "big_day",
+   "verdict": "gap"
+  },
+  "changes": [],
+  "reason_text": "Your training days or time limits changed",
+  "building": false
+ },
+ "draft": null,
+ "sessions": [
+  {
+   "day": "2026-10-14",
+   "kind": "rest",
+   "miles": 0.0,
+   "gain_ft": 0.0,
+   "loss_ft": 0.0,
+   "minutes": 0.0,
+   "capped": false,
+   "focus": "build",
+   "race": "mountain",
+   "title": "Rest",
+   "how": "Rest, or 30 to 45 min of easy cross-training (bike, swim or a walk) in zone 1, under 130 bpm. 10 min of mobility: hips, ankles and calves.",
+   "detail": "Rest, or 30 to 45 min of easy cross-training (bike, swim or a walk) in zone 1, under 130 bpm. 10 min of mobility: hips, ankles and calves.",
+   "steps": [
+    "Rest, or 30 to 45 min of easy cross-training (bike, swim or a walk) in zone 1, under 130 bpm.",
+    "10 min of mobility: hips, ankles and calves."
+   ]
+  },
+  {
+   "day": "2026-10-15",
+   "kind": "hills",
+   "miles": 5.014092185248943,
+   "gain_ft": 1601.2928939374076,
+   "loss_ft": 1599.9562554616673,
+   "minutes": 44.64971222791085,
+   "capped": false,
+   "type": "power_hike",
+   "focus": "build",
+   "race": "mountain",
+   "title": "Power-hike intervals",
+   "how": "Warm up 15 min easy on gentle terrain, under 150 bpm. 5 \u00d7 6 min power-hiking a steep grade (15% or more), hands on knees or poles, at 150 to 160 bpm: short quick steps, upright, arms working. Walk or jog down between. Run the rest of the day easy in zone 2.",
+   "detail": "5.0 mi, 1,600 ft up, 1,600 ft down, about 45 min. Warm up 15 min easy on gentle terrain, under 150 bpm. 5 \u00d7 6 min power-hiking a steep grade (15% or more), hands on knees or poles, at 150 to 160 bpm: short quick steps, upright, arms working. Walk or jog down between. Run the rest of the day easy in zone 2.",
+   "steps": [
+    "Warm up 15 min easy on gentle terrain, under 150 bpm.",
+    "5 \u00d7 6 min power-hiking a steep grade (15% or more), hands on knees or poles, at 150 to 160 bpm: short quick steps, upright, arms working.",
+    "Walk or jog down between. Run the rest of the day easy in zone 2."
+   ]
+  },
+  {
+   "day": "2026-10-16",
+   "kind": "rest",
+   "miles": 0.0,
+   "gain_ft": 0.0,
+   "loss_ft": 0.0,
+   "minutes": 0.0,
+   "capped": false,
+   "focus": "build",
+   "race": "mountain",
+   "title": "Rest",
+   "how": "Rest, or 30 to 45 min of easy cross-training (bike, swim or a walk) in zone 1, under 130 bpm. 10 min of mobility: hips, ankles and calves.",
+   "detail": "Rest, or 30 to 45 min of easy cross-training (bike, swim or a walk) in zone 1, under 130 bpm. 10 min of mobility: hips, ankles and calves.",
+   "steps": [
+    "Rest, or 30 to 45 min of easy cross-training (bike, swim or a walk) in zone 1, under 130 bpm.",
+    "10 min of mobility: hips, ankles and calves."
+   ]
+  },
+  {
+   "day": "2026-10-17",
+   "kind": "long",
+   "miles": 8.95077613234522,
+   "gain_ft": 2358.2677165260006,
+   "loss_ft": 2356.299212589001,
+   "minutes": 74.44829084173541,
+   "capped": false,
+   "type": "long",
+   "focus": "build",
+   "race": "mountain",
+   "title": "Long day",
+   "how": "Mostly zone 2, 140 to 150 bpm; power-hike the steep climbs so you stay under 150 bpm. Eat and drink from the first hour, the way you will on race day.",
+   "detail": "9.0 mi, 2,360 ft up, 2,360 ft down, about 75 min. Mostly zone 2, 140 to 150 bpm; power-hike the steep climbs so you stay under 150 bpm. Eat and drink from the first hour, the way you will on race day.",
+   "steps": [
+    "Mostly zone 2, 140 to 150 bpm; power-hike the steep climbs so you stay under 150 bpm.",
+    "Eat and drink from the first hour, the way you will on race day."
+   ]
+  },
+  {
+   "day": "2026-10-18",
+   "kind": "fartlek",
+   "miles": 5.014092185248943,
+   "gain_ft": 560.4525128780928,
+   "loss_ft": 559.9846894115835,
+   "minutes": 33.711576722720565,
+   "capped": false,
+   "type": "fartlek",
+   "focus": "build",
+   "race": "mountain",
+   "title": "Fartlek",
+   "how": "Warm up 15 min easy, under 150 bpm. 5 rounds of 2 min at zone 3, 160 to 167 bpm, 1 min at 172 bpm and up, over your AnT and 2 min easy, on rolling trail: let the hills set where the hard bits fall. Cool down 10 min easy.",
+   "detail": "5.0 mi, 560 ft up, 560 ft down, about 35 min. Warm up 15 min easy, under 150 bpm. 5 rounds of 2 min at zone 3, 160 to 167 bpm, 1 min at 172 bpm and up, over your AnT and 2 min easy, on rolling trail: let the hills set where the hard bits fall. Cool down 10 min easy.",
+   "steps": [
+    "Warm up 15 min easy, under 150 bpm.",
+    "5 rounds of 2 min at zone 3, 160 to 167 bpm, 1 min at 172 bpm and up, over your AnT and 2 min easy, on rolling trail: let the hills set where the hard bits fall.",
+    "Cool down 10 min easy."
+   ]
+  },
+  {
+   "day": "2026-10-19",
+   "kind": "rest",
+   "miles": 0.0,
+   "gain_ft": 0.0,
+   "loss_ft": 0.0,
+   "minutes": 0.0,
+   "capped": false,
+   "focus": "build",
+   "race": "mountain",
+   "title": "Rest",
+   "how": "Rest, or 30 to 45 min of easy cross-training (bike, swim or a walk) in zone 1, under 130 bpm. 10 min of mobility: hips, ankles and calves.",
+   "detail": "Rest, or 30 to 45 min of easy cross-training (bike, swim or a walk) in zone 1, under 130 bpm. 10 min of mobility: hips, ankles and calves.",
+   "steps": [
+    "Rest, or 30 to 45 min of easy cross-training (bike, swim or a walk) in zone 1, under 130 bpm.",
+    "10 min of mobility: hips, ankles and calves."
+   ]
+  },
+  {
+   "day": "2026-10-20",
+   "kind": "hills",
+   "miles": 5.014092185248945,
+   "gain_ft": 1752.7665460666226,
+   "loss_ft": 1751.3034688161497,
+   "minutes": 46.24154067980966,
+   "capped": false,
+   "type": "downhill",
+   "focus": "build",
+   "race": "mountain",
+   "title": "Downhill durability",
+   "how": "Climb to the top of a smooth, moderately steep trail in zone 2, 140 to 150 bpm. 5 \u00d7 3 to 5 min downhill: quick light steps under your hips, eyes ahead, controlled rather than fast; hike or jog back up in zone 2, 140 to 150 bpm. This builds the quads for long descents. Expect them sore for a day or two at first.",
+   "detail": "5.0 mi, 1,750 ft up, 1,750 ft down, about 45 min. Climb to the top of a smooth, moderately steep trail in zone 2, 140 to 150 bpm. 5 \u00d7 3 to 5 min downhill: quick light steps under your hips, eyes ahead, controlled rather than fast; hike or jog back up in zone 2, 140 to 150 bpm. This builds the quads for long descents. Expect them sore for a day or two at first.",
+   "steps": [
+    "Climb to the top of a smooth, moderately steep trail in zone 2, 140 to 150 bpm.",
+    "5 \u00d7 3 to 5 min downhill: quick light steps under your hips, eyes ahead, controlled rather than fast; hike or jog back up in zone 2, 140 to 150 bpm.",
+    "This builds the quads for long descents. Expect them sore for a day or two at first."
+   ]
+  }
+ ],
+ "review": {
+  "start": "2026-10-05",
+  "end": "2026-10-11",
+  "actual": {
+   "activities": 5,
+   "miles": 24.863267034292278,
+   "gain_ft": 5895.669291315002,
+   "loss_ft": 5890.748031472503,
+   "hours": 3.3319444444444444,
+   "below_aet_pct": 1.0,
+   "longest_day_effort_mi": 7.205861471750502
+  },
+  "target": null,
+  "share": null,
+  "flags": [],
+  "vs_normal_at_end": {
+   "cardio": -0.005200503353383179,
+   "climb": -0.00520050335338329,
+   "descent": -0.005200503353383068
+  },
+  "max_pain": null,
+  "replan": [],
+  "replan_text": []
+ },
+ "fitness_only": "This verdict covers fitness only. Weather, snow, route-finding and technical difficulty are outside the model.",
+ "thresholds": {
+  "resting": 45.0,
+  "aet": 150.0,
+  "ant": 172.0,
+  "max": 190.0,
+  "source": "manual",
+  "aerobic_gap": 0.12790697674418605
+ },
+ "this_week": {
+  "start": "2026-10-12",
+  "dated": true,
+  "target": {
+   "miles": 24.863267034292278,
+   "gain_ft": 5895.669291315002,
+   "loss_ft": 5890.748031472503,
+   "focus": "build"
+  },
+  "done": {
+   "miles": 4.972653406858456,
+   "gain_ft": 1179.1338582630003,
+   "loss_ft": 1178.1496062945005,
+   "below_aet_pct": 1.0
+  },
+  "ahead": {
+   "miles": 18.97896050284311,
+   "gain_ft": 4520.013123341501,
+   "loss_ft": 4516.240157462252
+  }
+ },
+ "actuals": {
+  "2026-10-12": {
+   "miles": 4.972653406858456,
+   "gain_ft": 1179.1338582630003,
+   "loss_ft": 1178.1496062945005,
+   "below_aet_pct": 1.0
+  }
+ }
+}

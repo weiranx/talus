@@ -50,14 +50,16 @@ extension UTType {
     static let gpx = UTType(filenameExtension: "gpx") ?? .xml
 }
 
-/// Add or edit the objective: a race or mountain day with a date. A GPX route fills the numbers
-/// in; the track itself is not kept.
+/// Add or edit the objective: a race or mountain day with a date (a GPX route fills the numbers
+/// in; the track itself is not kept), or a goal with no race day, set by weekly targets or a
+/// year's totals.
 struct ObjectiveFields: View {
     let current: Objective?
     let startNew: Bool
     let submit: String
     let onSaved: () async -> Void
     @EnvironmentObject private var api: API
+    @State private var goal = "race"
     @State private var name = ""
     @State private var day = Date().addingTimeInterval(86400 * 60)
     @State private var distance = ""
@@ -78,6 +80,7 @@ struct ObjectiveFields: View {
         self.submit = submit
         self.onSaved = onSaved
         if let c = current, !startNew {
+            _goal = State(initialValue: c.goal ?? "race")
             _name = State(initialValue: c.name)
             _day = State(initialValue: Fmt.date(c.day) ?? Date())
             _distance = State(initialValue: Num.text(c.distanceMi, digits: 1))
@@ -91,39 +94,81 @@ struct ObjectiveFields: View {
     }
 
     private var editing: Bool { current != nil && !startNew }
+    private var event: Bool { PlanText.isEvent(goal) }
+    private var year: Bool { goal == "target" }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Button { picking = true } label: { Label("Fill in from a GPX of the route", systemImage: "doc.badge.plus") }
-                .buttonStyle(.bordered)
-                .fileImporter(isPresented: $picking, allowedContentTypes: [.gpx, .xml]) { result in
-                    if case .success(let url) = result { Task { await readRoute(url) } }
-                }
-            LabeledField(label: "Name", text: $name, placeholder: "Fall 50k")
-            DatePicker("Date", selection: $day, in: Date().addingTimeInterval(86400)..., displayedComponents: .date)
+            Picker("Training for", selection: Binding { goal } set: { pick($0) }) {
+                ForEach(PlanText.goals, id: \.key) { Text($0.label).tag($0.key) }
+            }
+            .font(.subheadline.weight(.semibold))
+            if event {
+                Button { picking = true } label: { Label("Fill in from a GPX of the route", systemImage: "doc.badge.plus") }
+                    .buttonStyle(.bordered)
+                    .fileImporter(isPresented: $picking, allowedContentTypes: [.gpx, .xml]) { result in
+                        if case .success(let url) = result { Task { await readRoute(url) } }
+                    }
+            } else {
+                Text(year ? "Your total for the year: miles, feet of climbing, or both. The plan spreads what's left over the weeks left."
+                     : goal == "rolling" ? "About where you want a week to sit. The plan looks 8 weeks ahead and redraws itself each Monday."
+                     : "The weekly miles and vert to build to (or hold). The plan gets there from your last four weeks inside the load limits.")
+                    .font(.subheadline).foregroundStyle(.secondary)
+            }
+            LabeledField(label: "Name", text: $name, placeholder: event ? "Fall 50k" : PlanText.goalText(goal))
+            DatePicker(event ? "Date" : year ? "By" : "Runs through", selection: $day,
+                       in: Date().addingTimeInterval(86400)..., displayedComponents: .date)
                 .font(.subheadline.weight(.semibold))
-            LabeledField(label: "Distance, mi", text: $distance, placeholder: "31", keyboard: .decimalPad)
+            LabeledField(label: event ? "Distance, mi" : year ? "Miles this year" : "Miles a week", text: $distance,
+                         placeholder: event ? "31" : year ? "Optional" : "35", keyboard: .decimalPad)
             HStack(alignment: .top) {
-                LabeledField(label: "Gain, ft", text: $gain, placeholder: "8,000", keyboard: .numberPad)
-                LabeledField(label: "Descent, ft", text: $loss, placeholder: "Same as gain", keyboard: .numberPad)
-            }
-            DisclosureGroup("More detail (optional): longest descent and high point", isExpanded: $more) {
-                HStack(alignment: .top) {
-                    LabeledField(label: "Longest descent, ft", text: $longestDescent, placeholder: "Optional", keyboard: .numberPad)
-                    LabeledField(label: "High point, ft", text: $highPoint, placeholder: "Optional", keyboard: .numberPad)
+                LabeledField(label: event ? "Gain, ft" : year ? "Feet up this year" : "Feet up a week", text: $gain,
+                             placeholder: event ? "8,000" : year ? "1,000,000" : "6,000", keyboard: .numberPad)
+                if !year {
+                    LabeledField(label: event ? "Descent, ft" : "Feet down a week", text: $loss, placeholder: "Same as gain", keyboard: .numberPad)
                 }
-                .padding(.top, 6)
             }
-            .font(.subheadline)
+            if event {
+                DisclosureGroup("More detail (optional): longest descent and high point", isExpanded: $more) {
+                    HStack(alignment: .top) {
+                        LabeledField(label: "Longest descent, ft", text: $longestDescent, placeholder: "Optional", keyboard: .numberPad)
+                        LabeledField(label: "High point, ft", text: $highPoint, placeholder: "Optional", keyboard: .numberPad)
+                    }
+                    .padding(.top, 6)
+                }
+                .font(.subheadline)
+            }
             Button { Task { await save() } } label: { BusyLabel(title: busy ? "Saving" : submit, busy: busy) }
                 .buttonStyle(.borderedProminent)
                 .disabled(!ready || busy)
-            if !ready { Text("Name, date and distance are needed.").font(.caption).foregroundStyle(.secondary) }
+            if !ready {
+                Text(event ? "Name, date and distance are needed." : year ? "A name, a date, and miles or feet are needed." : "A name, a date and weekly miles are needed.")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
             if let message { FormMessage(ok: message.ok, text: message.text) }
         }
     }
 
-    private var ready: Bool { !name.trimmingCharacters(in: .whitespaces).isEmpty && (Num.parse(distance) ?? 0) > 0 }
+    private var ready: Bool {
+        guard !name.trimmingCharacters(in: .whitespaces).isEmpty else { return false }
+        let d = Num.parse(distance) ?? 0
+        return year ? d > 0 || (Num.parse(gain) ?? 0) > 0 : d > 0
+    }
+
+    /// A block runs 12 weeks (an ongoing plan 8) from this Monday; a yearly target to Dec 31.
+    private func pick(_ g: String) {
+        goal = g
+        guard !PlanText.isEvent(g) else { return }
+        let cal = Calendar(identifier: .gregorian)
+        let today = cal.startOfDay(for: Date())
+        let monday = cal.date(byAdding: .day, value: -((cal.component(.weekday, from: today) + 5) % 7), to: today) ?? today
+        let end = g == "target"
+            ? cal.date(from: DateComponents(year: cal.component(.year, from: today), month: 12, day: 31)) ?? today
+            : cal.date(byAdding: .day, value: (g == "rolling" ? 8 : 12) * 7 - 1, to: monday) ?? today
+        day = max(end, today.addingTimeInterval(86400))
+        let trimmed = name.trimmingCharacters(in: .whitespaces)
+        if trimmed.isEmpty || PlanText.goals.contains(where: { $0.label == trimmed }) { name = PlanText.goalText(g) }
+    }
 
     private func readRoute(_ url: URL) async {
         let scoped = url.startAccessingSecurityScopedResource()
@@ -149,7 +194,7 @@ struct ObjectiveFields: View {
     private func save() async {
         struct Body: Encodable {
             let name: String, day: String, distanceMi: Double, gainFt: Double, lossFt: Double
-            let longestDescentFt: Double?, highPointFt: Double?, longestClimbFt: Double?, source: String, new: Bool
+            let longestDescentFt: Double?, highPointFt: Double?, longestClimbFt: Double?, source: String, goal: String, new: Bool
         }
         busy = true
         defer { busy = false }
@@ -158,8 +203,10 @@ struct ObjectiveFields: View {
         do {
             try await api.put("/api/plan/objective", Body(
                 name: name.trimmingCharacters(in: .whitespaces), day: PlanText.iso(day), distanceMi: Num.parse(distance) ?? 0,
-                gainFt: g, lossFt: Num.parse(loss) ?? g, longestDescentFt: Num.parse(longestDescent),
-                highPointFt: Num.parse(highPoint), longestClimbFt: Num.parse(longestClimb), source: source, new: !editing))
+                gainFt: g, lossFt: year ? g : Num.parse(loss) ?? g,
+                longestDescentFt: event ? Num.parse(longestDescent) : nil, highPointFt: event ? Num.parse(highPoint) : nil,
+                longestClimbFt: event ? Num.parse(longestClimb) : nil, source: event ? source : "manual", goal: goal,
+                new: !editing || goal != (current?.goal ?? "race")))
             await onSaved()
         } catch APIError.server(422, let detail) where detail.hasPrefix("The engine answered") {
             message = (false, "Check the date and numbers.")
@@ -185,7 +232,10 @@ struct ConstraintsFields: View {
         self.hasObjective = hasObjective
         self.submit = submit
         self.onSaved = onSaved
-        _c = State(initialValue: current)
+        var c = current
+        c.workout = c.workout ?? "none"
+        c.backToBack = c.backToBack ?? true
+        _c = State(initialValue: c)
         _weekday = State(initialValue: String(current.weekdayMin))
         _weekend = State(initialValue: String(current.weekendMin))
     }
@@ -217,7 +267,17 @@ struct ConstraintsFields: View {
                 ForEach(c.days, id: \.self) { Text(PlanText.dayNames[$0]).tag($0) }
             }
             .font(.subheadline.weight(.semibold))
+            Picker("Speed work, once a week", selection: Binding { c.workout ?? "none" } set: { c.workout = $0 }) {
+                ForEach(PlanText.workouts, id: \.key) { Text($0.label).tag($0.key) }
+            }
+            .font(.subheadline.weight(.semibold))
             LabeledField(label: "Notes, such as travel dates", text: $c.notes)
+            Toggle(isOn: Binding { c.backToBack ?? true } set: { c.backToBack = $0 }) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Back-to-back long days for long objectives").font(.subheadline)
+                    Text("About 7 h or more: two long days in a row instead of one huge one").font(.caption).foregroundStyle(.secondary)
+                }
+            }
             Button { Task { await save() } } label: {
                 BusyLabel(title: busy ? (hasObjective ? "Drafting your plan" : "Saving") : submit, busy: busy)
             }
@@ -276,6 +336,7 @@ struct CalendarCard: View {
 
     var body: some View {
         let byDay = Dictionary(grouping: data.items, by: \.day)
+        let ran = Dictionary(grouping: data.activities ?? [], by: \.day)
         let weekStarts = (0..<(all ? Self.weeks : 2)).map { PlanText.addDays(start, $0 * 7) }
         let progress = Dictionary(data.weeks.map { ($0.start, $0) }, uniquingKeysWith: { a, _ in a })
         let warned = Dictionary(data.warnings.map { ($0.week, $0) }, uniquingKeysWith: { a, _ in a })
@@ -312,7 +373,7 @@ struct CalendarCard: View {
                     }
                     ForEach(0..<7, id: \.self) { i in
                         let d = PlanText.addDays(ws, i)
-                        DayRow(day: d, today: data.date, items: byDay[d] ?? []) { run in
+                        DayRow(day: d, today: data.date, items: byDay[d] ?? [], ran: ran[d] ?? []) { run in
                             editing = run.map { RunDraft($0) } ?? RunDraft(day: d)
                         }
                     }
@@ -352,6 +413,7 @@ private struct DayRow: View {
     let day: String
     let today: String
     let items: [ScheduledRun]
+    let ran: [UnmatchedActivity]
     let open: (ScheduledRun?) -> Void
 
     var body: some View {
@@ -365,6 +427,10 @@ private struct DayRow: View {
             VStack(alignment: .leading, spacing: 4) {
                 ForEach(Array(items.enumerated()), id: \.offset) { _, it in
                     Button { open(it) } label: { RunChip(run: it) }.buttonStyle(.plain)
+                }
+                // Activities no scheduled run matched, so every day you trained shows.
+                ForEach(ran, id: \.id) { a in
+                    NavigationLink(value: a.id) { DoneChip(activity: a) }.buttonStyle(.plain)
                 }
             }
             Spacer(minLength: 0)
@@ -411,6 +477,23 @@ private struct RunChip: View {
         guard let text else { return nil }
         if let a = run.activity { return "\(text): \(Fmt.mi(a.distanceMi)) mi, \(Fmt.n0(a.gainFt)) ft" }
         return text
+    }
+}
+
+private struct DoneChip: View {
+    let activity: UnmatchedActivity
+
+    var body: some View {
+        HStack(spacing: 6) {
+            RoundedRectangle(cornerRadius: 1.5).fill(Tone.good.ink).frame(width: 3)
+            VStack(alignment: .leading, spacing: 1) {
+                Text(activity.name ?? "Activity").font(.caption.weight(.semibold)).lineLimit(1)
+                Text("\(Fmt.mi(activity.distanceMi)) mi · \(Fmt.n0(activity.gainFt)) ft").font(.caption2.monospacedDigit())
+                Text("Done").font(.caption2).foregroundStyle(Tone.good.ink)
+            }
+        }
+        .padding(.vertical, 3).padding(.trailing, 6)
+        .background(Color.secondary.opacity(0.16), in: RoundedRectangle(cornerRadius: 6))
     }
 }
 
@@ -469,6 +552,8 @@ struct RunDraft: Identifiable {
     var minutes = ""
     var zone: Int?
     var notes = ""
+    /// How to run the plan's session, shown while editing it.
+    var how: String?
 
     init(day: String) {
         self.day = Fmt.date(day) ?? Date()
@@ -485,6 +570,7 @@ struct RunDraft: Identifiable {
         minutes = r.estimatedMinutes ? "" : Num.text(r.minutes)
         zone = r.zone
         notes = r.notes
+        how = r.source == "plan" ? r.how : nil
     }
 }
 
@@ -502,7 +588,10 @@ private struct RunEditor: View {
         NavigationStack {
             Form {
                 if draft.fromPlan {
-                    Section { Text("Saving changes the plan's session into your own run.").font(.subheadline).foregroundStyle(.secondary) }
+                    Section {
+                        if let how = draft.how, !how.isEmpty { Text(how).font(.subheadline) }
+                        Text("Saving changes the plan's session into your own run.").font(.subheadline).foregroundStyle(.secondary)
+                    }
                 }
                 Section {
                     DatePicker("Date", selection: $draft.day, displayedComponents: .date)

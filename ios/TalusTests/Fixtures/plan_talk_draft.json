@@ -1,0 +1,214 @@
+{
+ "messages": [
+  {
+   "role": "coach",
+   "text": "Let's build your plan. Six quick questions, and I'll draft it from your last four weeks of training.",
+   "step": null,
+   "groups": [],
+   "actions": []
+  },
+  {
+   "role": "coach",
+   "text": "What are you training for? For a race or a mountain objective, tell me the name, the date, the distance and the vert, like \"Baldy 50k on Jan 2, 31 mi, 8,000 ft\", or upload the route's GPX. No race day? Pick a goal below.",
+   "step": "objective",
+   "groups": [
+    {
+     "key": "goal_kind",
+     "options": [
+      "Build base",
+      "Maintain fitness",
+      "Come back from a break",
+      "Get faster",
+      "Yearly target",
+      "Ongoing plan"
+     ],
+     "label": "No race day",
+     "value": null
+    }
+   ],
+   "actions": []
+  },
+  {
+   "role": "athlete",
+   "text": "Fall 50k on 2027-02-03, 31 mi, 8,000 ft"
+  },
+  {
+   "role": "coach",
+   "text": "Training for Fall 50k on Wednesday, Feb 3 2027, 31.0 mi, 8,000 ft up and 8,000 ft down.",
+   "step": null,
+   "groups": [],
+   "actions": []
+  },
+  {
+   "role": "coach",
+   "text": "What's the goal for the day?",
+   "step": "goal",
+   "groups": [
+    {
+     "key": "goal",
+     "options": [
+      "Finish strong",
+      "A time goal",
+      "Just get round"
+     ],
+     "value": null
+    }
+   ],
+   "actions": []
+  },
+  {
+   "role": "athlete",
+   "text": "Finish strong"
+  },
+  {
+   "role": "coach",
+   "text": "Which days can you train, and which one is your long day?",
+   "step": "days",
+   "groups": [
+    {
+     "key": "days",
+     "options": [
+      "Mon",
+      "Tue",
+      "Wed",
+      "Thu",
+      "Fri",
+      "Sat",
+      "Sun"
+     ],
+     "multi": true,
+     "value": [
+      "Tue",
+      "Wed",
+      "Thu",
+      "Sat",
+      "Sun"
+     ]
+    },
+    {
+     "key": "long_day",
+     "options": [
+      "Mon",
+      "Tue",
+      "Wed",
+      "Thu",
+      "Fri",
+      "Sat",
+      "Sun"
+     ],
+     "label": "Long day",
+     "value": "Sat"
+    }
+   ],
+   "actions": []
+  },
+  {
+   "role": "athlete",
+   "text": "Tue, Thu, Sat, Sun \u00b7 long day Sat"
+  },
+  {
+   "role": "coach",
+   "text": "How long can you go on a weekday, and on a weekend day?",
+   "step": "time",
+   "groups": [
+    {
+     "key": "weekday",
+     "options": [
+      "45 min",
+      "1 h",
+      "1 h 30",
+      "2 h"
+     ],
+     "label": "Weekdays",
+     "value": "1 h 30"
+    },
+    {
+     "key": "weekend",
+     "options": [
+      "2 h",
+      "3 h",
+      "4 h",
+      "6 h",
+      "8 h"
+     ],
+     "label": "Weekends",
+     "value": "6 h"
+    }
+   ],
+   "actions": []
+  },
+  {
+   "role": "athlete",
+   "text": "Weekdays: 1 h \u00b7 Weekends: 4 h"
+  },
+  {
+   "role": "coach",
+   "text": "What vert can you get to from home?",
+   "step": "terrain",
+   "groups": [
+    {
+     "key": "terrain",
+     "options": [
+      "Big climbs nearby",
+      "Rolling hills",
+      "Mostly flat or treadmill"
+     ],
+     "value": null
+    }
+   ],
+   "actions": []
+  },
+  {
+   "role": "athlete",
+   "text": "Rolling hills"
+  },
+  {
+   "role": "coach",
+   "text": "Anything hurting, and how has training felt lately?",
+   "step": "body",
+   "groups": [
+    {
+     "key": "body",
+     "options": [
+      "Nothing to note",
+      "A small niggle",
+      "An injury I'm managing"
+     ],
+     "label": "Body",
+     "value": null
+    },
+    {
+     "key": "feel",
+     "options": [
+      "Fresh",
+      "Normal",
+      "Tired lately"
+     ],
+     "label": "Lately",
+     "value": null
+    }
+   ],
+   "actions": []
+  },
+  {
+   "role": "athlete",
+   "text": "Body: Nothing to note \u00b7 Lately: Normal"
+  },
+  {
+   "role": "coach",
+   "text": "Here's your draft: 17 weeks to Fall 50k. You start from your last four weeks, about 24.9 mi and 5,896 ft up a week, and build to a peak of 49.6 mi with 11,520 ft up and 11,520 ft down. Your biggest long day is 24.5 mi with 6,450 ft up, on a Saturday. Accept it, or tell me what to change. For example: \"move my long day to Sunday\", \"I can't run Tuesdays\" or \"less vert in week 3\".",
+   "step": "draft",
+   "groups": [],
+   "actions": [
+    {
+     "id": "accept",
+     "label": "Accept plan"
+    }
+   ]
+  }
+ ],
+ "step": "draft",
+ "mode": "setup",
+ "building": false,
+ "reads_with_ai": false
+}

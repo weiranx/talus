@@ -18,7 +18,11 @@ struct TodayView: View {
                                 .font(.subheadline).foregroundStyle(.secondary)
                             WatchSyncBanner()
                             CoachCallCard(rules: t.call)
-                            CheckInCard(initial: t.checkin, onSaved: reload)
+                            if let p = t.planned, t.call.planned != true, p.kind != "rest" {
+                                ScheduledTodayCard(planned: p, call: t.call.call)
+                            }
+                            // Until it's done the check-in sits under the call; after, at the bottom.
+                            if t.checkin == nil { CheckInCard(initial: nil, onSaved: reload) }
                             ReadinessCard(readiness: t.readiness, score: t.score)
                             if let w = t.wellness { OvernightCard(w: w) }
                             ForEach(LedgerName.sorted(t.ledgers.keys), id: \.self) { name in
@@ -30,6 +34,7 @@ struct TodayView: View {
                             WeekCard(week: t.week)
                             IntensityCard(share: t.zones28D?.share ?? t.intensity28D.share, model: t.zoneModel,
                                           belowAet: t.intensity28D.share["z1"] ?? 0)
+                            if t.checkin != nil { CheckInCard(initial: t.checkin, onSaved: reload) }
                         }
                         .padding()
                     }
@@ -40,6 +45,7 @@ struct TodayView: View {
                 }
             }
             .background(Color(uiColor: .systemGroupedBackground))
+            .settingsButton()
         }
     }
 
@@ -470,19 +476,24 @@ struct TodayLedgerCard: View {
                 Spacer()
                 Pill(text: badge, tone: tone)
             }
+            // Tap a number to see how it is worked out.
             if let v = d.vsNormal {
                 HStack(alignment: .firstTextBaseline, spacing: 8) {
-                    Text(Fmt.signedPct(v)).font(.system(size: 30, weight: .semibold)).monospacedDigit().tracking(-0.5)
+                    Text(Explain.link(Fmt.signedPct(v), "ledger/\(name)/vs_normal"))
+                        .font(.system(size: 30, weight: .semibold)).monospacedDigit().tracking(-0.5)
+                        .accessibilityLabel(Fmt.capitalized(d.vsNormalText))
+                        .explainLinks()
                     Text("vs your normal").font(.subheadline).foregroundStyle(.secondary)
                 }
-                .accessibilityElement(children: .combine)
-                .accessibilityLabel(Fmt.capitalized(d.vsNormalText))
             } else {
-                Text(Fmt.capitalized(d.vsNormalText)).font(.title2.weight(.semibold))
+                Text(Explain.link(Fmt.capitalized(d.vsNormalText), "ledger/\(name)/vs_normal"))
+                    .font(.title2.weight(.semibold))
+                    .explainLinks()
             }
-            (Text("Last 7 days ") + Text(Ledger.value(name, d.fatigue)).monospacedDigit().foregroundStyle(.primary)
-                + Text(" a day. Your normal ") + Text(Ledger.value(name, d.fitness)).monospacedDigit().foregroundStyle(.primary) + Text("."))
+            (Text("Last 7 days ") + Text(Explain.link(Ledger.value(name, d.fatigue), "ledger/\(name)/fatigue")).monospacedDigit().foregroundStyle(.primary)
+                + Text(" a day. Your normal ") + Text(Explain.link(Ledger.value(name, d.fitness), "ledger/\(name)/fitness")).monospacedDigit().foregroundStyle(.primary) + Text("."))
                 .font(.subheadline).foregroundStyle(.secondary)
+                .explainLinks()
             Chart(d.spark, id: \.day) { p in
                 AreaMark(x: .value("Day", Fmt.date(p.day) ?? .now), yStart: .value("Base", lo), yEnd: .value("Normal", p.fitness))
                     .foregroundStyle(LinearGradient(colors: [color.opacity(0.22), color.opacity(0)], startPoint: .top, endPoint: .bottom))
@@ -500,6 +511,23 @@ struct TodayLedgerCard: View {
             .accessibilityLabel("\(Ledger.label(name)) over 6 weeks: solid line your normal, dashed line your last 7 days")
         }
         .overlay(RoundedRectangle(cornerRadius: Card<EmptyView>.radius).stroke(limiter ? color : .clear, lineWidth: 2))
+    }
+}
+
+/// Today's scheduled run when the call didn't take it as the session: a modify or rest day.
+struct ScheduledTodayCard: View {
+    let planned: PlannedToday
+    let call: String
+
+    var body: some View {
+        Card {
+            SectionLabel("Scheduled today" + (planned.source == "plan" ? ", from your plan" : ""))
+            Text(planned.title).fontWeight(.semibold)
+            Text(planned.detail).font(.subheadline).foregroundStyle(.secondary)
+            Text(call == "rest" ? "Today's call is rest, so skip it or move it to another day."
+                 : "Today's call eases it: follow the call above, not the full run.")
+                .font(.subheadline)
+        }
     }
 }
 

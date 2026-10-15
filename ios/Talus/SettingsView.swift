@@ -20,6 +20,7 @@ struct SettingsView: View {
                     if account?.isAdmin == true {
                         NavigationLink { AdminPage() } label: { Label("Admin", systemImage: "lock.shield") }
                     }
+                    NavigationLink { StatusPage() } label: { Label("Status", systemImage: "waveform.path.ecg") }
                 }
 
                 Section {
@@ -86,10 +87,15 @@ struct SourcesPage: View {
         SettingsPage(title: "Data sources") { s, reload in
             if let method = s.syncMethod {
                 SyncMethodCard(method: method, reload: reload)
-                if method == "watch" { WatchCard(lastSync: s.sources.watch?.lastSync, reload: reload) }
             }
-            IntervalsCard(source: s.source, lastSync: s.sources.intervals.lastSync, reload: reload)
+            if s.syncMethod == "watch" {
+                WatchCard(lastSync: s.sources.watch?.lastSync, reload: reload)
+            } else {
+                IntervalsCard(source: s.source, lastSync: s.sources.intervals.lastSync, reload: reload)
+            }
             if s.sources.garmin.available { GarminCard(garmin: s.sources.garmin, reload: reload) }
+            if let coros = s.sources.coros, coros.available { CorosCard(coros: coros, reload: reload) }
+            if let strava = s.sources.stravaWeb, strava.available { StravaCard(strava: strava, reload: reload) }
             UploadCard(upload: s.sources.upload, reload: reload)
         }
     }
@@ -191,11 +197,11 @@ private struct WatchCard: View {
     }
 }
 
-private let syncRanges = [7, 30, 90, 180]
+let syncRanges = [7, 30, 90, 180]
 
 /// Run a sync for one source and turn the answer into a status line.
 @MainActor
-private func runSync(_ api: API, source: String, days: Int) async -> (ok: Bool, text: String) {
+func runSync(_ api: API, source: String, days: Int) async -> (ok: Bool, text: String) {
     struct Body: Encodable { let days: Int; let source: String }
     struct Result: Decodable { let saved: Int?; let duplicates: Int?; let error: String? }
     do {

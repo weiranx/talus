@@ -1,0 +1,107 @@
+{
+ "engine": {
+  "ok": true,
+  "revision": "27e2bec5fe750373b13571c5f8006e1ad14d5128",
+  "model_version": "0.4.1",
+  "started_at": "2026-10-14T20:52:08",
+  "uptime_s": 0
+ },
+ "sources": [
+  {
+   "key": "intervals",
+   "label": "intervals.icu",
+   "state": "idle",
+   "connected": false,
+   "at": null,
+   "error": null,
+   "saved": null,
+   "how": null
+  },
+  {
+   "key": "coros",
+   "label": "COROS",
+   "state": "warn",
+   "connected": false,
+   "at": "2026-10-14T20:52:08",
+   "error": null,
+   "saved": 0
+  },
+  {
+   "key": "upload",
+   "label": "File upload",
+   "state": "ok",
+   "connected": null,
+   "at": "2026-10-14T20:52:08",
+   "error": null,
+   "saved": 1
+  }
+ ],
+ "data": {
+  "activities": 0,
+  "newest_activity": null,
+  "newest_night": null
+ },
+ "read_ahead": {
+  "state": "idle",
+  "ready": 0,
+  "total": 0,
+  "running": false,
+  "waiting_for": "thresholds"
+ },
+ "importing": null,
+ "coach": {
+  "state": "bad",
+  "why": "no_key",
+  "enabled": true,
+  "key_set": false,
+  "limit": null,
+  "ceiling": null,
+  "spent": 0.0,
+  "month": "2026-10-01",
+  "last_call": {
+   "at": "2026-10-14T20:00:00",
+   "mode": "brief",
+   "model": "claude-haiku-5-5",
+   "ok": false,
+   "fallback_reason": "api_error: overloaded"
+  },
+  "errors_24h": 1,
+  "last_error_at": null
+ },
+ "server": {
+  "revision": "27e2bec5fe750373b13571c5f8006e1ad14d5128",
+  "model_version": "0.4.1",
+  "coach": {
+   "prompt_version": "coach-v1.0",
+   "brief_model": "claude-haiku-5-5",
+   "analysis_model": "claude-opus-5-5",
+   "key_set": false
+  },
+  "server_ceiling_usd": 5.0,
+  "data_bytes": 436352,
+  "disk": {
+   "total": 994610155520,
+   "free": 543714275328
+  },
+  "disk_state": "ok",
+  "accounts": 1,
+  "active_7d": 1,
+  "failing_syncs": [
+   {
+    "email": "friend@example.com",
+    "source": "intervals.icu",
+    "at": "2026-10-12T07:00:00"
+   }
+  ],
+  "coach_spent": 0.0,
+  "month": "2026-10-01",
+  "signup_open": true,
+  "sign_in": {
+   "google": false
+  },
+  "intervals_oauth": {
+   "enabled": false,
+   "connected": 0
+  }
+ }
+}

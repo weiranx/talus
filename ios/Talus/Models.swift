@@ -156,6 +156,7 @@ struct Week: Codable, Hashable {
 
 struct Today: Codable, Hashable {
     let date: String
+    let planned: PlannedToday?
     let checkin: CheckIn?
     let wellness: Wellness?
     let readiness: Readiness
@@ -212,6 +213,7 @@ struct History: Codable, Hashable {
 struct WeekIntensity: Codable, Hashable {
     let start: String
     let share: [String: Double]
+    let zones: ZoneShare?
 }
 
 struct LoadData: Codable, Hashable {
@@ -221,6 +223,12 @@ struct LoadData: Codable, Hashable {
     let intensityByWeek: [WeekIntensity]
     let biggestDays: [ActivitySummary]
     let thresholds: Thresholds?
+    // Optional so an older engine's answer still decodes (LoadModels.swift).
+    let weekly: [WeekTotals]?
+    let lastWeekToDate: WeekTotals?
+    let zoneModel: ZoneModel?
+    let projection: Projection?
+    let nextWeek: NextWeek?
 }
 
 struct LoadUsual: Codable, Hashable {
@@ -237,6 +245,9 @@ struct Segment: Codable, Hashable, Identifiable {
     let lossFt: Double
     let avgGrade: Double
     let timeS: Double
+    let hikeShare: Double?
+    let avgHr: Double?
+    let vertRateFtH: Double?
     var id: Int { index }
 }
 
@@ -252,6 +263,9 @@ struct Streams: Codable, Hashable {
 struct ActivityDetail: Codable, Hashable {
     let id: Int
     let name: String?
+    let sourceName: String?
+    /// Who the shown name is by: "you", "ai" (the coach) or "source" (the device or platform).
+    let nameBy: String?
     let day: String
     let startTime: String
     let source: String
@@ -267,9 +281,12 @@ struct ActivityDetail: Codable, Hashable {
     let longestClimbFt: Double?
     let longestDescentFt: Double?
     let minutesAbove8000Ft: Double?
+    let gainByBandFt: [String: Double]?
+    let lossByBandFt: [String: Double]?
     let notes: [String]
     let loads: [String: LoadUsual]
     let segments: [Segment]
+    let terrain: Terrain?
     let streams: Streams
 }
 

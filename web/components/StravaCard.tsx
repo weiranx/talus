@@ -1,30 +1,21 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import Pill from "@/components/Pill";
-import { RANGES, runSync, when } from "@/components/SourceCard";
+import { when } from "@/lib/sync";
 import type { Settings } from "@/lib/types";
 
 type Strava = Settings["sources"]["strava_web"];
-
-function runLine(s: NonNullable<Strava["last_sync"]>): string {
-  if (s.error_code === "session_expired") return `Stopped ${when(s.at)}: Strava ended the session.`;
-  if (s.error_code === "captcha") return `Stopped ${when(s.at)}: Strava asked for a captcha. Open strava.com in your browser, then copy a fresh session.`;
-  // The engine's message, without the exception's class name or the command-line hint.
-  if (s.error) return `Stopped ${when(s.at)}: ${s.error.replace(/^\w+: /, "").replace(/ ?Run `talus strava-web setup`[^.]*\./, "")}`;
-  const here = s.aliased ? `, ${s.aliased} already here` : "";
-  return `${when(s.at)}: ${s.listed} on Strava since ${s.since}, ${s.saved} new${here}.`;
-}
 
 export default function StravaCard({ strava }: { strava: Strava }) {
   const router = useRouter();
   // Only while a session is saved: once it's turned off, the last run's ending is history.
   const expired = strava.connected && strava.last_sync?.error_code === "session_expired";
   const [editing, setEditing] = useState(!strava.connected || expired);
+  useEffect(() => { if (expired) setEditing(true); }, [expired]);
   const [cookie, setCookie] = useState("");
   const [busy, setBusy] = useState(false);
-  const [days, setDays] = useState(30);
   const [message, setMessage] = useState<{ ok: boolean; text: string } | null>(null);
 
   async function save() {
@@ -42,7 +33,7 @@ export default function StravaCard({ strava }: { strava: Strava }) {
     const latest = data.latest
       ? `, the latest "${data.latest.name}" on ${new Date(data.latest.start_time).toLocaleDateString("en-US", { month: "short", day: "numeric" })}`
       : "";
-    setMessage({ ok: true, text: `Signed in: ${data.total} activities on Strava${latest}. Pull now, or let the next intervals.icu sync do it.` });
+    setMessage({ ok: true, text: `Signed in: ${data.total} activities on Strava${latest}. Sync now pulls from it.` });
     router.refresh();
   }
 
@@ -52,18 +43,6 @@ export default function StravaCard({ strava }: { strava: Strava }) {
     setBusy(false);
     setMessage(null);
     setEditing(true);
-    router.refresh();
-  }
-
-  async function pull() {
-    setBusy(true);
-    setMessage(null);
-    const result = await runSync("strava_web", days);
-    setBusy(false);
-    if (!result.ok && /session/i.test(result.text)) {
-      setMessage({ ok: false, text: "Strava ended the session. Copy a fresh one below." });
-      setEditing(true);
-    } else setMessage(result);
     router.refresh();
   }
 
@@ -78,7 +57,7 @@ export default function StravaCard({ strava }: { strava: Strava }) {
         </div>
       </div>
       <div className="muted">
-        A personal fallback for when intervals.icu can&apos;t get your runs: after each intervals.icu sync, Talus reads
+        A personal fallback for when intervals.icu can&apos;t get your runs: in each sync, after intervals.icu, Talus reads
         your own activities from Strava&apos;s website with a session copied from your browser, and downloads each new
         one&apos;s original file. Strava&apos;s terms don&apos;t allow reading the site this way, so it&apos;s only for
         the owner account, at your own risk. Talus never asks for your Strava password.
@@ -86,8 +65,6 @@ export default function StravaCard({ strava }: { strava: Strava }) {
       <dl className="kv">
         <dt>Session</dt>
         <dd>{strava.connected && strava.updated_at ? `Saved ${when(strava.updated_at)}` : "Not yet"}</dd>
-        <dt>Last run</dt>
-        <dd>{strava.last_sync ? runLine(strava.last_sync) : "Not yet"}</dd>
       </dl>
       {strava.env_override ? (
         <div className="muted">STRAVA_SESSION_COOKIE in the engine&apos;s .env is set, and it overrides the session saved here.</div>
@@ -118,21 +95,10 @@ export default function StravaCard({ strava }: { strava: Strava }) {
           </div>
         </form>
       ) : (
-        <>
-          <div className="actions">
-            <label className="inline-field">
-              <span className="muted">Look back</span>
-              <select value={days} onChange={(e) => setDays(Number(e.target.value))} disabled={busy}>
-                {RANGES.map((d) => <option key={d} value={d}>{d} days</option>)}
-              </select>
-            </label>
-            <button className="btn" onClick={pull} disabled={busy} aria-busy={busy}>{busy ? "Pulling, a request a second" : "Pull now"}</button>
-          </div>
-          <div className="actions">
-            <button className="btn light outline" onClick={() => setEditing(true)} disabled={busy}>Replace session</button>
-            <button className="link-btn" style={{ fontSize: 13 }} onClick={turnOff} disabled={busy}>Turn off</button>
-          </div>
-        </>
+        <div className="actions">
+          <button className="btn light outline" onClick={() => setEditing(true)} disabled={busy}>Replace session</button>
+          <button className="link-btn" style={{ fontSize: 13 }} onClick={turnOff} disabled={busy}>Turn off</button>
+        </div>
       )}
       {message ? <div className={message.ok ? "ok-text" : "error-text"} role="status">{message.text}</div> : null}
       <div className="muted">

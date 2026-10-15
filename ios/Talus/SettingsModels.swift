@@ -115,11 +115,21 @@ struct Sources: Codable, Hashable {
         let mfaPending: Bool
         let lastSync: LastSync?
     }
+    /// COROS and the owner's Strava fallback are set up on the web; the Sync card lists them.
+    struct Other: Codable, Hashable {
+        let available: Bool
+        let connected: Bool
+        let enabled: Bool?
+        let lastSync: LastSync?
+    }
     struct Upload: Codable, Hashable { let lastImport: LastImport?; let maxMb: Int }
-    /// Files the web or iOS app pulled straight off a Garmin watch over Bluetooth.
-    struct Watch: Codable, Hashable { let lastSync: String? }
+    /// Files the web or iOS app pulled straight off a Garmin watch over Bluetooth, when switched on.
+    /// `enabled` is nil on engines from before the switch, which had a sync method instead.
+    struct Watch: Codable, Hashable { let enabled: Bool?; let lastSync: String? }
     let intervals: Intervals
     let garmin: Garmin
+    let coros: Other?
+    let stravaWeb: Other?
     let upload: Upload
     /// nil on engines from before watch sync.
     let watch: Watch?
@@ -158,8 +168,11 @@ struct SettingsData: Codable, Hashable {
     let inferred: InferredThresholds?
     let source: SourceInfo
     let sources: Sources
-    /// How new activities arrive: "intervals" or "watch". nil on engines from before watch sync.
+    /// "watch" when the watch is switched on. Only engines from before the switch need it.
     let syncMethod: String?
+
+    /// Whether this account syncs straight from a Garmin watch.
+    var watchOn: Bool { sources.watch?.enabled ?? (syncMethod == "watch") }
     let coach: CoachSettings
     let readiness: ReadinessSettings
 }

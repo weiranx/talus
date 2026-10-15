@@ -91,7 +91,7 @@ ACCOUNT_COLUMNS = {
     "last_seen": "TEXT",            # last signed-in request, to SEEN_EVERY
     "coach_ceiling_usd": "REAL",    # the admin's monthly coach ceiling for it; NULL is the server's
     # Owner only, set from Settings > Data sources or `talus strava-web setup`: also pull from
-    # Strava's website after each intervals.icu sync (sources/strava_web, a personal fallback).
+    # Strava's website in each sync, after intervals.icu (sources/strava_web, a personal fallback).
     "strava_web_enabled": "INTEGER NOT NULL DEFAULT 0",
 }
 

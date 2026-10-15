@@ -45,9 +45,9 @@ def main(argv: list[str] | None = None) -> None:
     inf.add_argument("--days", type=int, default=180)
     inf.add_argument("--apply", action="store_true", help="save the AeT and AnT estimates as your thresholds")
 
-    s = sub.add_parser("sync", help="pull new activities, plus overnight HRV, resting HR and sleep, from a platform")
-    s.add_argument("--source", choices=SOURCES, default="intervals",
-                   help="garmin and coros are unofficial: owner account only, at your own risk")
+    s = sub.add_parser("sync", help="pull new activities, plus overnight HRV, resting HR and sleep, from every connected source")
+    s.add_argument("--source", choices=("all", *SOURCES), default="all",
+                   help="just this one; garmin, coros and strava_web are unofficial: owner account only, at your own risk")
     s.add_argument("--days", type=int, default=180)
     s.add_argument("--since", type=date.fromisoformat)
     s.add_argument("--no-coach", action="store_true", help="skip writing the coach brief and reads after the sync")
@@ -99,7 +99,7 @@ def main(argv: list[str] | None = None) -> None:
         if account is None:
             sys.exit(f"No account {args.user}. See: talus account list")
     store = Store(accounts.user_dir(account.id) if account else default_user_dir(accounts))
-    args.credential = credential_for(accounts, account, getattr(args, "source", "intervals"))
+    args.credential = credential_for(accounts, account, src) if (src := getattr(args, "source", "all")) != "all" else None
     args.accounts, args.account = accounts, account or accounts.owner()
     # The coach runs after a sync through the API's code, which reads the account from here.
     from . import api
@@ -245,57 +245,103 @@ def cmd_thresholds(store: Store, args) -> None:
 
 def cmd_sync(store: Store, args) -> None:
     since = args.since or date.today() - timedelta(days=args.days)
-    credential = args.credential
-    if args.source in ("garmin", "coros") and not (args.account and args.account.is_owner):
+    only = None if args.source == "all" else args.source
+    if only in ("garmin", "coros", STRAVA_WEB) and not (args.account and args.account.is_owner):
         # Unofficial and tied to one person's login: never pull it into another account.
-        sys.exit(f"{'COROS' if args.source == 'coros' else 'Garmin Connect'} is for the owner account only.")
-    if args.source == "coros" and credential is None:
+        sys.exit(f"{LABELS[only]} is for the owner account only.")
+    if only == "coros" and args.credential is None:
         sys.exit("Connect COROS in Settings > Data sources first.")
-    if args.source == "garmin" and credential is None:
+    if only == STRAVA_WEB and args.credential is None and not os.environ.get("STRAVA_SESSION_COOKIE"):
+        sys.exit("Save a Strava session first: talus strava-web setup.")
+    if only == "garmin" and args.credential is None:
         # First run from the command line: sign in with GARMIN_EMAIL and GARMIN_PASSWORD from .env
         # (MFA prompts here), then keep only the tokens, like Settings does.
         from .sources import garmin
-        if not (args.account and args.account.is_owner):
-            sys.exit("Garmin Connect is for the owner account only.")
         if not (os.environ.get("GARMIN_EMAIL") and os.environ.get("GARMIN_PASSWORD")):
             sys.exit("Connect Garmin in Settings > Data sources, or set GARMIN_EMAIL and GARMIN_PASSWORD in .env.")
         tokens = garmin.start_login(args.account.id, os.environ["GARMIN_EMAIL"], os.environ["GARMIN_PASSWORD"])
         if tokens is None:
             tokens = garmin.finish_login(args.account.id, input("Garmin MFA code: "))
         args.accounts.set_credential(args.account.id, "garmin", "tokens", {"tokens": tokens})
-        credential = {"kind": "tokens", "tokens": tokens}
-    save = None
-    if args.account:
-        def save(values: dict) -> None:
-            args.accounts.set_credential(args.account.id, args.source, "tokens", values)
-    try:
-        result = sync(store, args.source, since, credential=credential, save_credential=save)
-    finally:
-        # Runs even when intervals.icu fails: that is when the Strava fallback matters.
-        strava = strava_web_after(args.accounts, args.account, store, args.source, since)
+    if not connected_sources(args.accounts, args.account, only):
+        sys.exit("Nothing to sync from. Connect a source in Settings > Data sources, or set INTERVALS_API_KEY in .env.")
+    result = sync_all(args.accounts, args.account, store, since, only=only)
     if not args.no_coach and store.thresholds() is not None:
-        warm_coach(result["added_ids"] + (strava["added_ids"] if strava else []))
+        warm_coach(result["added_ids"])
+    if result["error"]:
+        sys.exit(f"Not everything synced. {result['error']}")
 
 
-SOURCES = ("intervals", "garmin", "coros")
+# Every source Talus pulls from on its own, in the order one sync runs them. intervals.icu goes
+# first: it is the primary source, so the fallbacks after it find its runs and keep them once.
+# The Garmin watch isn't here: only a phone or browser next to it can reach it.
+SOURCES = ("intervals", "garmin", "coros", "strava_web")
 STRAVA_WEB = "strava_web"
+LABELS = {"intervals": "intervals.icu", "garmin": "Garmin Connect", "coros": "COROS", STRAVA_WEB: "Strava"}
 
 
-def strava_web_after(accounts: Accounts, account: Account | None, store: Store, source_name: str, since: date,
-                     log=print) -> dict | None:
-    """After an intervals.icu sync, also pull from Strava's website (sources/strava_web): a
-    personal fallback, only for the owner account with strava_web_enabled set. Its failures are
-    logged and kept as last_sync_strava_web, never raised into the sync it follows."""
-    if source_name != "intervals" or account is None or not account.is_owner \
-            or not accounts.strava_web_enabled(account.id):
-        return None
-    from .sources.strava_web import puller
-    cred = accounts.credential(account.id, STRAVA_WEB)
-    try:
-        return puller.sync(store, since, log=log, saved_cookie=cred and cred.get("cookie"))
-    except Exception as e:
-        log(f"Strava (personal fallback) not synced: {type(e).__name__}: {e}")
-        return None
+def watch_on(saved: dict) -> bool:
+    """Whether this account syncs straight from a Garmin watch, in the iPhone app or Chrome.
+    Accounts from before the switch picked it as their "sync method"."""
+    return bool(saved.get("watch_enabled", saved.get("sync_method") == "watch"))
+
+
+def connected_sources(accounts: Accounts, account: Account | None, only: str | None = None) -> list[tuple[str, dict | None]]:
+    """The sources this account has set up, as (name, credential), in sync order. Garmin
+    Connect, COROS and Strava are unofficial and tied to one person's login, so only the owner
+    gets them; Strava also needs its switch on (sources/strava_web)."""
+    account = account or accounts.owner()
+    out: list[tuple[str, dict | None]] = []
+    if (cred := credential_for(accounts, account)) is not None:
+        out.append(("intervals", cred))
+    if account is not None and account.is_owner:
+        for name in ("garmin", "coros"):
+            if (cred := accounts.credential(account.id, name)) is not None:
+                out.append((name, cred))
+        cred = accounts.credential(account.id, STRAVA_WEB)
+        if (accounts.strava_web_enabled(account.id) or only == STRAVA_WEB) \
+                and (cred is not None or os.environ.get("STRAVA_SESSION_COOKIE")):
+            out.append((STRAVA_WEB, cred))
+    return [(n, c) for n, c in out if only is None or n == only]
+
+
+def sync_source(accounts: Accounts, account: Account | None, store: Store, name: str, since: date,
+                credential: dict | None, log=print) -> dict:
+    """Pull one source. Refreshed sign-in tokens are saved back to the account as they change."""
+    if name == STRAVA_WEB:
+        from .sources.strava_web import puller
+        result = puller.sync(store, since, log=log, saved_cookie=credential and credential.get("cookie"))
+        # Aliased runs are already here too, under their other source's record.
+        return result | {"duplicates": result.get("duplicates", 0) + result.get("aliased", 0)}
+    save = None
+    if account is not None and name != "intervals":
+        def save(values: dict) -> None:
+            kept = {k: v for k, v in (credential or {}).items() if k not in ("kind", "updated_at")}
+            accounts.set_credential(account.id, name, "tokens", kept | values)
+    return sync(store, name, since, log=log, credential=credential, save_credential=save)
+
+
+def sync_all(accounts: Accounts, account: Account | None, store: Store, since: date, log=print,
+             only: str | None = None) -> dict:
+    """One sync: every connected source (or just `only`), one after another. A source that fails
+    is logged and kept as its own last sync, and never stops the ones after it: that is when a
+    fallback matters. The totals add up every source; `sources` has each one's run."""
+    runs: list[dict] = []
+    added: list[int] = []
+    for name, cred in connected_sources(accounts, account, only):
+        try:
+            run = sync_source(accounts, account, store, name, since, cred, log=log)
+        except Exception as e:
+            log(f"{LABELS[name]} not synced: {type(e).__name__}: {e}")
+            run = store.settings().get(f"last_sync_{name}") or {
+                "source": name, "since": since.isoformat(), "error": f"{type(e).__name__}: {e}"}
+        added += run.pop("added_ids", [])
+        runs.append(run | {"label": LABELS[name]})
+    failed = [r for r in runs if r.get("error")]
+    return {"at": datetime.now().isoformat(timespec="seconds"), "since": since.isoformat(),
+            **{k: sum(r.get(k) or 0 for r in runs) for k in ("listed", "new", "saved", "duplicates")},
+            "error": "; ".join(f"{r['label']}: {r['error']}" for r in failed) or None,
+            "sources": runs, "added_ids": added}
 
 
 def open_source(source_name: str, credential: dict | None):
@@ -437,7 +483,7 @@ def cmd_strava_web(store: Store, args) -> None:
     if args.action == "status":
         cred = accounts.credential(account.id, STRAVA_WEB)
         last = store.settings().get(f"last_sync_{STRAVA_WEB}")
-        print(f"After each intervals.icu sync: {'on' if accounts.strava_web_enabled(account.id) else 'off'}")
+        print(f"In each sync: {'on' if accounts.strava_web_enabled(account.id) else 'off'}")
         print(f"Session: {'saved ' + cred['updated_at'][:16] if cred else 'none'}"
               + (" (STRAVA_SESSION_COOKIE in .env overrides it)" if os.environ.get("STRAVA_SESSION_COOKIE") else ""))
         if last:
@@ -459,11 +505,11 @@ def cmd_strava_web(store: Store, args) -> None:
     latest = found["latest"]
     print(f"Signed in: {found['total']} activities on Strava"
           + (f", the latest {datetime.fromisoformat(latest['start_time']):%a %b %-d} \"{latest['name']}\"." if latest else "."))
-    print("Saved. Talus now also syncs from Strava after each intervals.icu sync.\n"
+    print("Saved. Talus now also pulls from Strava in each sync.\n"
           "The cookie may still be on your clipboard: copy something else over it.")
     if _ask("Pull the last 30 days from Strava now? [y/N] ") in ("y", "yes"):
-        result = strava_web_after(accounts, account, store, "intervals", date.today() - timedelta(days=30))
-        if result and result["added_ids"] and store.thresholds() is not None:
+        result = sync_all(accounts, account, store, date.today() - timedelta(days=30), only=STRAVA_WEB)
+        if result["added_ids"] and store.thresholds() is not None:
             warm_coach(result["added_ids"])
 
 

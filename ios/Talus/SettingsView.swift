@@ -20,6 +20,7 @@ struct SettingsView: View {
                     if account?.isAdmin == true {
                         NavigationLink { AdminPage() } label: { Label("Admin", systemImage: "lock.shield") }
                     }
+                    NavigationLink { StatusPage() } label: { Label("Status", systemImage: "waveform.path.ecg") }
                 }
 
                 Section {
@@ -83,6 +84,8 @@ struct SourcesPage: View {
             SyncCard(settings: s, reload: reload)
             IntervalsCard(source: s.source, reload: reload)
             if s.sources.garmin.available { GarminCard(garmin: s.sources.garmin, reload: reload) }
+            if let coros = s.sources.coros, coros.available { CorosCard(coros: coros, reload: reload) }
+            if let strava = s.sources.stravaWeb, strava.available { StravaCard(strava: strava, reload: reload) }
             if s.sources.watch != nil { WatchCard(on: s.watchOn, lastSync: s.sources.watch?.lastSync, reload: reload) }
             UploadCard(upload: s.sources.upload, reload: reload)
         }
@@ -114,7 +117,9 @@ private struct SyncCard: View {
         if src.intervals.connected { add("intervals", "intervals.icu", src.intervals.lastSync) }
         if src.garmin.available && src.garmin.connected { add("garmin", "Garmin Connect", src.garmin.lastSync) }
         if let c = src.coros, c.available && c.connected { add("coros", "COROS", c.lastSync) }
-        if let st = src.stravaWeb, st.available && st.enabled == true { add("strava", "Strava", st.lastSync) }
+        if let st = src.stravaWeb, st.available && st.enabled {
+            out.append(Row(id: "strava", label: "Strava", line: st.lastSync.map(StravaCard.runLine) ?? "Not yet", bad: st.lastSync?.error != nil))
+        }
         return out
     }
 
@@ -279,7 +284,7 @@ private struct WatchCard: View {
     }
 }
 
-private let syncRanges = [7, 30, 90, 180]
+let syncRanges = [7, 30, 90, 180]
 
 /// Sync every source the engine pulls, and turn the answer into a status line.
 @MainActor

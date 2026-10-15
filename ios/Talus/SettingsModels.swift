@@ -58,6 +58,9 @@ struct LastSync: Codable, Hashable {
     let saved: Int
     let duplicates: Int?
     let error: String?
+    /// Strava website runs only: activities another source already had, and why a run stopped.
+    var aliased: Int? = nil
+    var errorCode: String? = nil
 }
 
 struct LastImport: Codable, Hashable {
@@ -115,24 +118,18 @@ struct Sources: Codable, Hashable {
         let mfaPending: Bool
         let lastSync: LastSync?
     }
-    /// COROS and the owner's Strava fallback are set up on the web; the Sync card lists them.
-    struct Other: Codable, Hashable {
-        let available: Bool
-        let connected: Bool
-        let enabled: Bool?
-        let lastSync: LastSync?
-    }
     struct Upload: Codable, Hashable { let lastImport: LastImport?; let maxMb: Int }
     /// Files the web or iOS app pulled straight off a Garmin watch over Bluetooth, when switched on.
     /// `enabled` is nil on engines from before the switch, which had a sync method instead.
     struct Watch: Codable, Hashable { let enabled: Bool?; let lastSync: String? }
     let intervals: Intervals
     let garmin: Garmin
-    let coros: Other?
-    let stravaWeb: Other?
     let upload: Upload
     /// nil on engines from before watch sync.
     let watch: Watch?
+    /// Owner-only COROS sign-in and Strava website fallback (SettingsSources.swift); nil on older engines.
+    var coros: Coros? = nil
+    var stravaWeb: StravaWeb? = nil
 }
 
 struct CostEstimate: Codable, Hashable {
@@ -146,12 +143,19 @@ struct CoachSettings: Codable, Hashable {
     struct Style: Codable, Hashable { let key: String; let label: String; let description: String }
     struct Model: Codable, Hashable { let id: String; let label: String }
     struct Cap: Codable, Hashable { let limit: Double?; let ceiling: Double?; let spent: Double; let month: String }
-    struct Estimates: Codable, Hashable { let brief: [String: CostEstimate]; let analysis: [String: CostEstimate] }
+    struct Estimates: Codable, Hashable {
+        let brief: [String: CostEstimate]
+        let analysis: [String: CostEstimate]
+        /// A plan draft the AI coach builds; nil on engines from before AI-built plans.
+        var build: [String: CostEstimate]? = nil
+    }
     let enabled: Bool
     let keySet: Bool
     let briefModel: String
     let analysisModel: String
     let style: String
+    /// The AI coach builds plan drafts (the engine checks them); nil on older engines means on.
+    var aiPlans: Bool? = nil
     let styles: [Style]
     let models: [Model]
     let estimate: Estimates
@@ -241,6 +245,8 @@ struct AdminOverview: Codable, Hashable {
     let month: String
     let signup: Signup
     let features: Features
+    /// The coach's models for every account (AdminExtras.swift); nil on engines from before it.
+    var coachModels: CoachModels? = nil
     let system: System
     let log: [LogEntry]
 }

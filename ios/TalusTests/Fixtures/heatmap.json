@@ -1,0 +1,65 @@
+{
+ "pending": 1,
+ "activities": [
+  {
+   "id": 51,
+   "day": "2026-10-13",
+   "start_time": "2026-10-13T14:00:00",
+   "name": "Easy flat",
+   "sport": "running",
+   "distance_mi": 5.897559481873681,
+   "gain_ft": 412.0734908119997,
+   "loss_ft": 413.7139107594997,
+   "effort_mi": 6.6780016993206495,
+   "moving_time_s": 3800.0,
+   "kind": "run",
+   "line": "g{gpEtpbmUFkSv@sOvAwLnJ{p@zCw[l@gQLme@lAyXhDe[tHob@lAyIv@eLP_OiHb]uB|Pw@`VGri@]rP}AbPkJdi@oCxWs@`M]zLYzk@m@pLiAnM",
+   "pending": false
+  },
+  {
+   "id": 50,
+   "day": "2026-10-12",
+   "start_time": "2026-10-12T14:00:00",
+   "name": "Big ridge day",
+   "sport": "running",
+   "distance_mi": 16.118348948136518,
+   "gain_ft": 6511.4829396065,
+   "loss_ft": 6524.6062991865,
+   "effort_mi": 28.450703000421555,
+   "moving_time_s": 23494.0,
+   "kind": "run",
+   "line": "m_gpEb_}lUcG_ZaB_Oi@mO_@ul@]qKo@aJ_CsOcJia@qAaJ}@wJiA_Xe@mj@u@_NiBwN}J}n@uDu\\_AeRo@}h@{AgWaD_XuJeg@_BsMs@yQa@cn@_AyRoBaOmIq^sCkRaAsLi@qMi@{k@g@}MyBqRaLyr@t@zNhBnQpClSrIhi@|A~Mj@jMr@xp@`B`XdDnTjIl^dB`N`A|T^pl@d@bNbBlOpIvb@zDxYlBxYn@`i@dAfT|C`YdLdt@xAdMv@bPd@|j@tAnXzBpQbKnd@lB`OdAxVd@bp@x@xN",
+   "pending": false
+  },
+  {
+   "id": 49,
+   "day": "2026-10-11",
+   "start_time": "2026-10-11T14:00:00",
+   "name": "Steep hike",
+   "sport": "hiking",
+   "distance_mi": 6.001759743585059,
+   "gain_ft": 2993.7664041875,
+   "loss_ft": 2992.12598424,
+   "effort_mi": 11.671771872728051,
+   "moving_time_s": 13244.0,
+   "kind": "hike",
+   "line": "k_hpEh}|lUdHClXdBxLDpN_An^wFlLcAlL?lWhB~IMxH{@zZmF`NgAfO?j]hBlLU{LScYyAkJCkL|@cWzFoJdAgI@kZaB{LKuP`A}]dGaJx@uIA}YkBcGDsGb@",
+   "pending": false
+  },
+  {
+   "id": 48,
+   "day": "2026-10-10",
+   "start_time": "2026-10-10T14:00:00",
+   "name": "Long mountain run",
+   "sport": "running",
+   "distance_mi": 13.031505533483063,
+   "gain_ft": 4473.753280822,
+   "loss_ft": 4462.598425179,
+   "effort_mi": 21.504523110797457,
+   "moving_time_s": 16354.0,
+   "kind": "run",
+   "line": null,
+   "pending": true
+  }
+ ]
+}

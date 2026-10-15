@@ -2930,26 +2930,40 @@ def put_names(body: NamesIn) -> dict:
     return {"ok": True}
 
 
+def name_new(store: Store, activity_ids: list[int]) -> list[str]:
+    """Name each new activity whose device name is generic, as part of the sync that brought it
+    in. Names typed in Talus or on the device are kept, and an activity named once isn't asked
+    again. Runs whether or not the brief can: with no key or the coach off, the rules still name
+    it from the peak or place."""
+    if not _names_on(store):
+        return []
+    names, lines = store.activity_names(), []
+    for aid in dict.fromkeys(activity_ids):
+        row, n = store.activity(aid), names.get(aid) or {}
+        if row is None or not row["start_time"] or not naming.is_generic(row["name"]) \
+                or n.get("custom_name") or n.get("ai_name"):
+            continue
+        try:
+            lines.append(f"Named activity {aid}: {_ai_name(store, row)['name']}")
+        except Exception as e:  # noqa: BLE001 - one unreadable activity mustn't stop the rest of the sync's work
+            lines.append(f"Couldn't name activity {aid}: {type(e).__name__}")
+    return lines
+
+
 def warm_coach(activity_ids: list[int]) -> list[str]:
-    """Write today's brief and each new recent activity's read right after a sync, so the pages
-    open with them ready. Replies are cached as usual, so opening a page doesn't pay again."""
-    warm_details(get_store(), force=True)
+    """Name the new activities, then write today's brief and each new recent activity's read right
+    after a sync, so the pages open with them ready. Replies are cached as usual, so opening a
+    page doesn't pay again."""
+    store = get_store()
+    lines = name_new(store, activity_ids)
+    warm_details(store, force=True)
     try:
         b = coach_brief()
     except HTTPException as e:
-        return [f"Coach skipped: {e.detail}"]
+        return lines + [f"Coach skipped: {e.detail}"]
     if b["fallback_reason"] in ("no_key", "off"):
-        return ["Coach skipped: " + ("no ANTHROPIC_API_KEY" if b["fallback_reason"] == "no_key" else "turned off in Settings")]
-    lines = [f"Coach brief: {b['reply']['call']} ({b['source']})"]
-    store = get_store()
-    if _names_on(store):
-        for aid in dict.fromkeys(activity_ids):
-            row = store.activity(aid)
-            if row is not None and row["start_time"] and naming.is_generic(row["name"]):
-                try:
-                    lines.append(f"Named activity {aid}: {_ai_name(store, row)['name']}")
-                except (HTTPException, ValueError, OSError):
-                    pass
+        return lines + ["Coach skipped: " + ("no ANTHROPIC_API_KEY" if b["fallback_reason"] == "no_key" else "turned off in Settings")]
+    lines.append(f"Coach brief: {b['reply']['call']} ({b['source']})")
     recent = (date.today() - timedelta(days=WARM_ANALYSIS_DAYS)).isoformat()
     for aid in dict.fromkeys(activity_ids):
         row = store.activity(aid)

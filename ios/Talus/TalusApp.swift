@@ -108,13 +108,14 @@ struct RootView: View {
 }
 
 struct MainTabs: View {
+    // Five tabs, so none hide under More; Settings is the gear on Today.
     var body: some View {
         TabView {
             TodayView().tabItem { Label("Today", systemImage: "sun.horizon") }
             PlanView().tabItem { Label("Plan", systemImage: "flag.checkered") }
+            CoachView().tabItem { Label("Coach", systemImage: "bubble.left.and.text.bubble.right") }
             LoadView().tabItem { Label("Load", systemImage: "chart.xyaxis.line") }
             ActivitiesView().tabItem { Label("Activity", systemImage: "figure.hiking") }
-            SettingsView().tabItem { Label("Settings", systemImage: "gearshape") }
         }
     }
 }

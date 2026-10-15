@@ -1,14 +1,15 @@
 # Talus for iPhone
 
-A native SwiftUI app (iOS 17+) over the Talus engine API: Today, Plan, Load, Activity and Settings, plus Apple Health sync. It does what the web app does, except Google sign-in and the intervals.icu OAuth button, which stay on the web. Every number comes from the engine; the app only formats it, in miles and feet, distance and vert together.
+A native SwiftUI app (iOS 17+) over the Talus engine API: Today, Plan, Coach, Load and Activity tabs, Settings behind the gear on Today, plus Apple Health sync. It does what the web app does, except Google sign-in and the intervals.icu OAuth button, which stay on the web. Every number comes from the engine; the app only formats it, in miles and feet, distance and vert together.
 
 | Screen | What it shows |
 |---|---|
-| Today | The call for the day (the AI coach's brief when it's on, rule-based otherwise), the morning check-in, engine and legs readiness, overnight HRV, resting HR and sleep, each ledger against your normal, this week's miles and vert, and 28-day intensity |
-| Plan | The objective and its plan: the next run, this week against its target, the calendar of scheduled runs (add, move, edit, delete), the road to the objective week by week, readiness for the day, the coach's read and weekly review, and chat. Until a plan is accepted, a three-step setup: objective (type it or pick a GPX), training days, review and accept |
-| Load | Cardio, distance, climb and descent ledgers over 6 weeks, 6 months or a year: daily load, your normal and your last 7 days; intensity by week; biggest days |
-| Activity | Every activity by week, with each week's miles, ft up and ft down; the detail has the route map, the elevation profile, the coach's read, the loads against a usual day, and climb and descent segments |
-| Settings | Data sources (intervals.icu key, Garmin Connect, file upload, Apple Health), heart rate thresholds with the estimate from your runs, zones, the AI coach, sleep need, appearance, account (password, export, delete), the engine address, and Admin for the admin account |
+| Today | The call for the day (the AI coach's brief when it's on, rule-based otherwise), the morning check-in, engine and legs readiness, overnight HRV, resting HR and sleep, each ledger against your normal (tap a number to see how it's worked out), this week's miles and vert, and 28-day intensity |
+| Plan | The objective and its plan: the next run, this week against its target, the calendar of scheduled runs (add, move, edit, delete), the road to the objective week by week, readiness for the day, the coach's read and weekly review, and chat; change it with the coach in conversation. Until a plan is accepted, planning with the coach (tap answers, type the objective or upload its GPX, then accept the draft), or the three-step form: objective or a goal with no race day, training days with speed work and back-to-back long days, review and accept |
+| Coach | Your training goals (typed, or drafted by the AI coach from three questions and your recent weeks) and the chat, shared with Plan, with starter questions. The coach can offer to add, move or delete a run, update your goals, sync or apply thresholds; each shows as a card and nothing runs until Confirm |
+| Load | The coach's take on last week, the trend, what to watch and the next 7 days; how much the next 7 days can hold beside what's scheduled; weekly stats for the last 8 weeks; cardio, distance, climb and descent ledgers over 6 weeks, 6 months or a year: your normal, your last 7 days, the room before ramping too fast and where scheduled runs take them; intensity by week; biggest days |
+| Activity | Every activity by week, with each week's miles, ft up and ft down; Routes, every route on one map, and Calendar, a heatmap of days, filtered by range and sport; the detail has the route map, the elevation profile, the coach's read, the loads against a usual day, climb and descent segments, climbing and descending by grade against your usual, hike or run, durability, and Rename with an AI suggestion |
+| Settings | Data sources (intervals.icu key, Garmin Connect, COROS and the Strava website fallback for the owner, file upload, Apple Health), heart rate thresholds with the estimate from your runs, zones, the AI coach (style, cap, AI-built plans, activity names), sleep need, appearance, account (password, export, delete), the engine address, Status (engine, each source's last sync, read-ahead, coach, and the server for the admin), and Admin for the admin account (including the coach models for every account) |
 
 ## Run it in the Simulator
 
@@ -49,7 +50,7 @@ The first sync reads the last 90 days. After that the app syncs when it opens (a
 | `Talus/Models.swift` | The engine's JSON shapes |
 | `Talus/HealthSync.swift` | HealthKit reads and the upload format (`HealthPayload`, unit tested) |
 | `Talus/Format.swift` | Number formatting, ledger colors and badges, shared card views |
-| `TalusTests/` | Decoding, badge and Health payload tests |
+| `TalusTests/` | Decoding, badge, Health payload and polyline tests |
 | `screenshots/` | The app on demo data |
 
 The project uses folder-synced groups, so new Swift files in `Talus/` are picked up without editing the project file.

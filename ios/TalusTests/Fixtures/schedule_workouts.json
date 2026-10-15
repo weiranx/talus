@@ -1,0 +1,301 @@
+{
+ "date": "2026-10-14",
+ "start": "2026-10-12",
+ "days": 35,
+ "items": [
+  {
+   "id": null,
+   "day": "2026-10-15",
+   "kind": "hills",
+   "miles": 5.014092185248943,
+   "gain_ft": 1601.2928939374076,
+   "loss_ft": 1599.9562554616673,
+   "minutes": 44.64971222791085,
+   "zone": null,
+   "notes": "",
+   "source": "plan",
+   "title": "Power-hike intervals",
+   "estimated_minutes": true,
+   "how": "Warm up 15 min easy on gentle terrain, under 150 bpm. 5 \u00d7 6 min power-hiking a steep grade (15% or more), hands on knees or poles, at 150 to 160 bpm: short quick steps, upright, arms working. Walk or jog down between. Run the rest of the day easy in zone 2.",
+   "workout": false,
+   "activity": null,
+   "detail": "5.0 mi, 1,600 ft up, 1,600 ft down, about 45 min, under 150 bpm.",
+   "status": "planned"
+  },
+  {
+   "id": null,
+   "day": "2026-10-17",
+   "kind": "long",
+   "miles": 8.95077613234522,
+   "gain_ft": 2358.2677165260006,
+   "loss_ft": 2356.299212589001,
+   "minutes": 74.44829084173541,
+   "zone": null,
+   "notes": "",
+   "source": "plan",
+   "title": "Long day",
+   "estimated_minutes": true,
+   "how": "Mostly zone 2, 140 to 150 bpm; power-hike the steep climbs so you stay under 150 bpm. Eat and drink from the first hour, the way you will on race day.",
+   "workout": false,
+   "activity": null,
+   "detail": "9.0 mi, 2,360 ft up, 2,360 ft down, about 75 min, under 150 bpm.",
+   "status": "planned"
+  },
+  {
+   "id": null,
+   "day": "2026-10-18",
+   "kind": "intervals",
+   "miles": 5.014092185248943,
+   "gain_ft": 560.4525128780928,
+   "loss_ft": 559.9846894115835,
+   "minutes": 33.711576722720565,
+   "zone": null,
+   "notes": "",
+   "source": "plan",
+   "title": "Fartlek",
+   "estimated_minutes": true,
+   "how": "Warm up 15 min easy, under 150 bpm. 5 rounds of 2 min at zone 3, 160 to 167 bpm, 1 min at 172 bpm and up, over your AnT and 2 min easy, on rolling trail: let the hills set where the hard bits fall. Cool down 10 min easy.",
+   "workout": true,
+   "activity": null,
+   "detail": "5.0 mi, 560 ft up, 560 ft down, about 35 min.",
+   "status": "planned"
+  },
+  {
+   "id": null,
+   "day": "2026-10-20",
+   "kind": "hills",
+   "miles": 5.014092185248945,
+   "gain_ft": 1752.7665460666226,
+   "loss_ft": 1751.3034688161497,
+   "minutes": 46.24154067980966,
+   "zone": null,
+   "notes": "",
+   "source": "plan",
+   "title": "Downhill durability",
+   "estimated_minutes": true,
+   "how": "Climb to the top of a smooth, moderately steep trail in zone 2, 140 to 150 bpm. 5 \u00d7 3 to 5 min downhill: quick light steps under your hips, eyes ahead, controlled rather than fast; hike or jog back up in zone 2, 140 to 150 bpm. This builds the quads for long descents. Expect them sore for a day or two at first.",
+   "workout": false,
+   "activity": null,
+   "detail": "5.0 mi, 1,750 ft up, 1,750 ft down, about 45 min, under 150 bpm.",
+   "status": "planned"
+  },
+  {
+   "id": null,
+   "day": "2026-10-22",
+   "kind": "intervals",
+   "miles": 5.014092185248945,
+   "gain_ft": 613.468291123318,
+   "loss_ft": 612.9562140856525,
+   "minutes": 34.268716680885156,
+   "zone": null,
+   "notes": "",
+   "source": "plan",
+   "title": "Fartlek",
+   "estimated_minutes": true,
+   "how": "Warm up 15 min easy, under 150 bpm. 5 rounds of 2 min at zone 3, 160 to 167 bpm, 1 min at 172 bpm and up, over your AnT and 2 min easy, on rolling trail: let the hills set where the hard bits fall. Cool down 10 min easy.",
+   "workout": true,
+   "activity": null,
+   "detail": "5.0 mi, 610 ft up, 610 ft down, about 35 min.",
+   "status": "planned"
+  },
+  {
+   "id": null,
+   "day": "2026-10-24",
+   "kind": "long",
+   "miles": 12.307317181974682,
+   "gain_ft": 3242.618110223252,
+   "loss_ft": 3239.9114173098774,
+   "minutes": 102.36639990738624,
+   "zone": null,
+   "notes": "",
+   "source": "plan",
+   "title": "Long day",
+   "estimated_minutes": true,
+   "how": "Mostly zone 2, 140 to 150 bpm; power-hike the steep climbs so you stay under 150 bpm. Eat and drink from the first hour, the way you will on race day.",
+   "workout": false,
+   "activity": null,
+   "detail": "12.3 mi, 3,240 ft up, 3,240 ft down, about 100 min, under 150 bpm.",
+   "status": "planned"
+  },
+  {
+   "id": null,
+   "day": "2026-10-25",
+   "kind": "easy",
+   "miles": 5.014092185248945,
+   "gain_ft": 876.3832730333113,
+   "loss_ft": 875.6517344080748,
+   "minutes": 37.03167606525235,
+   "zone": null,
+   "notes": "",
+   "source": "plan",
+   "title": "Recovery run + strength",
+   "estimated_minutes": true,
+   "how": "Short and slow in zone 1, under 130 bpm, on the gentlest ground you have. Heavy legs: swap it for an easy bike or a walk. Then 25 min of strength: 3 rounds of 10 step-ups a leg, 10 split squats a leg, 10 single-leg deadlifts a leg, 15 slow step-downs off a box a leg (for the descents), 20 calf raises and a 45 s plank.",
+   "workout": false,
+   "activity": null,
+   "detail": "5.0 mi, 880 ft up, 880 ft down, about 35 min, under 150 bpm.",
+   "status": "planned"
+  }
+ ],
+ "activities": [
+  {
+   "id": 30,
+   "day": "2026-10-12",
+   "name": "run02",
+   "sport": null,
+   "distance_mi": 4.972653406858456,
+   "gain_ft": 1179.1338582630003,
+   "loss_ft": 1178.1496062945005,
+   "moving_time_s": 2399.0
+  }
+ ],
+ "weeks": [
+  {
+   "start": "2026-10-12",
+   "dated": true,
+   "target": {
+    "miles": 24.863267034292278,
+    "gain_ft": 5895.669291315002,
+    "loss_ft": 5890.748031472503,
+    "focus": "build"
+   },
+   "done": {
+    "miles": 4.972653406858456,
+    "gain_ft": 1179.1338582630003,
+    "loss_ft": 1178.1496062945005,
+    "below_aet_pct": 1.0
+   },
+   "ahead": {
+    "miles": 18.97896050284311,
+    "gain_ft": 4520.013123341501,
+    "loss_ft": 4516.240157462252
+   }
+  },
+  {
+   "start": "2026-10-19",
+   "dated": true,
+   "target": {
+    "miles": 27.349593737721513,
+    "gain_ft": 6485.2362204465035,
+    "loss_ft": 6479.822834619754,
+    "focus": "build"
+   },
+   "done": null,
+   "ahead": {
+    "miles": 27.349593737721516,
+    "gain_ft": 6485.236220446504,
+    "loss_ft": 6479.822834619755
+   }
+  },
+  {
+   "start": "2026-10-26",
+   "dated": false,
+   "target": {
+    "miles": 19.14471561640506,
+    "gain_ft": 4539.665354312551,
+    "loss_ft": 4535.875984233827,
+    "focus": "recovery"
+   },
+   "done": null,
+   "ahead": {
+    "miles": 0,
+    "gain_ft": 0,
+    "loss_ft": 0
+   }
+  },
+  {
+   "start": "2026-11-02",
+   "dated": false,
+   "target": {
+    "miles": 30.084553111493666,
+    "gain_ft": 7133.759842491153,
+    "loss_ft": 7127.805118081729,
+    "focus": "build"
+   },
+   "done": null,
+   "ahead": {
+    "miles": 0,
+    "gain_ft": 0,
+    "loss_ft": 0
+   }
+  },
+  {
+   "start": "2026-11-09",
+   "dated": false,
+   "target": {
+    "miles": 33.09300842264303,
+    "gain_ft": 7847.13582674027,
+    "loss_ft": 7840.585629889903,
+    "focus": "build"
+   },
+   "done": null,
+   "ahead": {
+    "miles": 0,
+    "gain_ft": 0,
+    "loss_ft": 0
+   }
+  }
+ ],
+ "warnings": [],
+ "kinds": [
+  {
+   "key": "easy",
+   "label": "Easy run"
+  },
+  {
+   "key": "long",
+   "label": "Long run"
+  },
+  {
+   "key": "hills",
+   "label": "Hills"
+  },
+  {
+   "key": "tempo",
+   "label": "Tempo"
+  },
+  {
+   "key": "intervals",
+   "label": "Intervals"
+  },
+  {
+   "key": "hike",
+   "label": "Hike"
+  },
+  {
+   "key": "race",
+   "label": "Race"
+  },
+  {
+   "key": "other",
+   "label": "Run"
+  }
+ ],
+ "zone_model": {
+  "zones": 3,
+  "custom": false,
+  "list": [
+   {
+    "zone": 1,
+    "name": "Easy aerobic",
+    "low": null,
+    "high": 149,
+    "text": "under 150 bpm"
+   },
+   {
+    "zone": 2,
+    "name": "The gap",
+    "low": 150,
+    "high": 172,
+    "text": "150 to 172 bpm"
+   },
+   {
+    "zone": 3,
+    "name": "Threshold and up",
+    "low": 173,
+    "high": null,
+    "text": "173 bpm and up"
+   }
+  ]
+ }
+}

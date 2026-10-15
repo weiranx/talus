@@ -98,6 +98,11 @@ struct WatchSelectionTests {
         return WatchFile(raw: Data(), id1: 1, id2: id2, typeName: kind, typeCode: 0, size: 100, timestamp: ts)
     }
 
+    @Test func nightsReadAsNights() {
+        #expect(WatchSync.nightsText(1) == "1 night of HRV, resting HR and sleep")
+        #expect(WatchSync.nightsText(3) == "3 nights of HRV, resting HR and sleep")
+    }
+
     @Test func firstSyncTakesTwoWeeksOfActivitiesAndAllHealth() {
         let now = Date(timeIntervalSince1970: 1_800_000_000)
         let files = [file("FIT_TYPE_4", 1, daysAgo: 3, now: now), file("FIT_TYPE_4", 2, daysAgo: 20, now: now),

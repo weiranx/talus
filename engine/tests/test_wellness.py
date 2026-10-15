@@ -144,3 +144,25 @@ def test_today_and_brief_carry_overnight_signals(tmp_path, monkeypatch):
     # New overnight data changes the packet, so the day's cached brief is not reused.
     assert coach.packet_hash(packet) != coach.packet_hash(before)
     assert coach.check({"call": "modify", "why": "Your HRV is 15% below baseline at 50 ms."}, packet, "brief") == []
+
+
+def test_health_history_reads_each_morning_as_today_did(tmp_path, monkeypatch):
+    monkeypatch.setenv("TALUS_DATA_DIR", str(tmp_path))
+    monkeypatch.setenv("TALUS_SLEEP_NEED_H", "8")
+    store = api.get_store()
+    client = sign_in()
+    assert client.get("/api/wellness/history").json()["nights"] == []
+    assert client.get("/api/wellness/history?days=7").status_code == 400
+
+    today = date.today()
+    store.save_wellness([WellnessDay("watch", today - timedelta(days=k), hrv=60 if k > 6 else 50,
+                                     resting_hr=48, sleep_s=8 * 3600) for k in range(1, 80)])
+    store.save_wellness([WellnessDay("apple_health", today, resting_hr=55, sleep_s=5 * 3600)])
+    h = client.get("/api/wellness/history?days=30").json()
+    assert len(h["nights"]) == 30 and h["need_h"] == 8
+    top = h["nights"][0]
+    assert top["day"] == today.isoformat() and top["source"] == "apple_health" and top["hrv"] is None
+    assert top["resting_hr_status"] == "high" and top["sleep_status"] == "short" and top["sleep_h"] == 5
+    assert h["nights"][1]["hrv"] == 50 and h["nights"][1]["source"] == "watch"
+    assert h["nights"][-1]["day"] == (today - timedelta(days=29)).isoformat()
+    assert round(h["average"]["resting_hr"], 1) == round((48 * 29 + 55) / 30, 1)

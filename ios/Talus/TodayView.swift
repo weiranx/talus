@@ -446,7 +446,11 @@ struct OvernightCard: View {
 
     var body: some View {
         Card {
-            SectionLabel("Overnight")
+            HStack {
+                SectionLabel("Overnight")
+                Spacer()
+                NavigationLink("History") { HealthHistoryView() }.font(.subheadline)
+            }
             row("HRV", w.hrv)
             row("Resting HR", w.restingHr)
             row("Sleep", w.sleep)

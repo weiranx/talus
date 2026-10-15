@@ -284,6 +284,43 @@ def today() -> dict:
 
 
 TREND_DAYS = 28
+HEALTH_HISTORY_DAYS = (30, 90, 180, 365)
+
+
+@app.get("/api/wellness/history")
+def wellness_history(days: int = 90) -> dict:
+    """Every morning's HRV, resting HR and sleep over the last `days`, newest first, each read the
+    way Today read it that morning (7-day HRV and resting HR against the 60-day baseline, sleep
+    against the stated need), plus averages over the range for the header."""
+    if days not in HEALTH_HISTORY_DAYS:
+        raise HTTPException(400, f"days must be one of {', '.join(map(str, HEALTH_HISTORY_DAYS))}")
+    store = get_store()
+    day = date.today()
+    start = day - timedelta(days=days - 1)
+    need = wellness.sleep_need(store.settings())[0]
+    nights = store.wellness(start - timedelta(days=wellness.BASELINE_DAYS - 1), day)
+    sources = dict(store.db.execute("SELECT day, source FROM wellness WHERE day BETWEEN ? AND ?",
+                                    (start.isoformat(), day.isoformat())).fetchall())
+    rows = []
+    for i in range(days):
+        d = day - timedelta(days=i)
+        n = nights.get(d)
+        if not n or not any(n.get(k) for k in ("hrv", "resting_hr", "sleep_s")):
+            continue
+        w = wellness.evaluate(nights, d, need)
+        rows.append({"day": d.isoformat(), "source": sources.get(d.isoformat()),
+                     "hrv": n["hrv"] or None, "hrv_avg_7d": w["hrv"]["avg_7d"], "hrv_baseline": w["hrv"]["baseline"],
+                     "hrv_status": w["hrv"]["status"],
+                     "resting_hr": n["resting_hr"] or None, "resting_hr_baseline": w["resting_hr"]["baseline"],
+                     "resting_hr_status": w["resting_hr"]["status"],
+                     "sleep_h": n["sleep_s"] / 3600 if n["sleep_s"] else None, "sleep_status": w["sleep"]["status"]})
+
+    def avg(key: str) -> float | None:
+        vals = [r[key] for r in rows if r[key]]
+        return wellness.mean(vals) if vals else None
+
+    return {"days": days, "need_h": need, "nights": rows,
+            "average": {"hrv": avg("hrv"), "resting_hr": avg("resting_hr"), "sleep_h": avg("sleep_h")}}
 
 
 def _score_trend(store: Store, day: date, recent: list[ledger.LedgerDay], nights: dict, need: float,

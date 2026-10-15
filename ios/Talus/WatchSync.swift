@@ -77,7 +77,7 @@ final class WatchSync: ObservableObject {
         link.onEvent = { [weak self] in self?.note($0) }
         defer { link.disconnect(); self.link = nil }
 
-        var added = 0, failed: [String] = []
+        var added = 0, failed: [String] = [], nights = Set<String>()
         do {
             phase = "Checking what Talus already has"
             let imported = try await api.get("/api/import/watch", as: Imported.self)
@@ -104,6 +104,7 @@ final class WatchSync: ObservableObject {
                     let r = try await upload(api, f, fit)
                     phase = "Downloading"
                     added += r.new
+                    nights.formUnion(r.wellnessDates ?? [])
                     self.added = ((r.added ?? []) + self.added).sorted { ($0.startTime ?? "") > ($1.startTime ?? "") }
                     note("\(f.fileName): \(SettingsText.importLine(r))")
                     if let e = r.error { failed.append("\(f.fileName): \(e)") }
@@ -117,7 +118,8 @@ final class WatchSync: ObservableObject {
             }
             let done = todo.count - failed.count
             var text = todo.isEmpty ? "Up to date, nothing new on the watch." :
-                "Pulled \(done) \(done == 1 ? "file" : "files") off the watch, \(added) new \(added == 1 ? "activity" : "activities")."
+                "Pulled \(done) \(done == 1 ? "file" : "files") off the watch, \(added) new \(added == 1 ? "activity" : "activities")" +
+                (nights.isEmpty ? "." : ", \(Self.nightsText(nights.count)).")
             if !failed.isEmpty { text += " \(failed.count) failed: \(failed.joined(separator: "; "))" }
             result = (failed.isEmpty, text)
             await finished(api, new: added, error: failed.isEmpty ? nil : "\(failed.count) of \(todo.count) files failed.")
@@ -270,6 +272,10 @@ final class WatchSync: ObservableObject {
         }
         let health = fresh.filter { healthKinds.contains($0.kind) }
         return activities.sorted { $0.timestamp > $1.timestamp } + health.sorted { $0.timestamp > $1.timestamp }
+    }
+
+    static func nightsText(_ n: Int) -> String {
+        "\(n) \(n == 1 ? "night" : "nights") of HRV, resting HR and sleep"
     }
 
     static func label(_ kind: String) -> String {

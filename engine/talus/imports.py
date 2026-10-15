@@ -94,6 +94,9 @@ def import_paths(store: Store, paths: list[tuple[str, Path]], log=print, since: 
             store.save_wellness(merge_wellness(store, nights))
             result["source"] = "watch" if not result["listed"] else result["source"]
             result["wellness_days"] += len(nights)
+            # The mornings filled, so an app sending a watch's files one at a time can count
+            # nights once when a night's sleep and HRV files arrive separately.
+            result["wellness_dates"] = sorted({n.day.isoformat() for n in nights})
             log(f"{len(nights)} days of overnight HRV, resting HR and sleep from the watch's files")
         log(f"{result['listed']} activities read, {result['new']} new, {result['duplicates']} already here from another source")
         if added and th is not None:

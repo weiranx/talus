@@ -14,6 +14,15 @@ struct ParityDecodingTests {
         return try d.decode(T.self, from: Data(contentsOf: url))
     }
 
+    @Test func healthHistoryDecodes() throws {
+        let h = try fixture("health_history", as: HealthHistory.self)
+        #expect(h.days == 30 && h.needH > 0)
+        #expect(h.nights.count == 29 && h.average.hrv != nil)
+        let n = try #require(h.nights.first)
+        #expect(n.hrv != nil && n.hrvAvg7D != nil && n.restingHrBaseline != nil && n.sleepH != nil)
+        #expect(n.hrvStatus == "ok")
+    }
+
     @Test func planPageDecodes() throws {
         let p = try fixture("plan", as: PlanPage.self)
         let plan = try #require(p.accepted)

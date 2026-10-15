@@ -171,7 +171,7 @@ def test_sync_method_and_watch_file_keys(tmp_path, monkeypatch):
                                                       "taken": []}
     hrv = hrv_fit(utc(2026, 10, 5, 13, 31), 61)
     r = client.post("/api/import?name=hrv.fit&watch_file=68-1-1791000000", content=hrv).json()
-    assert r["wellness_days"] == 1
+    assert r["wellness_days"] == 1 and len(r["wellness_dates"]) == 1
     client.post("/api/import?name=bad.fit&watch_file=4-9-1", content=b"not a file")  # unreadable: not kept
     w = client.get("/api/import/watch").json()
     assert w["files"] == ["68-1-1791000000"] and w["last_sync"]

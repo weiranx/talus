@@ -252,7 +252,7 @@ def today() -> dict:
     last_28 = _activities(store, day - timedelta(days=27))
     zm = _zone_model(store)
     call = daily_call(ready, checkin, th.aet) | {"source": "rules", "planned": False}
-    planned = _planned_today(store, day, th.aet)
+    planned, ahead = _today_plan(store, day, th.aet)
     if planned and call["call"] == "go":
         # A scheduled run sets a "go" day's session; a modify or rest call keeps its easier one,
         # so the call can ease a planned run but never make it harder.
@@ -271,7 +271,11 @@ def today() -> dict:
             for d in recent if d.ledger == name]} for name in ledger.LEDGERS if name in now},
         "week": {"start": week_start.isoformat(), "activities": week,
                  "distance_mi": sum(a["distance_mi"] for a in week),
-                 "gain_ft": sum(a["gain_ft"] for a in week), "loss_ft": sum(a["loss_ft"] for a in week)},
+                 "gain_ft": sum(a["gain_ft"] for a in week), "loss_ft": sum(a["loss_ft"] for a in week),
+                 # Last week through the same weekday as today, so the week in progress compares like for like.
+                 "last_week_to_date": _week_totals(last_28, (week_start - timedelta(weeks=1)).isoformat(),
+                                                   (day - timedelta(weeks=1) + timedelta(days=1)).isoformat())},
+        "ahead": ahead,
         "intensity_28d": _zone_share(last_28),
         "zones_28d": _display_share(last_28, zm),
         "zone_model": _zone_model_json(zm),
@@ -899,7 +903,7 @@ def coach_brief(refresh: bool = False) -> dict:
     day = date.fromisoformat(t["date"])
     acts = _activities(store, day - timedelta(weeks=coach.BRIEF_WEEKS))
     packet = _noted(store, coach.brief_packet(t, [a for a in acts if a["day"] >= (day - timedelta(days=13)).isoformat()], acts))
-    fallback = {k: t["call"][k] for k in ("call", "session", "detail", "why")}
+    fallback = coach.rules_brief(packet)
     out = _coach(store, "brief", t["date"], packet, fallback, refresh)
     if out["source"] == "coach":
         out["reply"] = coach.brief_reply(out["reply"], fallback, t["thresholds"]["aet"])
@@ -1001,18 +1005,50 @@ def _calendar(store: Store, start: date, days: int, acts: list[dict] | None = No
                              ant=th.ant if th else None)
 
 
-def _planned_today(store: Store, day: date, aet: float) -> dict | None:
-    """Today's scheduled run, the athlete's own or the plan's, unless it's already done."""
+AHEAD_DAYS = 3  # the days after today that Today lists and the brief reads
+
+
+def _today_plan(store: Store, day: date, aet: float) -> tuple[dict | None, dict]:
+    """Today's scheduled run, and what's ahead of it: the plan's objective, this week's target
+    with what's done and still scheduled, and each of the next AHEAD_DAYS days. One calendar read
+    covers the week and the days after it."""
     acts = _activities(store, day - timedelta(days=planner.CAPACITY_DAYS))
-    items = [it for it in _calendar(store, day, 1, acts) if it["status"] == "today"]
+    accepted = _accepted(store, acts, day)
+    monday = day - timedelta(days=day.weekday())
+    last = max(monday + timedelta(days=6), day + timedelta(days=AHEAD_DAYS))
+    items = _calendar(store, monday, (last - monday).days + 1, acts)
+    week = schedule.weeks(items, acts, accepted, monday, 7, day)[0]
+    days = []
+    for k in range(1, AHEAD_DAYS + 1):
+        d = (day + timedelta(days=k)).isoformat()
+        days.append({"day": d, "runs": [{f: it[f] for f in ("kind", "title", "detail", "source", "miles", "gain_ft",
+                                                            "loss_ft", "minutes", "benefit", "workout")}
+                                        for it in items if it["day"] == d]})
+    objective = None
+    if accepted is not None:
+        o = accepted["objective"]
+        goal = o.get("goal", "race")
+        objective = {"name": o["name"], "goal": goal, "goal_text": planner.GOAL_KINDS.get(goal, goal),
+                     "event": planner.is_event(o), "day": o["day"],
+                     "days_to_go": (date.fromisoformat(o["day"]) - day).days}
+    ahead = {"objective": objective, "has_plan": accepted is not None,
+             "week": week if accepted is not None or week["ahead"]["miles"] else None, "days": days}
+    return _planned_today(store, day, aet, items, acts, accepted), ahead
+
+
+def _planned_today(store: Store, day: date, aet: float, items: list[dict], acts: list[dict],
+                   accepted: dict | None) -> dict | None:
+    """Today's scheduled run, the athlete's own or the plan's, unless it's already done."""
+    items = [it for it in items if it["status"] == "today"]
     if not items:
         # A plan rest day is still the plan: on a go day the call follows it.
-        rest = [s for s in _sessions(store, _accepted(store, acts, day), acts, day, aet, 1) if s["kind"] == "rest"]
+        rest = [s for s in _sessions(store, accepted, acts, day, aet, 1) if s["kind"] == "rest"]
         return None if not rest else {"title": "Rest", "detail": "Your plan has no run today. Rest, or an easy walk.",
                                       "source": "plan", "kind": "rest", "miles": 0.0, "gain_ft": 0.0, "loss_ft": 0.0}
     it = items[0]
     return {"title": it["title"], "detail": it["detail"], "source": it["source"], "kind": it["kind"],
-            "miles": it["miles"], "gain_ft": it["gain_ft"], "loss_ft": it["loss_ft"]}
+            "miles": it["miles"], "gain_ft": it["gain_ft"], "loss_ft": it["loss_ft"], "minutes": it["minutes"],
+            "benefit": it["benefit"], "workout": it["workout"]}
 
 
 # The AI coach's build runs after the engine's draft is saved, so the request answers at once

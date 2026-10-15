@@ -407,6 +407,28 @@ code { font-family: var(--code); font-size: 13px; background: var(--bg); padding
   background: var(--on-feature); -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 260 90'%3E%3Cpath d='M0 90 L52 38 L78 58 L124 8 L160 44 L184 28 L260 90Z'/%3E%3C/svg%3E") no-repeat bottom right / contain;
   mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 260 90'%3E%3Cpath d='M0 90 L52 38 L78 58 L124 8 L160 44 L184 28 L260 90Z'/%3E%3C/svg%3E") no-repeat bottom right / contain; }
 .call-card > * { position: relative; z-index: 1; }
+/* Why, focus and ahead: a label column beside the text, stacked on a phone. */
+.call-notes { display: flex; flex-direction: column; gap: 10px; margin: 2px 0 0; padding-top: 12px; border-top: 1px solid var(--feature-line); }
+.call-notes > div { display: grid; grid-template-columns: 64px 1fr; gap: 12px; }
+.call-notes dt { font-size: 11px; font-weight: 700; letter-spacing: 0.09em; text-transform: uppercase; color: var(--feature-muted); padding-top: 3px; }
+.call-notes dd { margin: 0; color: var(--feature-soft); min-width: 0; }
+@media (max-width: 520px) { .call-notes > div { grid-template-columns: 1fr; gap: 2px; } }
+
+/* Coming up on Today: the objective, the week against its target and the next few days. */
+.cu-goal { display: flex; align-items: baseline; justify-content: space-between; gap: 8px 12px; flex-wrap: wrap; }
+.cu-days { font-family: var(--mono); font-variant-numeric: tabular-nums; font-size: 26px; font-weight: 700; letter-spacing: -0.02em; line-height: 1.1; }
+.cu-bars { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 12px 20px; }
+.cu-bar { display: flex; flex-direction: column; gap: 5px; }
+.cu-meter { position: relative; height: 8px; border-radius: 4px; background: var(--line); overflow: hidden; }
+.cu-meter span { position: absolute; top: 0; bottom: 0; border-radius: 4px; }
+.cu-meter .done { left: 0; background: var(--c); }
+.cu-meter .sched { background: color-mix(in srgb, var(--c) 35%, transparent); }
+.cu-list { display: flex; flex-direction: column; margin: 0; padding: 0; list-style: none; }
+.cu-list li { display: grid; grid-template-columns: 44px 1fr auto; gap: 10px; align-items: baseline; padding: 8px 0; border-top: 1px solid var(--line); }
+.cu-list li:first-child { border-top: 0; padding-top: 0; }
+.cu-dow { font-size: 12px; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; color: var(--muted); }
+.cu-size { font-family: var(--mono); font-variant-numeric: tabular-nums; font-size: 13px; color: var(--muted); text-align: right; white-space: nowrap; }
+@media (max-width: 520px) { .cu-list li { grid-template-columns: 44px 1fr; } .cu-size { grid-column: 2; text-align: left; } }
 
 /* Ledger cards carry their color along the top edge; the one limiting the legs gets a full ring. */
 .ledger-card { position: relative; overflow: hidden; }

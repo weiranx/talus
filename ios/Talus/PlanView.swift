@@ -269,7 +269,12 @@ private struct SetupReview: View {
     @State private var confirmDelete = false
 
     var body: some View {
-        if let draft = p.draft {
+        if let draft = p.draft, draft.building == true {
+            Card {
+                Text("Your plan for \(obj.name)").font(.title3.weight(.semibold))
+                BuiltBy(plan: draft, reload: reload)
+            }
+        } else if let draft = p.draft {
             Card {
                 HStack(alignment: .top) {
                     Text("Your plan for \(obj.name)").font(.title3.weight(.semibold))
@@ -353,7 +358,12 @@ private struct DraftDetail: View {
     let reload: () async -> Void
 
     var body: some View {
-        if let obj = p.objective, let draft = p.draft {
+        if let obj = p.objective, let draft = p.draft, draft.building == true {
+            Card {
+                Text("The draft for \(obj.name)").font(.title3.weight(.semibold))
+                BuiltBy(plan: draft, reload: reload)
+            }
+        } else if let obj = p.objective, let draft = p.draft {
             Card {
                 HStack(alignment: .top) {
                     VStack(alignment: .leading, spacing: 4) {
@@ -459,6 +469,17 @@ private struct DraftCard: View {
     let reload: () async -> Void
 
     var body: some View {
+        if draft.building == true {
+            Card {
+                SectionLabel("Drafted plan: \(draft.reasonText.lowercased())")
+                BuiltBy(plan: draft, reload: reload)
+            }
+        } else {
+            ready
+        }
+    }
+
+    private var ready: some View {
         Card {
             HStack(alignment: .top) {
                 SectionLabel("Drafted plan: \(draft.reasonText.lowercased())")
@@ -522,6 +543,10 @@ private struct NextRunCard: View {
                     SessionSteps(steps: steps, color: .white.opacity(0.85))
                 } else {
                     Text("\(PlanText.minutes(next.minutes)). \(next.how)").foregroundStyle(.white.opacity(0.85))
+                }
+                if let why = next.benefit {
+                    (Text("Why: ").fontWeight(.semibold).foregroundStyle(.white) + Text(why).foregroundStyle(.white.opacity(0.85)))
+                        .font(.subheadline)
                 }
                 if runs.count > 1 {
                     Divider().overlay(Color.white.opacity(0.2))

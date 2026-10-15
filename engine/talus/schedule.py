@@ -115,13 +115,14 @@ def calendar(runs: list[PlannedRun], plan: dict | None, acts: list[dict], start:
                 items.append({"id": None, "day": s["day"], "kind": PLAN_KIND[s["kind"]], "miles": s["miles"],
                               "gain_ft": s["gain_ft"], "loss_ft": s["loss_ft"], "minutes": s["minutes"],
                               "zone": None, "notes": "", "source": "plan", "title": text["title"],
-                              "estimated_minutes": True, "how": text["how"],
+                              "estimated_minutes": True, "how": text["how"], "benefit": text["benefit"],
                               "workout": s["kind"] in planner.WORKOUTS})
     items.sort(key=lambda it: (it["day"], it["source"] != "manual", it["id"] or 0))
     match(items, acts)
     for it in items:
         it.setdefault("activity", None)
         it.setdefault("how", None)
+        it.setdefault("benefit", None)
         it.setdefault("workout", False)
         it["detail"] = _text(it, aet, zone_text)
         d = date.fromisoformat(it["day"])

@@ -47,6 +47,9 @@ export default function NextRun({ sessions, today }: { sessions: PlanSession[]; 
           </ol>
         </div>
       ) : <div style={{ color: "var(--feature-soft)" }}>{minutesText(next.minutes)}. {next.how}</div>}
+      {next.benefit ? (
+        <div style={{ color: "var(--feature-soft)", fontSize: 14 }}><span style={{ fontWeight: 600 }}>Why: </span>{next.benefit}</div>
+      ) : null}
       {runs.length > 1 ? (
         <div style={{ borderTop: "1px solid var(--feature-line)", paddingTop: 10, display: "flex", flexDirection: "column", gap: 4 }}>
           {runs.slice(1, 4).map((s) => (

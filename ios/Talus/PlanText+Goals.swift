@@ -69,7 +69,7 @@ struct BuiltBy: View {
         if plan.building == true {
             HStack(spacing: 8) {
                 ProgressView().controlSize(.small)
-                Text("The AI coach is building its version of these weeks. Until it's ready, these are the engine's.")
+                Text("The AI coach is drafting your plan, then checking it a second time. It shows here when it's ready, usually in a few minutes.")
             }
             .font(.subheadline).foregroundStyle(.secondary)
             .task(id: plan.id) {
@@ -81,12 +81,20 @@ struct BuiltBy: View {
             }
         } else if plan.builder == "coach" {
             let held = plan.heldWeeks ?? 0
-            (Text("Built by the AI coach. ").fontWeight(.semibold)
-                + Text(plan.approach.map { "\($0) " } ?? "")
-                + Text("The engine checked every week against your load limits"
-                       + (held > 0 ? " and held \(held) week\(held == 1 ? "" : "s") the coach asked for to the 10% build limit." : "."))
-                .foregroundStyle(.secondary))
-                .font(.subheadline)
+            VStack(alignment: .leading, spacing: 6) {
+                (Text("Built by the AI coach. ").fontWeight(.semibold)
+                    + Text(plan.approach.map { "\($0) " } ?? "")
+                    + Text("The engine checked every week against your load limits"
+                           + (held > 0 ? " and held \(held) week\(held == 1 ? "" : "s") the coach asked for to the 10% build limit." : "."))
+                    .foregroundStyle(.secondary))
+                if let check = plan.check, !check.summary.isEmpty {
+                    (Text(check.revised ? "Second check, revised: " : "Second check: ").fontWeight(.semibold) + Text(check.summary))
+                    if !check.ok {
+                        ForEach(check.issues, id: \.self) { Text("• \($0)").foregroundStyle(.secondary) }
+                    }
+                }
+            }
+            .font(.subheadline)
         }
     }
 }

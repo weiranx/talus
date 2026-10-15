@@ -1071,7 +1071,7 @@ def _hill_steps(s: dict, z: dict, kind: str) -> list[str]:
         return [f"Climb to the top of a smooth, moderately steep trail in {z['aerobic']}.",
                 f"{_reps(s, (3, 5, 6))} × 3 to 5 min downhill: quick light steps under your hips, eyes ahead, "
                 f"controlled rather than fast; hike or jog back up in {z['aerobic']}.",
-                "This builds the quads for long descents. Expect them sore for a day or two at first."]
+                "Expect your quads sore for a day or two at first."]
     if kind == "muscular_endurance":
         return [f"Warm up 15 min easy, {z['easy']}.",
                 f"With a pack of 10 to 20% of your body weight (start light), hike your steepest climb for "
@@ -1088,6 +1088,64 @@ def _hill_steps(s: dict, z: dict, kind: str) -> list[str]:
             "Descend relaxed, with quick feet."]
 
 
+# What each session does for the athlete, one or two plain sentences, no numbers.
+BENEFITS = {
+    "rest": "Your body absorbs the training while you rest: fitness is built in recovery, not in the session.",
+    "long": "Builds the endurance and time on feet your objective needs, trains your legs for hours of climbing "
+            "and descending, and teaches your gut to take food on the move.",
+    "long_road": "Builds aerobic endurance and the fuel stores and leg resilience for the late miles of the race.",
+    "long2": "Trains you to move well on tired legs, the way the second half of a long race feels, without the "
+             "risk of one huge day.",
+    "track": "Raises your aerobic ceiling and running economy, so every pace below it, race pace included, feels easier.",
+    "threshold": "Lifts your anaerobic threshold, the hardest effort you can hold for about an hour, so you can "
+                 "run and climb harder before you tire.",
+    "tempo": "Teaches you to hold a strong, steady effort for a long time and pushes your threshold up.",
+    "race_pace": "Rehearses your goal pace, fueling and terrain so race day feels familiar, and locks in the effort.",
+    "fartlek": "Teaches you to change gears on rolling ground and recover while still moving, with less strain "
+               "than structured intervals.",
+    "progression": "Trains you to finish strong on tired legs and builds steady-state fitness at a low recovery cost.",
+    "hill_repeats": "Builds climbing strength and power and raises your aerobic ceiling, with less pounding than flat speed work.",
+    "vert_climb": "Builds climbing endurance and your aerobic base on the uphill, and gets your legs used to long "
+                  "sustained grades.",
+    "power_hike": "Makes your hiking on steep ground faster and more efficient: most mountain races walk the steep "
+                  "climbs, and a strong hike saves minutes and energy.",
+    "downhill": "Builds the quads for long descents, the eccentric strength that keeps them working late in a "
+                "race when the downhills usually wreck them.",
+    "muscular_endurance": "Builds leg strength endurance for long climbs without the pounding of running, for the "
+                          "late hours when your legs, not your breathing, slow you.",
+    "hill_sprints": "Builds power, stride strength and good form with almost no fatigue, and toughens tendons "
+                    "against injury.",
+    "recovery": "Gets blood moving through tired legs after the long day and adds easy aerobic time without adding fatigue.",
+    "strides": "Keeps your legs quick and your form efficient without adding fatigue.",
+    "easy": "Builds the aerobic base that every long day rests on, more capillaries and better fat burning, "
+            "with little fatigue.",
+}
+STRENGTH_BENEFIT = "The strength work protects your knees and hips on the descents and keeps your stride strong late."
+NIGHT_BENEFIT = "The dark section practices headlamp running and staying alert when you'd normally sleep."
+
+
+def session_benefit(s: dict) -> str | None:
+    """What the session does for the athlete."""
+    kind = s["kind"]
+    kind_of = s.get("type") or kind
+    if kind in ("done", "objective"):
+        return None
+    if kind == "hills":
+        key = kind_of if kind_of in HILL_SESSIONS else "vert_climb"
+    elif kind == "long" and s.get("race") == "road":
+        key = "long_road"
+    elif kind_of in ("recovery", "strides"):
+        key = kind_of
+    else:
+        key = kind if kind in BENEFITS else "easy"
+    out = [BENEFITS[key]]
+    if s.get("night") and kind in ("long", "long2"):
+        out.append(NIGHT_BENEFIT)
+    if s.get("strength"):
+        out.append(STRENGTH_BENEFIT)
+    return " ".join(out)
+
+
 def session_text(s: dict, aet: float, objective_name: str | None = None, ant: float | None = None) -> dict:
     """The words for a session: a title, the steps to run it, how (the steps as one line), and the
     full detail with its numbers. Every number is the engine's or the athlete's own heart rate."""
@@ -1096,15 +1154,16 @@ def session_text(s: dict, aet: float, objective_name: str | None = None, ant: fl
     z = hr_zones(aet, ant)
     if kind == "done":
         return {"title": "Done for today", "how": "Today's training is in. Recover.",
-                "detail": "Today's training is in. Recover.", "steps": []}
+                "detail": "Today's training is in. Recover.", "steps": [], "benefit": None}
     if kind == "rest":
         steps = [f"Rest, or 30 to 45 min of easy cross-training (bike, swim or a walk) in {z['recovery']}.",
                  "10 min of mobility: hips, ankles and calves."]
         how = " ".join(steps)
-        return {"title": "Rest", "how": how, "detail": how, "steps": steps}
+        return {"title": "Rest", "how": how, "detail": how, "steps": steps, "benefit": BENEFITS["rest"]}
     vol = f"{s['miles']:.1f} mi, {round(s['gain_ft'], -1):,.0f} ft up, {round(s['loss_ft'], -1):,.0f} ft down"
     if kind == "objective":
-        return {"title": objective_name or "Objective", "how": "Go well.", "detail": f"{vol}. Go well.", "steps": []}
+        return {"title": objective_name or "Objective", "how": "Go well.", "detail": f"{vol}. Go well.", "steps": [],
+                "benefit": None}
     mins = f"about {round(s['minutes'] / 5) * 5:.0f} min"
     race = s.get("race", "mountain")
     if kind == "long" and race == "road":
@@ -1146,7 +1205,8 @@ def session_text(s: dict, aet: float, objective_name: str | None = None, ant: fl
         title += " + strength"
         steps.append(STRENGTH)
     how = " ".join(steps)
-    return {"title": title, "how": how, "detail": f"{vol}, {mins}. {how}", "steps": steps}
+    return {"title": title, "how": how, "detail": f"{vol}, {mins}. {how}", "steps": steps,
+            "benefit": session_benefit(s)}
 
 
 # Weekly review and replanning ------------------------------------------------------------------

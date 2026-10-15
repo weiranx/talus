@@ -325,10 +325,30 @@ BUILD_SCHEMA = {
     },
     "required": ["approach", "weeks"], "additionalProperties": False,
 }
-BUILD_PROMPT = """Build this athlete's training plan, week by week, as their coach. The data holds the objective or goal (objective.event false means a block with no race day: no taper and no race week), the athlete's training days and time limits, their last 12 weeks and biggest days, athlete_note and athlete_answers when they gave them, and engine_draft: the engine's own plan, one entry per week, as a safe reference. Write exactly one entry per engine_draft week, in the same order with the same start. For each week choose the focus, the week's miles, gain_ft and loss_ft, the one speed session (or none), the hill day's session, and a note of one short sentence for the athlete on the week's purpose and its key sessions. Speed sessions: track (800 m repeats over AnT), threshold (6 min repeats at AnT), tempo (blocks just under AnT), fartlek (mixed surges on rolling trail), progression (easy building to tempo), hill_repeats (2 min hard uphill), race_pace (miles at goal pace). Hill day sessions: vert_climb (a long zone 2 climb, also the easy option for recovery and taper weeks), power_hike (6 min steep power-hike intervals), downhill (downhill repeats for quad durability), muscular_endurance (weighted-pack hiking on the steepest climb, best in the last build and peak weeks), hill_sprints (10 to 15 s uphill sprints, for road races). Vary them through the build so the athlete trains climbing, hiking, descending and leg strength; the engine also adds strides, recovery runs after long days and two strength sessions a week on its own. Shape the plan the way a good mountain coach would for this athlete and this goal: how fast to build, where the recovery weeks fall, when to peak, how long to taper, when to lean on vert or on miles, and which speed work fits (none for most ultra and mountain builds; track or tempo for road races and getting faster; hill repeats for steep objectives). Respect the note and answers: an injury or niggle, tired lately, little vert near home, a preference they state. The engine checks every week and holds anything that breaks its limits: no week may add more than 10% in any of miles, gain or loss over the last build week, and a week that would ramp a load too fast or overreach is cut. So plan within those limits; a week you ask for above them is cut back. Recovery weeks run about 60 to 75% of the build level. For an event, the last week is the race week (focus race) and the weeks before it taper. Miles and feet only. approach is two or three sentences on how you shaped the plan and why, for the athlete."""
+BUILD_PROMPT = """Build this athlete's training plan, week by week, as their coach. The data holds the objective or goal (objective.event false means a block with no race day: no taper and no race week), the athlete's training days and time limits, their last 12 weeks and biggest days, athlete_note and athlete_answers when they gave them, and engine_draft: the engine's own plan, one entry per week, as a safe reference. weekly_targets_the_objective_needs is the weekly volume the engine sizes the peak weeks to; readiness_now and engine_draft_readiness_at_taper show each readiness dimension against what the objective asks, now and at the taper on the engine's draft: shape the weeks so the plan closes the dimensions still short (the limiter first), within the limits. A second coach checks your plan before the athlete sees it. Write exactly one entry per engine_draft week, in the same order with the same start. For each week choose the focus, the week's miles, gain_ft and loss_ft, the one speed session (or none), the hill day's session, and a note of one short sentence for the athlete on the week's purpose and its key sessions. Speed sessions: track (800 m repeats over AnT), threshold (6 min repeats at AnT), tempo (blocks just under AnT), fartlek (mixed surges on rolling trail), progression (easy building to tempo), hill_repeats (2 min hard uphill), race_pace (miles at goal pace). Hill day sessions: vert_climb (a long zone 2 climb, also the easy option for recovery and taper weeks), power_hike (6 min steep power-hike intervals), downhill (downhill repeats for quad durability), muscular_endurance (weighted-pack hiking on the steepest climb, best in the last build and peak weeks), hill_sprints (10 to 15 s uphill sprints, for road races). Vary them through the build so the athlete trains climbing, hiking, descending and leg strength; the engine also adds strides, recovery runs after long days and two strength sessions a week on its own. Shape the plan the way a good mountain coach would for this athlete and this goal: how fast to build, where the recovery weeks fall, when to peak, how long to taper, when to lean on vert or on miles, and which speed work fits (none for most ultra and mountain builds; track or tempo for road races and getting faster; hill repeats for steep objectives). Respect the note and answers: an injury or niggle, tired lately, little vert near home, a preference they state. The engine checks every week and holds anything that breaks its limits: no week may add more than 10% in any of miles, gain or loss over the last build week, and a week that would ramp a load too fast or overreach is cut. So plan within those limits; a week you ask for above them is cut back. Recovery weeks run about 60 to 75% of the build level. For an event, the last week is the race week (focus race) and the weeks before it taper. Miles and feet only. approach is two or three sentences on how you shaped the plan and why, for the athlete."""
+
+# A second read of the plan before the athlete sees it: the coach checks the weeks the engine
+# held to its limits and, when something is off, sends back a revised plan the engine checks again.
+CHECK_SCHEMA = {
+    "type": "object",
+    "properties": {"ok": {"type": "boolean"}, "summary": {"type": "string"},
+                   "issues": {"type": "array", "items": {"type": "string"}},
+                   "weeks": BUILD_SCHEMA["properties"]["weeks"]},
+    "required": ["ok", "summary", "issues", "weeks"], "additionalProperties": False,
+}
+CHECK_MAX_ISSUES = 5
+CHECK_PROMPT = """Check this training plan as a second coach, before the athlete sees it. plan_to_check is the plan as it stands after the engine held every week to its limits: each week's focus, miles, feet up and down, hours, long day, speed session, hill session, the note to the athlete (coach_note) and the engine's own notes (a week held to the 10% build limit, or cut for a load limit). coach_approach is how the builder says it shaped the plan. Check it against the objective, readiness now and projected at the taper (which dimension is still a gap, and does the plan train it), the athlete's training days, time limits, note and answers, and their last 12 weeks and biggest days. Look for: a week or long day their history doesn't support; a build too fast or too timid for the time there is; a missing or misplaced recovery week; a taper too short or too long for the distance; a gap dimension (climbing volume, descent durability, time on feet, the big day) the weeks don't close; speed work that doesn't fit the goal or the note; hill sessions that never vary or don't suit the week; a week the engine cut that leaves the shape odd, such as a jump right after it; a coach_note that no longer matches its week; an injury, tiredness or preference the plan ignores. ok is true when the plan is sound as it is: then weeks is empty and issues holds at most minor points. When something should change, ok is false, issues names each problem in one short sentence (at most five), and weeks is the whole revised plan: exactly one entry per engine_draft week, in the same order with the same start, in the builder's form (focus, miles, gain_ft, loss_ft, workout, hill_session, note), each week still inside the engine's limits (no more than 10% over the last build week in any of miles, gain or loss; recovery weeks about 60 to 75% of the build level). Change only what the issues need and keep the rest of the plan as it is. summary is one or two sentences for the athlete on what the check found and, when ok is false, what it changed. Miles and feet only."""
+
+# After each sync with a plan accepted: does the latest training help the plan?
+FIT_FIELDS = ("helps", "week", "next")
+FIT_DAYS = 3  # today and the two days before it
+FIT_PROMPT = """Plan fit: the athlete just synced. Say whether their latest training helps their plan. recent_days holds each of the last few days: the plan's session for it (planned: kind, title, size and benefit, what the session is for), or null for a rest day, and what they did (done: each activity, matched to the day by the calendar), or empty. unplanned holds activities with no planned session behind them. this_week is the week's target with what's done and what's still scheduled; flags are load flags raised today; replan_suggested lists reasons the engine suggests a new plan. Three fields, one or two sentences each:
+- helps: did the latest training do the planned session's job and move the athlete toward the objective? Set its miles, feet up and down and time against the planned ones, and judge it against the session's benefit (an easy day run hard, a long day cut short or a hill day with little vert doesn't do its job). For a missed or swapped session, or an unplanned run, say what it gave or cost the plan.
+- week: where this week stands against its target, counting what's still scheduled.
+- next: what to do with the rest of the week: carry on as planned, or ease off when a load is flagged or a run went well over. Never tell them to make up missed miles. Name the next planned session. When replan_suggested is not empty, say a new plan is suggested on the Plan page and why."""
 
 # Reads that run on the brief's cheaper model: short, once a day or once an activity.
-CHEAP_MODES = {"load", "name"}
+CHEAP_MODES = {"load", "name", "fit"}
 
 MODES = {
     # Short reply, so low effort keeps it quick; analysis gets more thought.
@@ -348,6 +368,11 @@ MODES = {
     # Building the plan's weeks; the engine checks them. Its numbers are new by design.
     "build": {"label": "plan builder", "schema": BUILD_SCHEMA, "effort": "medium", "max_tokens": 20000,
               "prompt": BUILD_PROMPT, "free_numbers": True},
+    # Checking the built plan and revising it when needed; the engine checks any revision again.
+    "check": {"label": "plan check", "schema": CHECK_SCHEMA, "effort": "medium", "max_tokens": 20000,
+              "prompt": CHECK_PROMPT, "free_numbers": True},
+    "fit": {"label": "plan fit", "schema": _schema(FIT_FIELDS), "effort": "low", "max_tokens": 6000,
+            "prompt": FIT_PROMPT},
     # Drafting the athlete's training note from a few answers and their history.
     "note": {"label": "training note", "schema": _schema(NOTE_FIELDS), "effort": "low", "max_tokens": 4000,
              "prompt": NOTE_PROMPT},
@@ -733,7 +758,7 @@ def plan_packet(plan: dict, now: dict, today: date, reason: str, changes: list[d
 def build_packet(plan: dict, acts: list[dict], today: date) -> dict:
     """Context for building a plan: the goal, the athlete's limits and history, and the engine's
     draft of the same weeks as a reference."""
-    from .plan import DAY_NAMES
+    from .plan import BUILD_RATE, DAY_NAMES
 
     c = plan["constraints"]
     return {
@@ -745,12 +770,111 @@ def build_packet(plan: dict, acts: list[dict], today: date) -> dict:
         "back_to_back_long_days": plan.get("back_to_back"),
         "recent_per_week": {"distance_mi": _r(plan["baseline"]["miles"], 1), "gain_ft": _r(plan["baseline"]["gain_ft"]),
                             "loss_ft": _r(plan["baseline"]["loss_ft"]), "hours": _r(plan["baseline"]["hours"], 1)},
+        "weekly_targets_the_objective_needs": {"distance_mi": _r(plan["peak"]["miles"], 1),
+                                               "gain_ft": _r(plan["peak"]["gain_ft"]), "loss_ft": _r(plan["peak"]["loss_ft"])},
+        "readiness_now": _dims(now) if (now := plan.get("now")) else [],
+        "limiter_now": _dim_name(now, now["limiter"]) if now else None,
+        "engine_draft_readiness_at_taper": _dims(proj) if (proj := plan.get("projected")) else [],
+        "engine_draft_reachable": plan["reachable"],
+        "limits": {"build_week_max_increase_pct": round((BUILD_RATE - 1) * 100),
+                   "recovery_week_pct_of_build": [60, 75]},
         "weeks_history": weekly_history(acts, today, HISTORY_WEEKS),
         "bests_90d": bests(acts, today),
         "engine_draft": [{"start": w["start"], "focus": w["focus"], "miles": _r(w["miles"], 1),
                           "gain_ft": _r(w["gain_ft"]), "loss_ft": _r(w["loss_ft"]), "workout": w.get("workout") or "none",
                           "hill_session": w.get("hill_session"), "held_back_by": w["limited_by"]} for w in plan["weeks"]],
     }
+
+
+def check_packet(engine_plan: dict, plan: dict, approach: str, acts: list[dict], today: date) -> dict:
+    """Context for checking the coach's plan: what the builder saw, plus the plan as the engine
+    held it, its projected readiness and the builder's approach."""
+    proj = plan.get("projected")
+    return build_packet(engine_plan, acts, today) | {
+        "coach_approach": approach,
+        "plan_to_check": [_week(w) | {"workout": w.get("workout") or "none", "hill_session": w.get("hill_session"),
+                                      "coach_note": w.get("coach_note")} for w in plan["weeks"]],
+        "readiness_projected_at_taper": _dims(proj) if proj else [],
+        "limiter_projected": _dim_name(proj, proj["limiter"]) if proj else None,
+        "reachable": plan["reachable"],
+    }
+
+
+def _planned(it: dict) -> dict:
+    return {"kind": it["kind"], "title": it["title"], "distance_mi": _r(it["miles"], 1), "gain_ft": _r(it["gain_ft"]),
+            "loss_ft": _r(it["loss_ft"]), "hours": _r((it.get("minutes") or 0) / 60, 1), "benefit": it.get("benefit")}
+
+
+def fit_packet(items: list[dict], acts: list[dict], week: dict, objective: dict, flags: list[str],
+               replan: list[str], today: date) -> dict:
+    """Context for reading the last few days against the plan: each day's planned session and what
+    was done, runs the plan didn't have, and this week's target, done and still scheduled."""
+    by_id = {a["id"]: a for a in acts}
+    days = sorted({it["day"] for it in items} | {a["day"] for a in acts})
+    matched = {it["activity"]["id"] for it in items if it.get("activity")}
+    recent = []
+    for d in days:
+        planned = [it for it in items if it["day"] == d and it["kind"] != "rest"]
+        done = [_activity_line(by_id[it["activity"]["id"]]) for it in planned
+                if it.get("activity") and it["activity"]["id"] in by_id]
+        recent.append({"day": d, "planned": [_planned(it) for it in planned] or None, "done": done,
+                       "status": next((it["status"] for it in planned), "rest")})
+    dims = ("miles", "gain_ft", "loss_ft")
+    name = {"miles": "distance_mi", "gain_ft": "gain_ft", "loss_ft": "loss_ft"}
+
+    def vol(v: dict | None) -> dict | None:
+        return None if v is None else {name[k]: _r(v[k], 1 if k == "miles" else 0) for k in dims}
+
+    return {
+        "today": today.isoformat(),
+        "objective": objective,
+        "recent_days": recent,
+        "unplanned": [_activity_line(a) for a in acts if a["id"] not in matched],
+        "this_week": {"start": week["start"], "focus": (week.get("target") or {}).get("focus"),
+                      "target": vol(week.get("target")), "done": vol(week.get("done")),
+                      "still_scheduled": vol(week.get("ahead"))},
+        "flags": flags,
+        "replan_suggested": replan,
+    }
+
+
+def rules_fit(packet: dict) -> dict:
+    """The plan fit from engine numbers alone."""
+    def size(v: dict) -> str:
+        return f"{v['distance_mi']} mi with {v['gain_ft']:,} ft up"
+
+    days = [d for d in packet["recent_days"] if d["done"]]
+    last = days[-1] if days else None
+    if last and last["planned"]:
+        did, plan = last["done"][-1], last["planned"][0]
+        ratio = (did["distance_mi"] or 0) / plan["distance_mi"] if plan["distance_mi"] else 1.0
+        how = "about as planned" if 0.85 <= ratio <= 1.15 else "short of the plan" if ratio < 0.85 else "over the plan"
+        helps = f"Your {did['day']} run, {size(did)}, came in {how} against its {plan['title']} of {size(plan)}."
+        if plan.get("benefit"):
+            helps += " " + plan["benefit"]
+    elif packet["unplanned"]:
+        u = packet["unplanned"][-1]
+        helps = f"Your {u['day']} run, {size(u)}, wasn't on the plan; it counts toward the week."
+    else:
+        missed = [d for d in packet["recent_days"] if d["status"] == "missed"]
+        helps = ("The plan's " + missed[-1]["planned"][0]["title"] + f" on {missed[-1]['day']} has no run against it yet."
+                 if missed else "No runs in the last few days to read against the plan.")
+    w = packet["this_week"]
+    if w["target"] and w["done"]:
+        week = (f"This week: {size(w['done'])} done of {size(w['target'])}"
+                + (f", with {size(w['still_scheduled'])} still scheduled." if w["still_scheduled"] and w["still_scheduled"]["distance_mi"] else "."))
+    else:
+        week = "No plan target for this week."
+    upcoming = [d for d in packet["recent_days"] if d["status"] in ("today", "planned") and not d["done"] and d["planned"]]
+    if packet["flags"]:
+        nxt = "A load is flagged today: keep the next days easy rather than pushing the plan."
+    elif upcoming:
+        nxt = f"Carry on with the plan: {upcoming[0]['planned'][0]['title']} next. Don't make up missed miles."
+    else:
+        nxt = "Carry on with the plan, and don't make up missed miles."
+    if packet["replan_suggested"]:
+        nxt += " A new plan is suggested on the Plan page: " + "; ".join(packet["replan_suggested"]).lower() + "."
+    return {"helps": helps, "week": week, "next": nxt}
 
 
 def _brief_week(w: dict | None) -> dict | None:
@@ -981,8 +1105,10 @@ def _plausible_run(a: Any) -> bool:
 
 def check(reply: dict, packet: dict, mode: str) -> list[str]:
     """Problems with a reply, as sentences the model can act on. Empty means it passes."""
-    if mode in FIELD_MODES or MODES[mode].get("free_numbers"):
+    if mode in FIELD_MODES:
         return []
+    if MODES[mode].get("free_numbers"):
+        return _week_problems(reply, packet, mode)
     allowed = allowed_numbers(packet) | PROMPT_NUMBERS
     # A proposed run carries new numbers (its size), which the athlete confirms on its card; the
     # answer may quote them, and every other number still has to come from the data. Only where
@@ -1006,6 +1132,23 @@ def check(reply: dict, packet: dict, mode: str) -> list[str]:
         if CALL_ORDER.index(reply["call"]) < CALL_ORDER.index(rules):
             problems.append(f"The call may not be less cautious than the rule-based call ({rules}).")
     return problems
+
+
+def _week_problems(reply: dict, packet: dict, mode: str) -> list[str]:
+    """A built or revised plan has to line up with the engine's weeks, so the engine can check it.
+    A check that finds the plan sound sends no weeks."""
+    if "engine_draft" not in packet or "weeks" not in reply:
+        return []
+    weeks = reply["weeks"] or []
+    if mode == "check" and reply.get("ok") and not weeks:
+        return []
+    starts = [w["start"] for w in packet["engine_draft"]]
+    if mode == "check" and not weeks:
+        return ["ok is false but weeks is empty: send the whole revised plan, or set ok to true."]
+    if [w.get("start") for w in weeks] != starts:
+        return [f"weeks must have exactly {len(starts)} entries, one per engine_draft week in the same order, "
+                f"starting {starts[0]} and ending {starts[-1]}."]
+    return []
 
 
 # Rule-based fallbacks ----------------------------------------------------------------------
@@ -1111,7 +1254,7 @@ def _ask(client: Client, mode: str, packet: dict, problems: list[str], model_id:
     text += "Data:\n" + json.dumps(packet, sort_keys=True)
     if problems:
         text += ("\n\nYour last reply was rejected. " + " ".join(problems)
-                 + " Write it again using only numbers that appear in the data.")
+                 + (" Write it again." if cfg.get("free_numbers") else " Write it again using only numbers that appear in the data."))
     resp = client.beta.messages.create(
         model=model_id,
         max_tokens=cfg["max_tokens"],

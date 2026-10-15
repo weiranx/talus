@@ -1002,7 +1002,7 @@ def _planned_today(store: Store, day: date, aet: float) -> dict | None:
 # (the proxy in front of the engine drops requests that run past 100 s) and the draft updates in
 # place when the coach is done. Tests run it inline.
 AI_BUILD_INLINE = False
-BUILD_STALE_S = 900  # a build this old was lost (the engine restarted); the engine's draft stands
+BUILD_STALE_S = 1800  # a build this old was lost (the engine restarted); the engine's draft stands
 
 
 def _build_draft(store: Store, obj: planner.Objective, reason: str) -> dict:
@@ -1089,9 +1089,50 @@ def _ai_build(store: Store, obj: planner.Objective, acts: list[dict], history: l
         plan = planner.build(obj, acts, history, c, day, out["reply"]["weeks"])
     except (planner.PlanError, KeyError, TypeError, ValueError) as e:
         return engine_plan | {"builder_note": f"rejected: {e}"}
+    approach = out["reply"]["approach"][:800]
+    try:
+        plan, check, check_cost = _ai_check(store, obj, acts, history, c, day, engine_plan, plan, approach)
+    except Exception:  # noqa: BLE001 - a failed check leaves the coach's plan as the engine held it
+        check, check_cost = None, None
     held = sum(1 for w in plan["weeks"] if any(n.startswith("The coach asked for more") for n in w["notes"]))
-    return plan | {"builder": "coach", "approach": out["reply"]["approach"][:800], "build_cost": out["cost"],
-                   "held_weeks": held}
+    return plan | {"builder": "coach", "approach": approach, "build_cost": _cost_sum(out["cost"], check_cost),
+                   "held_weeks": held, "check": check}
+
+
+def _ai_check(store: Store, obj: planner.Objective, acts: list[dict], history: list, c: planner.Constraints,
+              day: date, engine_plan: dict, plan: dict, approach: str) -> tuple[dict, dict | None, dict | None]:
+    """A second read by the coach of its plan as the engine held it. When the check finds
+    problems it sends a revised plan, which the engine builds and holds to its limits again; the
+    revision stands unless the engine refuses it or it puts a reachable objective out of reach.
+    Returns the plan, what the check found (None when it didn't run) and its cost."""
+    packet = coach.check_packet(engine_plan, plan, approach, acts, day)
+    _noted(store, packet)
+    if answers := store.settings().get("plan_context"):
+        packet["athlete_answers"] = answers
+    out = _coach(store, "check", f"check-{obj.id}", packet, {"ok": True, "summary": "", "issues": [], "weeks": []}, False)
+    if out["source"] != "coach":
+        return plan, None, None
+    reply = out["reply"]
+    check = {"ok": bool(reply["ok"]), "summary": reply["summary"].strip()[:600],
+             "issues": [str(i).strip()[:240] for i in reply["issues"][:coach.CHECK_MAX_ISSUES] if str(i).strip()],
+             "revised": False}
+    if not check["ok"] and reply["weeks"]:
+        try:
+            revised = planner.build(obj, acts, history, c, day, reply["weeks"])
+        except (planner.PlanError, KeyError, TypeError, ValueError):
+            return plan, check | {"kept": "refused"}, out["cost"]
+        if plan["reachable"] and not revised["reachable"]:
+            return plan, check | {"kept": "out_of_reach"}, out["cost"]
+        plan, check["revised"] = revised, True
+    return plan, check, out["cost"]
+
+
+def _cost_sum(a: dict | None, b: dict | None) -> dict | None:
+    """Two calls' shown costs as one line."""
+    if a is None or b is None:
+        return a or b
+    return a | {"usd": round(a["usd"] + b["usd"], 6), "input_tokens": a["input_tokens"] + b["input_tokens"],
+                "output_tokens": a["output_tokens"] + b["output_tokens"], "cached": a.get("cached") and b.get("cached")}
 
 
 def _last_week_review(store: Store, accepted: dict | None, acts: list[dict], day: date) -> dict:
@@ -1114,7 +1155,7 @@ def _plan_json(p: dict | None) -> dict | None:
     return {k: p.get(k) for k in ("id", "status", "reason", "created_at", "decided_at", "built_on", "constraints",
                                   "baseline", "pace", "demand", "peak", "weeks", "projected", "reachable",
                                   "back_to_back", "race_type", "goal", "target",
-                                  "builder", "approach", "build_cost", "held_weeks",
+                                  "builder", "approach", "build_cost", "held_weeks", "check",
                                   "options", "now", "changes")} | {"reason_text": planner.REPLAN_TEXT.get(p["reason"], p["reason"]),
                                                                    "building": _building(p)}
 
@@ -1355,7 +1396,8 @@ def _talk_caught_up(store: Store, st: dict) -> bool:
         return False
     st.pop("building")
     if draft is not None and draft["id"] == draft_id and st.get("step") == "draft":
-        st["messages"] = (st["messages"] + [interview.coach(interview.built_text(draft), "draft",
+        text = interview.built_text(draft, st.get("mode", "setup"), st.get("answers"))
+        st["messages"] = (st["messages"] + [interview.coach(text, "draft",
                                                             actions=_draft_actions(store))
                                             | ({"cost": draft["build_cost"]} if draft.get("build_cost") else {})])[-TALK_KEEP:]
     return True
@@ -1532,14 +1574,12 @@ def _talk_finish(store: Store, st: dict, day: date) -> list[dict]:
         st["step"] = "stuck"
         return [interview.coach(str(e.detail), "stuck", actions=[{"id": "retry", "label": "Try again"}])]
     st["step"] = "draft"
-    actions = [{"id": "accept", "label": "Accept plan"}]
-    if store.plan("accepted") is not None:
-        actions.append({"id": "keep", "label": "Keep my current plan"})
-    text = interview.draft_summary(plan, obj.name, c.long_day, a)
     if plan.get("building"):
+        # The AI coach's plan is what the athlete sees; the engine's draft only if the coach fails.
         st["building"] = plan["id"]
-        text += "\n" + interview.BUILDING_TEXT
-    return [interview.coach(text, "draft", actions=actions)]
+        return [interview.coach("Your answers are in. " + interview.BUILDING_TEXT, "draft")]
+    return [interview.coach(interview.draft_summary(plan, obj.name, c.long_day, a), "draft",
+                            actions=_draft_actions(store))]
 
 
 def _talk_change(store: Store, st: dict, text: str, day: date) -> list[dict]:
@@ -1572,14 +1612,12 @@ def _talk_change(store: Store, st: dict, text: str, day: date) -> list[dict]:
     except HTTPException as e:
         return [interview.coach(str(e.detail), "draft") | (meta or {})]
     st["step"] = "draft"
-    actions = [{"id": "accept", "label": "Accept plan"}]
-    if store.plan("accepted") is not None:
-        actions.append({"id": "keep", "label": "Keep my current plan"})
-    text = interview.change_text(done, skipped, planner.diff(before, plan))
     if plan.get("building"):
         st["building"] = plan["id"]
-        text += "\n" + interview.BUILDING_TEXT
-    return [interview.coach(text, "draft", actions=actions) | (meta or {})]
+        return [interview.coach(interview.change_text(done, skipped, None) + "\n" + interview.BUILDING_TEXT, "draft")
+                | (meta or {})]
+    return [interview.coach(interview.change_text(done, skipped, planner.diff(before, plan)), "draft",
+                            actions=_draft_actions(store)) | (meta or {})]
 
 
 def _talk_question(store: Store, text: str, day: date, obj: planner.Objective, plan: dict) -> dict:
@@ -1648,6 +1686,11 @@ def post_talk(body: TalkIn) -> dict:
         draft = store.plan("draft")
         if draft is None:
             reply = [interview.coach("There's no draft waiting. Your plan is as it was.")]
+        elif body.action == "accept" and _building(draft):
+            reply = [interview.coach("The AI coach is still drafting this plan. It shows up here when it's ready.", "draft")]
+            st["messages"] = (st["messages"] + reply)[-TALK_KEEP:]
+            store.save_settings({TALK_KEY: st})
+            return _talk_json(store, st)
         else:
             store.decide_draft(draft["id"], body.action == "accept")
             reply = [interview.coach("Done. Your plan is on the calendar, and you can change it here any time."
@@ -1684,6 +1727,9 @@ def post_talk(body: TalkIn) -> dict:
 def decide_plan(plan_id: int, decision: str) -> dict:
     if decision not in ("accept", "decline"):
         raise HTTPException(404, "Accept or decline.")
+    draft = get_store().plan("draft")
+    if decision == "accept" and draft is not None and draft["id"] == plan_id and _building(draft):
+        raise HTTPException(409, "The AI coach is still drafting this plan. Accept it once it's ready.")
     if not get_store().decide_draft(plan_id, decision == "accept"):
         raise HTTPException(404, "No draft plan with that id.")
     return get_plan()
@@ -1721,6 +1767,30 @@ def coach_review(refresh: bool = False) -> dict:
                                  review["replan_text"])
     _noted(store, packet)
     return _coach(store, "review", review["start"], packet, coach.rules_review(packet), refresh) | {"review": review}
+
+
+@app.get("/api/coach/fit")
+def coach_fit(refresh: bool = False) -> dict:
+    """The latest training read against the accepted plan: did it do the planned session's job,
+    where the week stands and what to do with the rest of it. Warmed after every sync."""
+    store = get_store()
+    day = date.today()
+    accepted = store.plan("accepted")
+    if accepted is None:
+        raise HTTPException(404, "No accepted plan yet.")
+    acts = _activities(store, day - timedelta(days=planner.CAPACITY_DAYS))
+    start = day - timedelta(days=coach.FIT_DAYS - 1)
+    items = _calendar(store, start, coach.FIT_DAYS, acts)
+    recent = [a for a in acts if a["day"] >= start.isoformat() and planner.is_foot(a["sport"])]
+    if not recent and not any(it["status"] == "missed" for it in items):
+        raise HTTPException(404, "Nothing in the last few days to read against the plan.")
+    flags = sorted({f for d in store.ledgers(day) if d.day == day and d.ledger in planner.PLAN_LEDGERS
+                    for f in d.flags if f in ("ramp", "overreach")})
+    replan = _last_week_review(store, accepted, acts, day)["replan_text"]
+    packet = _noted(store, coach.fit_packet(items, recent, _this_week(store, accepted, acts, day),
+                                            coach._objective(accepted, day), flags, replan, day))
+    subject = max([a["day"] for a in recent], default=day.isoformat())
+    return _coach(store, "fit", subject, packet, coach.rules_fit(packet), refresh) | {"day": subject}
 
 
 # Scheduled runs
@@ -2120,7 +2190,7 @@ def get_settings() -> dict:
             # Per model, so the screen can show what a switch would cost. Brief: about two a day,
             # after the sync and after the check-in. Analysis: one per activity, at the last 30 days' rate.
             "estimate": {mode: {m: _usage_estimate(store, mode, m, calls) for m in app_settings.MODELS}
-                         for mode, calls in (("brief", 60), ("analysis", analyses), ("build", 4))},
+                         for mode, calls in (("brief", 60), ("analysis", analyses), ("build", 4), ("check", 4))},
             "cap": _coach_cap(store),
         },
         "readiness": dict(zip(("sleep_need_h", "sleep_need_source"), wellness.sleep_need(saved))),
@@ -2964,6 +3034,12 @@ def warm_coach(activity_ids: list[int]) -> list[str]:
     if b["fallback_reason"] in ("no_key", "off"):
         return lines + ["Coach skipped: " + ("no ANTHROPIC_API_KEY" if b["fallback_reason"] == "no_key" else "turned off in Settings")]
     lines.append(f"Coach brief: {b['reply']['call']} ({b['source']})")
+    if store.plan("accepted") is not None:
+        try:
+            f = coach_fit()
+            lines.append(f"Plan fit: {f['source']}")
+        except HTTPException:
+            pass
     recent = (date.today() - timedelta(days=WARM_ANALYSIS_DAYS)).isoformat()
     for aid in dict.fromkeys(activity_ids):
         row = store.activity(aid)

@@ -200,10 +200,19 @@ struct Plan: Codable, Hashable {
     let target: YearTarget?
     /// "coach" when the AI coach built the weeks and the engine held them to its limits.
     let builder: String?
-    /// The AI coach is still building its version; the engine's weeks show until it's done.
+    /// The AI coach is still drafting and checking this plan; until it's done there's nothing to review.
     let building: Bool?
     let approach: String?
     let heldWeeks: Int?
+    /// The coach's second read of its plan.
+    let check: PlanCheck?
+}
+
+struct PlanCheck: Codable, Hashable {
+    let ok: Bool
+    let summary: String
+    let issues: [String]
+    let revised: Bool
 }
 
 struct YearTarget: Codable, Hashable {
@@ -221,6 +230,8 @@ struct PlanSession: Codable, Hashable {
     let minutes: Double
     let title: String
     let how: String
+    /// What the session does for the athlete.
+    let benefit: String?
     let own: Bool?
     /// How to run it, warm-up to cool-down, with heart-rate targets.
     let steps: [String]?

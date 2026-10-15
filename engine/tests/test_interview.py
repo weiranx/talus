@@ -264,10 +264,10 @@ def test_plan_questions_go_to_the_coach(tmp_path, monkeypatch):
                     {"body": "Nothing to note", "feel": "Fresh"}):
         r = client.post("/api/plan/talk", json={"answers": answers}).json()
     assert r["step"] == "draft"
-    fake = FakeClient({"answer": "About 9 to 11 hours on your recent pace.", "used": [], "actions": []})
+    fake = FakeClient({"answer": "About nine to eleven hours on your recent pace.", "used": [], "actions": []})
     monkeypatch.setattr(api, "coach_client", lambda: fake)
     r = client.post("/api/plan/talk", json={"text": "what time can i finish?"}).json()
-    assert r["messages"][-1]["text"] == "About 9 to 11 hours on your recent pace."
+    assert r["messages"][-1]["text"] == "About nine to eleven hours on your recent pace."
     assert len(fake.calls) == 1 and "Mode: chat." in fake.calls[0]["messages"][0]["content"]
     assert client.get("/api/coach/chat").json()["messages"] == []  # not added to the Coach chat
 

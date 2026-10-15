@@ -219,8 +219,8 @@ def test_style_is_saved_in_settings_and_drives_the_coach(tmp_path, monkeypatch):
 def test_import_writes_the_coach_right_away(tmp_path, monkeypatch, capsys):
     monkeypatch.setenv("TALUS_DATA_DIR", str(tmp_path / "data"))
     analysis = {k: "Fine." for k in coach.ANALYSIS_FIELDS}
-    names = [{"name": "Easy loop"}] * 3  # file names like "run02" are generic, so the coach names them
-    fake = FakeClient({"call": "rest", "why": "Rest."}, *names, analysis, analysis)
+    names = [{"name": "Easy loop"}] * 3  # file names like "run02" are generic, so the sync names them first
+    fake = FakeClient(*names, {"call": "rest", "why": "Rest."}, analysis, analysis)
     monkeypatch.setattr(api, "coach_client", lambda: fake)
     cli.main(["thresholds", "--resting", "45", "--aet", "150", "--ant", "172", "--max", "190"])
     files = []

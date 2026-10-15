@@ -43,6 +43,17 @@ def no_real_coach(monkeypatch):
     monkeypatch.setattr(api, "AI_BUILD_INLINE", True)  # the coach's plan build runs in the request
 
 
+@pytest.fixture(autouse=True)
+def no_real_places(monkeypatch):
+    """Never ask OpenStreetMap from tests: every sync names its new activities, and the lookups
+    would otherwise go out. Tests that want places patch area_name and peak_name."""
+    from talus import naming
+
+    def offline(*a, **k):
+        raise naming.LookupFailed("no network in tests")
+    monkeypatch.setattr(naming, "_get", offline)
+
+
 OWNER = {"email": "owner@example.com", "password": "correct horse battery"}
 
 

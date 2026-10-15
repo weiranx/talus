@@ -58,6 +58,9 @@ struct LastSync: Codable, Hashable {
     let saved: Int
     let duplicates: Int?
     let error: String?
+    /// Strava website runs only: activities another source already had, and why a run stopped.
+    var aliased: Int? = nil
+    var errorCode: String? = nil
 }
 
 struct LastImport: Codable, Hashable {
@@ -123,6 +126,9 @@ struct Sources: Codable, Hashable {
     let upload: Upload
     /// nil on engines from before watch sync.
     let watch: Watch?
+    /// Owner-only COROS sign-in and Strava website fallback (SettingsSources.swift); nil on older engines.
+    var coros: Coros? = nil
+    var stravaWeb: StravaWeb? = nil
 }
 
 struct CostEstimate: Codable, Hashable {
@@ -136,12 +142,19 @@ struct CoachSettings: Codable, Hashable {
     struct Style: Codable, Hashable { let key: String; let label: String; let description: String }
     struct Model: Codable, Hashable { let id: String; let label: String }
     struct Cap: Codable, Hashable { let limit: Double?; let ceiling: Double?; let spent: Double; let month: String }
-    struct Estimates: Codable, Hashable { let brief: [String: CostEstimate]; let analysis: [String: CostEstimate] }
+    struct Estimates: Codable, Hashable {
+        let brief: [String: CostEstimate]
+        let analysis: [String: CostEstimate]
+        /// A plan draft the AI coach builds; nil on engines from before AI-built plans.
+        var build: [String: CostEstimate]? = nil
+    }
     let enabled: Bool
     let keySet: Bool
     let briefModel: String
     let analysisModel: String
     let style: String
+    /// The AI coach builds plan drafts (the engine checks them); nil on older engines means on.
+    var aiPlans: Bool? = nil
     let styles: [Style]
     let models: [Model]
     let estimate: Estimates
@@ -228,6 +241,8 @@ struct AdminOverview: Codable, Hashable {
     let month: String
     let signup: Signup
     let features: Features
+    /// The coach's models for every account (AdminExtras.swift); nil on engines from before it.
+    var coachModels: CoachModels? = nil
     let system: System
     let log: [LogEntry]
 }

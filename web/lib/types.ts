@@ -86,7 +86,18 @@ export interface ReadinessScore {
   trend: ScorePoint[];
 }
 
-export interface PlannedToday { title: string; detail: string; source: "manual" | "plan"; kind: string; miles: number; gain_ft: number; loss_ft: number }
+export interface PlannedToday {
+  title: string; detail: string; source: "manual" | "plan"; kind: string; miles: number; gain_ft: number; loss_ft: number;
+  minutes?: number; benefit?: string | null; workout?: boolean;
+}
+
+/** What's ahead of today: the plan's objective, this week against its target, and the next few days. */
+export interface TodayAhead {
+  objective: { name: string; goal: string; goal_text: string; event: boolean; day: string; days_to_go: number } | null;
+  has_plan: boolean;
+  week: WeekProgress | null;
+  days: { day: string; runs: (Vol & { kind: string; title: string; detail: string; source: "manual" | "plan"; minutes: number; benefit: string | null; workout: boolean })[] }[];
+}
 
 export interface Today {
   date: string;
@@ -100,7 +111,8 @@ export interface Today {
   score: ReadinessScore;
   call: { call: "go" | "modify" | "rest"; session: string; detail: string; why: string; source: string; planned?: boolean };
   ledgers: Record<Ledger, LedgerDay & { spark: { day: string; fitness: number; fatigue: number }[] }>;
-  week: { start: string; activities: ActivitySummary[]; distance_mi: number; gain_ft: number; loss_ft: number };
+  week: { start: string; activities: ActivitySummary[]; distance_mi: number; gain_ft: number; loss_ft: number; last_week_to_date?: WeekTotals };
+  ahead?: TodayAhead;
   intensity_28d: ZoneShare;
   zones_28d: HrZoneShare | null;
   zone_model: ZoneModel | null;
@@ -230,7 +242,9 @@ export interface ActivityDetail extends Omit<ActivitySummary, "cardio_load" | "c
   };
 }
 
-export type Call = { call: "go" | "modify" | "rest"; session: string; detail: string; why: string };
+// focus (how to do today's session well) and ahead (where today sits in the week and plan) come
+// with the brief; the rule-based call on /api/today has neither.
+export type Call = { call: "go" | "modify" | "rest"; session: string; detail: string; why: string; focus?: string | null; ahead?: string | null };
 export interface LoadReply { last_week: string; trend: string; watch: string; next: string }
 
 export interface AnalysisReply { job: string; off: string; cost: string; changes: string; takeaway: string }

@@ -144,6 +144,10 @@ struct Call: Codable, Hashable {
     let detail: String
     let why: String
     let planned: Bool?
+    /// How to do today's session well, and where today sits in the week and plan. Only the
+    /// brief has them; the rule-based call on /api/today doesn't.
+    var focus: String? = nil
+    var ahead: String? = nil
 }
 
 struct Week: Codable, Hashable {
@@ -152,6 +156,38 @@ struct Week: Codable, Hashable {
     let distanceMi: Double
     let gainFt: Double
     let lossFt: Double
+    /// Last week through the same weekday as today.
+    let lastWeekToDate: WeekTotals?
+}
+
+/// What's ahead of today: the plan's objective, this week against its target, and the next few days.
+struct TodayAhead: Codable, Hashable {
+    struct Objective: Codable, Hashable {
+        let name: String
+        let goal: String
+        let goalText: String
+        let event: Bool
+        let day: String
+        let daysToGo: Int
+    }
+    struct Run: Codable, Hashable {
+        let kind: String
+        let title: String
+        let detail: String
+        let source: String
+        let miles: Double
+        let gainFt: Double
+        let lossFt: Double
+        let minutes: Double?
+    }
+    struct Day: Codable, Hashable {
+        let day: String
+        let runs: [Run]
+    }
+    let objective: Objective?
+    let hasPlan: Bool
+    let week: WeekProgress?
+    let days: [Day]
 }
 
 struct Today: Codable, Hashable {
@@ -164,6 +200,7 @@ struct Today: Codable, Hashable {
     let call: Call
     let ledgers: [String: TodayLedger]
     let week: Week
+    let ahead: TodayAhead?
     let intensity28D: ZoneShare
     let zones28D: ZoneShare?
     let zoneModel: ZoneModel?

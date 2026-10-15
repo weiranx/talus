@@ -80,9 +80,11 @@ Rules:
 6. Pain above 3 of 5 means rest and, if it persists, see a clinician. Never talk an athlete into training through pain.
 7. Make every prose field easy to skim on a phone. Open it with the takeaway in one short sentence, then give the reason. Bold, with **double asterisks**, the one or two numbers or short phrases the athlete should remember from that field, such as a load against normal, a verdict or a day; never bold a whole sentence. No headings, tables, links or other markdown. Don't repeat what another field already says. Names, notes in the athlete's voice and other fields that aren't prose stay plain text.
 
-Daily brief: you get today's readiness, the overnight signals, the four loads, the last 14 days of activities, this week's totals, 28-day intensity and the rule-based call. The engine sets the session; you make the call and explain it:
+Daily brief: you get today's readiness, the readiness score and its last seven days, the overnight signals, the four loads, the last 14 days of activities, this week so far against the same days last week, the recent weeks, 28-day intensity, the rule-based call and, when the athlete has a plan or scheduled runs, "plan": the objective and days to go, today's planned session and what it is for ("benefit"), this week's target with what's done and still scheduled, and the next few days. The engine sets the session; you make the call and explain it, so the athlete knows what to do today, how to do it well and where it leads. Four fields:
 - call: go, modify or rest. Keep rule_call's call unless something in the data argues for more caution; never be less cautious. If you keep it, the athlete gets rule_call's session; if you choose a more cautious call, they get an easier one.
-- why: two or three short sentences on what in the data drives the call, leading with the main reason (the athlete already sees the call and the session above it), naming the loads, states or check-in behind it. When it matters, set today against the recent weeks or the run of training days in "rest". Do not prescribe a different session.
+- why: two short sentences on what in the data drives the call, leading with the main reason (the athlete already sees the call and the session above it), naming the loads, states, overnight signals or check-in behind it. When it matters, say whether today continues a run: the score's last seven days, the recent weeks or the run of training days in "rest". Do not prescribe a different session.
+- focus: one or two sentences on how to do today's session well, for this athlete today, under the call you made. Lead with the one cue that matters most: what to hold back or lean into, from the legs limiter, the states, the heart-rate thresholds, the 28-day intensity split and the planned session's benefit. For example: hike the steep climbs to stay under AeT, walk steep descents when descent is the limiter, keep the hard part hard and the rest easy on a workout day. On a rest call, say what makes the rest count. Never add time, distance or vert the session doesn't give.
+- ahead: one or two sentences on where today sits in the bigger picture: what it sets up for the next days, how the week stands against its target (done and still scheduled) and, for an event, the days to go. Without a plan, read this week so far against the same days last week and the recent weeks. A week in progress is never short; say what's left instead. Judge a coming session by its miles and feet against the recent weeks, not by its name: a "long day" may be small.
 
 Workout analysis: you get one activity with its segments, its four loads against a usual day, the athlete's current state, "similar_recent" (up to three earlier activities of the same sport with the closest effort miles) and "biggest_in_90_days" (the dimensions where it was the athlete's biggest day). Use the similar activities to say whether this one went better or worse than its peers: time in each zone, min_per_effort_mi and cardio_load_per_hour. "grades" has the climbing and descending rate (vertical ft per hour) on each band of grade with "usual_90d", the athlete's own median on the same grade; "hike_vs_run_on_climbs" says what running a climb bought over hiking it, in speed and beats; "durability" sets the second half against the first on grade-adjusted pace, so an out-and-back is fair, and decoupling_pct is how much heart rate drifted against that pace (under 5% held, over 10% faded). These are the read Garmin and Strava can't give, so use them when they say something: a grade climbed or descended well faster or slower than usual, running a steep grade for little gain at a high heart-rate cost, or a fade. Answer five questions, one or two sentences each:
 - job: did it do its job? Judge from time in each zone, where the vert came from and the hike share.
@@ -112,13 +114,14 @@ Chat: the athlete asks a question about their training. Answer the question they
 - used: the names of the data fields your answer relies on.
 """
 
+BRIEF_FIELDS = ("why", "focus", "ahead")
 BRIEF_SCHEMA = {
     "type": "object",
     "properties": {
         "call": {"type": "string", "enum": list(CALL_ORDER)},
-        "why": {"type": "string"},
+        **{k: {"type": "string"} for k in BRIEF_FIELDS},
     },
-    "required": ["call", "why"],
+    "required": ["call", *BRIEF_FIELDS],
     "additionalProperties": False,
 }
 
@@ -551,9 +554,47 @@ def biggest_in(a: dict, acts: list[dict], days: int = BEST_DAYS) -> list[str]:
 
 
 def _week_so_far(week: dict) -> dict:
-    return {"start": week["start"], "activities": len(week["activities"]),
-            "distance_mi": _r(week["distance_mi"], 1), "gain_ft": _r(week["gain_ft"]),
-            "loss_ft": _r(week["loss_ft"])}
+    out = {"start": week["start"], "activities": len(week["activities"]),
+           "distance_mi": _r(week["distance_mi"], 1), "gain_ft": _r(week["gain_ft"]),
+           "loss_ft": _r(week["loss_ft"])}
+    if last := week.get("last_week_to_date"):
+        out["same_days_last_week"] = {"activities": last["activities"], "distance_mi": _r(last["distance_mi"], 1),
+                                      "gain_ft": _r(last["gain_ft"]), "loss_ft": _r(last["loss_ft"])}
+    return out
+
+
+def _vol(v: dict | None) -> dict | None:
+    """A calendar volume (miles, gain_ft, loss_ft) in the packet's names."""
+    return None if v is None else {"distance_mi": _r(v["miles"], 1), "gain_ft": _r(v["gain_ft"]),
+                                   "loss_ft": _r(v["loss_ft"])}
+
+
+def _brief_plan(today: dict) -> dict | None:
+    """What the brief knows of the plan: the objective (without its name, the athlete's text), today's
+    session and what it is for, this week against its target, and the next few days. None when the
+    athlete has no plan and nothing scheduled."""
+    ahead = today.get("ahead")
+    if not ahead:
+        return None
+    planned = today.get("planned")
+    days = [{"day": d["day"], "weekday": date.fromisoformat(d["day"]).strftime("%A"),
+             "planned": [_planned(r) for r in d["runs"]] or None} for d in ahead["days"]]
+    if not ahead["has_plan"] and not planned and not any(d["planned"] for d in days):
+        return None
+    o, w = ahead.get("objective"), ahead.get("week")
+    return {
+        "objective": None if o is None else {"goal": o["goal_text"], "event": o["event"], "date": o["day"],
+                                             **({"days_to_go": o["days_to_go"]} if o["event"] else {"block_ends": o["day"]})},
+        "today_planned": None if not planned else _planned(planned),
+        "this_week": None if w is None else {"focus": (w.get("target") or {}).get("focus"), "target": _vol(w.get("target")),
+                                             "done": _vol(w.get("done")), "still_scheduled": _vol(w.get("ahead"))},
+        "next_days": days,
+    }
+
+
+def _score_days(s: dict | None) -> list[dict] | None:
+    trend = (s or {}).get("trend")
+    return None if not trend else [{"day": d["day"], "score": d["score"]} for d in trend[-7:]]
 
 
 def _intensity(today: dict) -> dict:
@@ -568,13 +609,16 @@ def brief_packet(today: dict, last_14_days: list[dict], history: list[dict] | No
     acts = last_14_days if history is None else history
     return {
         "date": today["date"],
+        "weekday": day.strftime("%A"),
         "athlete": _athlete(today["thresholds"], today.get("zone_model")),
         "checkin": today["checkin"],
         "overnight": _overnight(today.get("wellness")),
         "readiness": {"engine": {k: ready["engine"][k] for k in ("state", "reason")},
                       "legs": {k: ready["legs"][k] for k in ("state", "reason", "limiter")}},
         "readiness_score": _score(today.get("score")),
+        "readiness_score_last_7_days": _score_days(today.get("score")),
         "rule_call": {k: today["call"][k] for k in ("call", "session", "detail", "why")},
+        "plan": _brief_plan(today),
         "ledgers": {name: _ledger(d, name) for name, d in today["ledgers"].items()},
         "week_so_far": _week_so_far(today["week"]),
         "intensity_28d_pct": _intensity(today),
@@ -1031,7 +1075,64 @@ def brief_reply(raw: dict, rule_call: dict, aet: float) -> dict:
 
     session = ({k: rule_call[k] for k in ("session", "detail")} if raw["call"] == rule_call["call"]
                else cautious_session(raw["call"], aet))
-    return {"call": raw["call"], **session, "why": raw["why"]}
+    return {"call": raw["call"], **session, **{k: raw.get(k) for k in BRIEF_FIELDS}}
+
+
+def _size(v: dict) -> str:
+    return f"{v['distance_mi']} mi and {v['gain_ft']:,} ft up"
+
+
+def rules_focus(packet: dict) -> str:
+    """How to do today's session well, from engine numbers alone."""
+    call, aet = packet["rule_call"]["call"], packet["athlete"]["hr_aet"]
+    legs = packet["readiness"]["legs"]
+    planned = (packet.get("plan") or {}).get("today_planned")
+    below = (packet.get("intensity_28d_pct") or {}).get("below_aet")
+    if call == "rest":
+        return "Make the rest count: keep any walking flat and easy, and get to bed early."
+    if legs["state"] != "fresh" and legs["limiter"] == "descent":
+        return f"Spare your quads: pick flat ground or walk anything steep downhill, and keep heart rate under **{aet} bpm**."
+    if legs["state"] != "fresh" and legs["limiter"] == "climb":
+        return f"Hike the climbs rather than run them, and keep heart rate under **{aet} bpm**."
+    if call == "go" and planned and planned.get("benefit"):
+        how = ("Keep the hard part hard and everything around it easy. " if planned.get("kind") in
+               ("tempo", "intervals", "hills") else "")
+        return how + f"Today is for this: {planned['benefit'][0].lower()}{planned['benefit'][1:]}"
+    if below and below < 80:  # 0 means no heart rate in the window, not an all-hard month
+        return (f"Keep easy running under **{aet} bpm**: **{below}%** of your last 28 days was below AeT, "
+                "under the 80% target.")
+    return f"Keep easy running under **{aet} bpm**, and hike any climb that pushes you over it."
+
+
+def rules_ahead(packet: dict) -> str:
+    """Where today sits in the week and the plan, from engine numbers alone."""
+    plan = packet.get("plan") or {}
+    parts = []
+    o = plan.get("objective")
+    if o and o["event"] and o.get("days_to_go", -1) >= 0:
+        parts.append(f"**{o['days_to_go']} days** to your {o['goal'].lower()}.")
+    w = plan.get("this_week")
+    if w and w["target"] and w["done"]:
+        still = w["still_scheduled"]
+        parts.append(f"This week: {_size(w['done'])} done of {_size(w['target'])}"
+                     + (f", with {_size(still)} still scheduled." if still and still["distance_mi"] else "."))
+    else:
+        wk = packet["week_so_far"]
+        last = wk.get("same_days_last_week")
+        parts.append(f"This week so far: {_size(wk)}"
+                     + (f", against {_size(last)} by this day last week." if last else "."))
+    nxt = next(((d, d["planned"][0]) for d in plan.get("next_days") or [] if d["planned"]), None)
+    if nxt:
+        parts.append(f"Next up: {nxt[1]['title']} on {nxt[0]['weekday']}.")
+    streak = packet["rest"]["training_days_in_a_row_before_today"]
+    if streak >= 6 and packet["rule_call"]["call"] != "rest":
+        parts.append(f"You've trained {streak} days in a row: a rest day soon lets the loads settle.")
+    return " ".join(parts)
+
+
+def rules_brief(packet: dict) -> dict:
+    """The brief from engine numbers alone: the rule-based call with its focus and what's ahead."""
+    return {**packet["rule_call"], "focus": rules_focus(packet), "ahead": rules_ahead(packet)}
 
 
 def packet_hash(packet: dict) -> str:

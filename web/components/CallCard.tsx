@@ -20,7 +20,14 @@ export default function CallCard({ call, note, logId, feedback, planned, pending
       {planned ? <div style={{ color: "var(--feature-muted)", fontSize: 13, marginBottom: -8 }}>From your plan</div> : null}
       <div style={{ fontSize: 28, lineHeight: "33px", fontWeight: 700, letterSpacing: "-0.01em" }}>{call.session}</div>
       <CoachText text={call.detail} style={{ color: "var(--feature-soft)" }} />
-      <CoachText className="small" text={`**Why:** ${call.why}`} style={{ color: "var(--feature-muted)" }} />
+      <dl className="call-notes">
+        {([["Why", call.why], ["Focus", call.focus], ["Ahead", call.ahead]] as const).map(([k, v]) => v ? (
+          <div key={k}>
+            <dt>{k}</dt>
+            <dd><CoachText className="small" text={v} /></dd>
+          </div>
+        ) : null)}
+      </dl>
       <div style={{ display: "flex", flexWrap: "wrap", justifyContent: "space-between", alignItems: "center", gap: 10 }}>
         <div style={{ color: "var(--feature-muted)", fontSize: 12, maxWidth: 520, display: "flex", alignItems: "center", gap: 8 }} role={pending ? "status" : undefined}>
           {pending ? <Spinner /> : null}<span>{note}<AiCost cost={cost} /></span>

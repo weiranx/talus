@@ -3,12 +3,11 @@
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import Pill from "@/components/Pill";
-import { when } from "@/components/SourceCard";
 import { pick, WatchSession, type Progress, type WatchFile } from "@/lib/garmin";
+import { addedLine, when, type Added } from "@/lib/sync";
+import type { Settings } from "@/lib/types";
 
 const FIRST_SYNC_DAYS = 14;
-
-type Added = { id: number; name: string | null; start_time: string | null; distance_m: number | null; gain_m: number | null };
 
 // Where this browser stands: Web Bluetooth that can reach a Garmin watch, a Mac (Chrome there
 // refuses the watch), or no Web Bluetooth at all (Safari, Firefox, any iPhone browser).
@@ -20,22 +19,16 @@ function reach(): Reach {
   return mac ? "mac" : "ok";
 }
 
-function runLine(a: Added): string {
-  const parts: string[] = [];
-  if (a.start_time) parts.push(new Date(a.start_time).toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric" }));
-  if (a.name) parts.push(a.name);
-  if (a.distance_m != null) parts.push(`${(a.distance_m / 1609.344).toFixed(1)} mi`);
-  if (a.gain_m != null) parts.push(`${Math.round(a.gain_m * 3.28084).toLocaleString("en-US")} ft up`);
-  return parts.join(" · ");
-}
-
 function label(f: WatchFile): string {
   const kind = { FIT_TYPE_4: "Activity", FIT_TYPE_32: "Monitoring", FIT_TYPE_49: "Sleep", FIT_TYPE_68: "HRV status", FIT_TYPE_44: "Metrics" }[f.kind] ?? f.kind;
   return f.time ? `${kind}, ${f.time.toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}` : kind;
 }
 
-export default function WatchCard({ lastSync }: { lastSync: string | null }) {
+export default function WatchCard({ watch }: { watch: Settings["sources"]["watch"] }) {
   const router = useRouter();
+  const lastSync = watch.last_sync;
+  const [switching, setSwitching] = useState(false);
+  const [switchError, setSwitchError] = useState<string | null>(null);
   const [where, setWhere] = useState<Reach>("ok");
   const [tryHere, setTryHere] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -104,6 +97,18 @@ export default function WatchCard({ lastSync }: { lastSync: string | null }) {
     }
   }
 
+  // On, the iPhone app syncs the watch on its own whenever Talus opens, and this card can too.
+  async function turn(enabled: boolean) {
+    setSwitching(true);
+    setSwitchError(null);
+    const res = await fetch("/api/sources/watch", {
+      method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify({ enabled }),
+    }).catch(() => null);
+    setSwitching(false);
+    if (!res?.ok) return setSwitchError(res ? `Could not save (${res.status}).` : "Could not reach the engine. Is it running?");
+    router.refresh();
+  }
+
   const p = progress;
   return (
     <section className="card">
@@ -111,15 +116,20 @@ export default function WatchCard({ lastSync }: { lastSync: string | null }) {
         <h2 className="label">Garmin watch</h2>
         <div className="actions" style={{ gap: 6 }}>
           <Pill tone="warn">Experimental</Pill>
-          {lastSync ? <Pill tone="good">Synced</Pill> : <Pill tone="neutral">Not synced yet</Pill>}
+          {!watch.enabled ? <Pill tone="neutral">Off</Pill> : lastSync ? <Pill tone="good">Synced</Pill> : <Pill tone="neutral">Not synced yet</Pill>}
         </div>
       </div>
       <div className="muted">
         Pulls new activities straight off your watch over Bluetooth, without Garmin&apos;s servers. Nothing on the
         watch is changed or deleted. Sleep, HRV and resting heart rate don&apos;t come from the watch, since Garmin
-        Connect clears those files as it syncs; they still come from intervals.icu or Apple Health.
+        Connect clears those files as it syncs; they still come from intervals.icu or Apple Health. It works alongside
+        your other sources: a run two of them have is kept once.
       </div>
-      {where === "ok" || tryHere ? (
+      {!watch.enabled ? (
+        <div className="actions">
+          <button className="btn light outline" onClick={() => turn(true)} disabled={switching} aria-busy={switching}>Turn on</button>
+        </div>
+      ) : where === "ok" || tryHere ? (
         <>
           <div className="muted">
             Turn off Bluetooth in your phone&apos;s Settings first (the watch stays hidden while the phone holds it)
@@ -151,11 +161,17 @@ export default function WatchCard({ lastSync }: { lastSync: string | null }) {
       {lines.map((l, i) => <div key={i} className={l.ok ? "ok-text" : "error-text"}>{l.text}</div>)}
       {added.length ? (
         <ul className="muted" style={{ margin: 0, paddingLeft: 18 }}>
-          {added.map((a) => <li key={a.id}><a href={`/activities/${a.id}`}>{runLine(a)}</a></li>)}
+          {added.map((a) => <li key={a.id}><a href={`/activities/${a.id}`}>{addedLine(a)}</a></li>)}
         </ul>
       ) : null}
-      {!lines.length && lastSync ? <div className="muted">Last sync {when(lastSync)}.</div> : null}
-      {!lastSync && !busy ? <div className="muted">The first sync brings in the last {FIRST_SYNC_DAYS} days of activities, about half a minute each.</div> : null}
+      {watch.enabled && !lines.length && lastSync ? <div className="muted">Last sync {when(lastSync)}.</div> : null}
+      {watch.enabled && !lastSync && !busy ? <div className="muted">The first sync brings in the last {FIRST_SYNC_DAYS} days of activities, about half a minute each.</div> : null}
+      {switchError ? <div className="error-text">{switchError}</div> : null}
+      {watch.enabled ? (
+        <div className="actions">
+          <button className="link-btn" style={{ fontSize: 13 }} onClick={() => turn(false)} disabled={switching || busy}>Turn off</button>
+        </div>
+      ) : null}
     </section>
   );
 }

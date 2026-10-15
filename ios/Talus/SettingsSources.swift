@@ -1,7 +1,8 @@
 import SwiftUI
 
 // The owner-only data sources (web/components/CorosCard.tsx, StravaCard.tsx): COROS through the
-// Training Hub sign-in, and the owner's own Strava activities through the website.
+// Training Hub sign-in, and the owner's own Strava activities through the website. Both only
+// connect and disconnect; the Sync card on the same page syncs them.
 
 extension Sources {
     /// COROS direct (Training Hub's API) is unofficial and offered to the owner account only.
@@ -25,28 +26,6 @@ extension Sources {
     }
 }
 
-/// The look-back picker and the sync button, for a card that handles the answer itself.
-private struct PullRow: View {
-    let title: String
-    let busyTitle: String
-    let busy: Bool
-    @Binding var days: Int
-    let pull: () -> Void
-
-    var body: some View {
-        HStack {
-            Picker("Look back", selection: $days) {
-                ForEach(syncRanges, id: \.self) { Text("\($0) days").tag($0) }
-            }
-            .disabled(busy)
-            Spacer()
-            Button(action: pull) { BusyLabel(title: busy ? busyTitle : title, busy: busy) }
-                .buttonStyle(.borderedProminent)
-                .disabled(busy)
-        }
-    }
-}
-
 // MARK: COROS
 
 struct CorosCard: View {
@@ -57,7 +36,6 @@ struct CorosCard: View {
     @State private var email = ""
     @State private var password = ""
     @State private var region: String
-    @State private var days = 30
     @State private var busy = false
     @State private var message: (ok: Bool, text: String)?
 
@@ -66,7 +44,7 @@ struct CorosCard: View {
     init(coros: Sources.Coros, reload: @escaping () async -> Void) {
         self.coros = coros
         self.reload = reload
-        _login = State(initialValue: !coros.connected)
+        _login = State(initialValue: !coros.connected || Self.signedOut(coros))
         _region = State(initialValue: coros.region ?? "en")
     }
 
@@ -82,7 +60,6 @@ struct CorosCard: View {
                 .font(.caption).foregroundStyle(.secondary)
             VStack(alignment: .leading, spacing: 6) {
                 LabeledContent("Sign-in", value: coros.connected ? coros.updatedAt.map { "Saved \(SettingsText.when($0))" } ?? "Saved" : "Not yet")
-                LabeledContent("Last sync") { Text(coros.lastSync.map(SettingsText.sync) ?? "Not yet").multilineTextAlignment(.trailing) }
             }
             .font(.subheadline)
             if login {
@@ -100,7 +77,6 @@ struct CorosCard: View {
                     if coros.connected { Button("Cancel") { login = false }.buttonStyle(.bordered) }
                 }
             } else {
-                PullRow(title: "Sync now", busyTitle: "Syncing", busy: busy, days: $days) { Task { await sync() } }
                 HStack(spacing: 16) {
                     Button("Sign in again") { login = true }.buttonStyle(.bordered)
                     Button("Disconnect", role: .destructive) { Task { await disconnect() } }.font(.subheadline)
@@ -110,6 +86,12 @@ struct CorosCard: View {
             Text("Runs another source already has are kept once. Sleep time isn't in COROS's data here; it still comes from intervals.icu or Apple Health.")
                 .font(.caption).foregroundStyle(.secondary)
         }
+        .onChange(of: Self.signedOut(coros)) { _, out in if out { login = true } }
+    }
+
+    /// COROS keeps one web sign-in per account, so a sync can find Talus signed out.
+    private static func signedOut(_ c: Sources.Coros) -> Bool {
+        c.lastSync?.error?.contains("Sign in to COROS again") == true
     }
 
     private func connect() async {
@@ -121,7 +103,7 @@ struct CorosCard: View {
             try await api.post("/api/sources/coros", Body(email: email.trimmingCharacters(in: .whitespaces), password: password, region: region))
             password = ""
             login = false
-            message = (true, "Connected. Sync to pull your activities.")
+            message = (true, "Connected. Sync now pulls your activities.")
             await reload()
         } catch {
             message = (false, error.localizedDescription)
@@ -131,16 +113,6 @@ struct CorosCard: View {
     private func disconnect() async {
         _ = try? await api.delete("/api/sources/coros")
         login = true
-        await reload()
-    }
-
-    private func sync() async {
-        busy = true
-        message = nil
-        let result = await runSync(api, source: "coros", days: days)
-        busy = false
-        message = result
-        if !result.ok && result.text.contains("Sign in to COROS again") { login = true }
         await reload()
     }
 }
@@ -153,7 +125,6 @@ struct StravaCard: View {
     @EnvironmentObject private var api: API
     @State private var editing: Bool
     @State private var cookie = ""
-    @State private var days = 30
     @State private var busy = false
     @State private var message: (ok: Bool, text: String)?
 
@@ -178,11 +149,10 @@ struct StravaCard: View {
                     Pill(text: strava.connected && strava.enabled ? "On" : "Off", tone: strava.connected && strava.enabled ? .good : .neutral)
                 }
             }
-            Text("A personal fallback for when intervals.icu can't get your runs: after each intervals.icu sync, Talus reads your own activities from Strava's website with a session copied from your browser, and downloads each new one's original file. Strava's terms don't allow reading the site this way, so it's only for the owner account, at your own risk. Talus never asks for your Strava password.")
+            Text("A personal fallback for when intervals.icu can't get your runs: in each sync, after intervals.icu, Talus reads your own activities from Strava's website with a session copied from your browser, and downloads each new one's original file. Strava's terms don't allow reading the site this way, so it's only for the owner account, at your own risk. Talus never asks for your Strava password.")
                 .font(.caption).foregroundStyle(.secondary)
             VStack(alignment: .leading, spacing: 6) {
                 LabeledContent("Session", value: strava.connected ? strava.updatedAt.map { "Saved \(SettingsText.when($0))" } ?? "Saved" : "Not yet")
-                LabeledContent("Last run") { Text(strava.lastSync.map(Self.runLine) ?? "Not yet").multilineTextAlignment(.trailing) }
             }
             .font(.subheadline)
             if strava.envOverride {
@@ -209,7 +179,6 @@ struct StravaCard: View {
                     if strava.connected { Button("Cancel") { editing = false }.buttonStyle(.bordered) }
                 }
             } else {
-                PullRow(title: "Pull now", busyTitle: "Pulling, a request a second", busy: busy, days: $days) { Task { await pull() } }
                 HStack(spacing: 16) {
                     Button("Replace session") { editing = true }.buttonStyle(.bordered).disabled(busy)
                     Button("Turn off", role: .destructive) { Task { await turnOff() } }.font(.subheadline).disabled(busy)
@@ -219,6 +188,7 @@ struct StravaCard: View {
             Text("Runs another source already has are kept once. Turning it off forgets the session; activities already pulled stay.")
                 .font(.caption).foregroundStyle(.secondary)
         }
+        .onChange(of: expired) { _, now in if now { editing = true } }
     }
 
     static func runLine(_ s: LastSync) -> String {
@@ -253,7 +223,7 @@ struct StravaCard: View {
             cookie = ""
             editing = false
             let latest = found?.latest.map { ", the latest \"\($0.name ?? "activity")\" on \(Fmt.day($0.startTime, .dateTime.month(.abbreviated).day()))" } ?? ""
-            message = (true, "Signed in: \(found?.total ?? 0) activities on Strava\(latest). Pull now, or let the next intervals.icu sync do it.")
+            message = (true, "Signed in: \(found?.total ?? 0) activities on Strava\(latest). Sync now pulls from it.")
             await reload()
         } catch {
             message = (false, error.localizedDescription)
@@ -266,20 +236,6 @@ struct StravaCard: View {
         busy = false
         message = nil
         editing = true
-        await reload()
-    }
-
-    private func pull() async {
-        busy = true
-        message = nil
-        let result = await runSync(api, source: "strava_web", days: days)
-        busy = false
-        if !result.ok && result.text.range(of: "session", options: .caseInsensitive) != nil {
-            message = (false, "Strava ended the session. Copy a fresh one below.")
-            editing = true
-        } else {
-            message = result
-        }
         await reload()
     }
 }

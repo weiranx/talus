@@ -275,7 +275,7 @@ def test_setup_can_pull_the_last_30_days_and_status_reports_it(owner, monkeypatc
     capsys.readouterr()
     cli.main(["strava-web", "status"])
     out = capsys.readouterr().out
-    assert "intervals.icu sync: on" in out and "Session: saved" in out and "2 new, 5 already here" in out
+    assert "In each sync: on" in out and "Session: saved" in out and "2 new, 5 already here" in out
 
 
 def test_setup_reads_a_piped_cookie_whole(monkeypatch):
@@ -386,39 +386,53 @@ def test_a_stopped_sync_is_recorded_with_its_code(tmp_path):
 
 # Gating and scheduling
 
-def test_only_the_owner_with_the_flag_gets_it_and_only_after_intervals(tmp_path, monkeypatch):
-    calls = []
-    monkeypatch.setattr(puller, "sync", lambda store, since, log=print, **k: calls.append(store.dir) or {"added_ids": []})
+def test_only_the_owner_with_the_flag_and_a_session_gets_it(tmp_path, monkeypatch):
+    monkeypatch.delenv("STRAVA_SESSION_COOKIE", raising=False)
+    monkeypatch.delenv("INTERVALS_API_KEY", raising=False)
     accounts = Accounts(tmp_path / "data")
     owner = accounts.create("owner@example.com", "correct horse battery")
     other = accounts.create("friend@example.com", "correct horse battery")
-    store = Store(accounts.user_dir(owner.id))
-    since = date(2026, 9, 1)
-    assert cli.strava_web_after(accounts, owner, store, "intervals", since) is None  # off by default
+    names = lambda a: [n for n, _ in cli.connected_sources(accounts, a)]  # noqa: E731
+    for a in (owner, other):
+        accounts.set_credential(a.id, cli.STRAVA_WEB, "cookie", {"cookie": "_strava4_session=good"})
+    assert names(owner) == []  # off by default
     accounts.set_strava_web_enabled(other.id, True)
-    assert cli.strava_web_after(accounts, other, store, "intervals", since) is None  # never another account
+    assert names(other) == []  # never another account
     accounts.set_strava_web_enabled(owner.id, True)
-    assert cli.strava_web_after(accounts, owner, store, "garmin", since) is None
-    assert cli.strava_web_after(accounts, owner, store, "intervals", since) == {"added_ids": []}
-    assert calls == [store.dir]
+    assert names(owner) == ["strava_web"]
+    accounts.set_credential(owner.id, "intervals", "api_key", {"api_key": "k" * 8, "athlete_id": "0"})
+    assert names(owner) == ["intervals", "strava_web"]  # after intervals.icu, which it falls back for
 
 
-def test_a_strava_failure_never_breaks_the_intervals_sync(tmp_path, monkeypatch):
+def test_a_failing_source_never_stops_the_ones_after_it(tmp_path, monkeypatch):
+    monkeypatch.setenv("INTERVALS_API_KEY", "k")
     accounts = Accounts(tmp_path / "data")
     owner = accounts.create("owner@example.com", "correct horse battery")
     accounts.set_strava_web_enabled(owner.id, True)
-    lines = []
+    accounts.set_credential(owner.id, cli.STRAVA_WEB, "cookie", {"cookie": "_strava4_session=good"})
     store = Store(accounts.user_dir(owner.id))
-    # Turned on with no session saved: the run stops before asking Strava for anything.
-    monkeypatch.delenv("STRAVA_SESSION_COOKIE", raising=False)
-    assert cli.strava_web_after(accounts, owner, store, "intervals", date(2026, 9, 1), log=lines.append) is None
-    assert "not synced" in lines[-1] and "talus strava-web setup" in lines[-1]
-    assert store.settings()["last_sync_strava_web"]["error_code"] == "session_expired"
+    order, lines = [], []
+
+    def broken(*a, **k):
+        order.append("intervals")
+        raise RuntimeError("Garmin data blocked")
+
+    monkeypatch.setattr(cli, "sync", broken)
+    monkeypatch.setattr(puller, "sync", lambda store, since, log=print, **k: order.append("strava") or {
+        "source": "strava_web", "listed": 2, "new": 1, "saved": 1, "aliased": 1, "duplicates": 0, "error": None,
+        "added_ids": [7]})
+    out = cli.sync_all(accounts, owner, store, date(2026, 9, 1), log=lines.append)
+    assert order == ["intervals", "strava"]
+    assert out["saved"] == 1 and out["duplicates"] == 1 and out["added_ids"] == [7]
+    assert out["error"] == "intervals.icu: RuntimeError: Garmin data blocked"
+    assert [r["label"] for r in out["sources"]] == ["intervals.icu", "Strava"]
+    assert "intervals.icu not synced" in lines[0]
 
 
-def test_cli_sync_runs_it_after_intervals_even_when_intervals_fails(tmp_path, monkeypatch):
+def test_cli_sync_runs_every_source_and_exits_non_zero_when_one_fails(tmp_path, monkeypatch):
     monkeypatch.setenv("TALUS_DATA_DIR", str(tmp_path / "data"))
     monkeypatch.setenv("INTERVALS_API_KEY", "k")
+    monkeypatch.setenv("STRAVA_SESSION_COOKIE", "_strava4_session=good")
     accounts = Accounts(tmp_path / "data")
     accounts.set_strava_web_enabled(accounts.create("owner@example.com", "correct horse battery").id, True)
     order = []
@@ -429,24 +443,30 @@ def test_cli_sync_runs_it_after_intervals_even_when_intervals_fails(tmp_path, mo
 
     monkeypatch.setattr(cli, "sync", broken)
     monkeypatch.setattr(puller, "sync", lambda store, since, log=print, **k: order.append("strava") or {"added_ids": []})
-    with pytest.raises(RuntimeError, match="blocked"):
+    with pytest.raises(SystemExit, match="blocked"):
         cli.main(["sync", "--no-coach"])
     assert order == ["intervals", "strava"]
+    order.clear()
+    cli.main(["sync", "--no-coach", "--source", "strava_web"])
+    assert order == ["strava"]
 
 
-def test_sync_now_queues_it_after_the_response(tmp_path, monkeypatch):
+def test_sync_now_pulls_it_in_the_same_sync(tmp_path, monkeypatch):
     from tests.conftest import sign_in
     monkeypatch.setenv("TALUS_DATA_DIR", str(tmp_path / "data"))
     monkeypatch.setenv("INTERVALS_API_KEY", "k")
+    monkeypatch.setenv("STRAVA_SESSION_COOKIE", "_strava4_session=good")
     c = sign_in()
     api.get_accounts().set_strava_web_enabled(api.get_accounts().owner().id, True)
     calls = []
-    monkeypatch.setattr(cli, "sync", lambda *a, **k: {"added_ids": [], "saved": 0})
-    monkeypatch.setattr(puller, "sync", lambda store, since, log=print, **k: calls.append(since) or {"added_ids": []})
-    assert c.post("/api/sync", json={"days": 7}).status_code == 200
-    assert len(calls) == 1
+    monkeypatch.setattr(cli, "sync", lambda *a, **k: {"source": "intervals", "added_ids": [], "saved": 0})
+    monkeypatch.setattr(puller, "sync", lambda store, since, log=print, **k: calls.append(since) or {
+        "source": "strava_web", "added_ids": [], "saved": 0})
+    r = c.post("/api/sync", json={"days": 7}).json()
+    assert len(calls) == 1 and [x["source"] for x in r["sources"]] == ["intervals", "strava_web"]
+    assert c.post("/api/sync", json={"days": 7, "source": "intervals"}).status_code == 200
     assert c.post("/api/sync", json={"days": 7, "source": "garmin"}).status_code in (403, 409)
-    assert len(calls) == 1
+    assert len(calls) == 1  # naming one source pulls just that one
 
 
 # The coach never sees Strava's numbers

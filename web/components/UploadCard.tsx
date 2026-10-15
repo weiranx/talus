@@ -2,7 +2,7 @@
 
 import { useRouter } from "next/navigation";
 import { useRef, useState } from "react";
-import { when } from "@/components/SourceCard";
+import { when } from "@/lib/sync";
 import type { LastImport, Settings } from "@/lib/types";
 
 function importLine(r: LastImport): string {

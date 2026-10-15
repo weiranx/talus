@@ -51,12 +51,12 @@ final class WatchSync: ObservableObject {
         }
     }
 
-    /// Syncs when the app opens, if this account syncs from the watch and the last sync is old.
+    /// Syncs when the app opens, if this account has the watch switched on and the last sync is old.
     func syncIfDue(_ api: API) async {
         guard !running else { return }
         if let last = UserDefaults.standard.object(forKey: Self.lastAttemptKey) as? Date,
            Date.now.timeIntervalSince(last) < Self.autoRetryAfter { return }
-        guard let s = try? await api.get("/api/settings", as: SettingsData.self), s.syncMethod == "watch" else { return }
+        guard let s = try? await api.get("/api/settings", as: SettingsData.self), s.watchOn else { return }
         if let at = s.sources.watch?.lastSync.flatMap(Self.date), Date.now.timeIntervalSince(at) < Self.autoSyncAfter { return }
         await sync(api, automatic: true)
     }

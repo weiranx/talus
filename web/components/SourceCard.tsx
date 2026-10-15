@@ -5,43 +5,16 @@ import { useState } from "react";
 import ConnectIntervals from "@/components/ConnectIntervals";
 import Pill from "@/components/Pill";
 import { dayLabel, n0 } from "@/lib/format";
-import type { LastSync, Settings } from "@/lib/types";
-
-export const RANGES = [7, 30, 90, 180];
-
-export function when(iso: string): string {
-  return new Date(iso).toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
-}
-
-export function syncLine(s: LastSync): string {
-  if (s.error) return `Failed ${when(s.at)}: ${s.error}`;
-  const dups = s.duplicates ? `, ${s.duplicates} already here from another source` : "";
-  return `${when(s.at)}: ${s.listed} activities since ${dayLabel(s.since, { month: "short", day: "numeric" })}, ${s.new} new${dups}.`;
-}
-
-/** Run a sync for one source and turn the answer into a status line. */
-export async function runSync(source: "intervals" | "garmin" | "coros" | "strava_web", days: number): Promise<{ ok: boolean; text: string }> {
-  const res = await fetch("/api/sync", {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({ days, source }),
-  }).catch(() => null);
-  if (!res) return { ok: false, text: "Could not reach the engine. Is it running?" };
-  const body = await res.json().catch(() => ({}));
-  if (!res.ok) return { ok: false, text: body.detail ?? `Sync failed (${res.status}).` };
-  if (body.error) return { ok: false, text: `Sync failed: ${body.error}` };
-  const dups = body.duplicates ? ` ${body.duplicates} already here from another source.` : "";
-  return { ok: true, text: (body.saved ? `Pulled ${body.saved} new ${body.saved === 1 ? "activity" : "activities"}.` : "Up to date, nothing new.") + dups };
-}
+import { when } from "@/lib/sync";
+import type { Settings } from "@/lib/types";
 
 // `returnTo`: where intervals.icu sends the browser back after approving (Settings by default).
-// `hideSync`: setup imports history on its own step, so it leaves out the sync row.
-export default function SourceCard({ source, lastSync, returnTo, hideSync }: {
-  source: Settings["source"]; lastSync: LastSync | null; returnTo?: string; hideSync?: boolean;
+// `setup`: setup imports history on its own step, so a saved key points there.
+// Syncing is the Sync card's; this card connects and disconnects.
+export default function SourceCard({ source, returnTo, setup }: {
+  source: Settings["source"]; returnTo?: string; setup?: boolean;
 }) {
   const router = useRouter();
-  const [days, setDays] = useState(30);
-  const [syncing, setSyncing] = useState(false);
   const [message, setMessage] = useState<{ ok: boolean; text: string } | null>(null);
   const oauth = source.kind === "oauth";
   // With OAuth on offer, the key form is the fallback and stays closed until asked for.
@@ -70,7 +43,7 @@ export default function SourceCard({ source, lastSync, returnTo, hideSync }: {
     }
     setKey("");
     setEditing(false);
-    setMessage({ ok: true, text: hideSync ? "Saved. Next, import your history." : "Saved. Sync to pull your activities." });
+    setMessage({ ok: true, text: setup ? "Saved. Next, import your history." : "Saved. Sync now pulls your activities." });
     router.refresh();
   }
 
@@ -80,14 +53,6 @@ export default function SourceCard({ source, lastSync, returnTo, hideSync }: {
     if (!res?.ok) return setMessage({ ok: false, text: res ? `Could not ${what} (${res.status}).` : "Could not reach the engine. Is it running?" });
     setMessage(null);
     setEditing(!source.oauth_available);
-    router.refresh();
-  }
-
-  async function sync() {
-    setSyncing(true);
-    setMessage(null);
-    setMessage(await runSync("intervals", days));
-    setSyncing(false);
     router.refresh();
   }
 
@@ -119,8 +84,6 @@ export default function SourceCard({ source, lastSync, returnTo, hideSync }: {
         )}
         <dt>In Talus</dt>
         <dd><span className="mono">{n0(source.activities)}</span>{source.latest_activity ? `, latest ${dayLabel(source.latest_activity, { month: "short", day: "numeric", year: "numeric" })}` : ""}</dd>
-        <dt>Last sync</dt>
-        <dd>{lastSync ? syncLine(lastSync) : "Not from here yet"}</dd>
       </dl>
       {source.oauth_available && !oauth && !editing ? (
         <ConnectIntervals next={returnTo} hint={source.key_set ? "Replaces the API key. Talus asks to read activities and wellness only." : undefined} />
@@ -155,15 +118,6 @@ export default function SourceCard({ source, lastSync, returnTo, hideSync }: {
           {source.updated_at ? <button className="link-btn" style={{ fontSize: 13 }} onClick={removeKey}>Remove key</button> : null}
         </div>
       )}
-      {hideSync ? null : <div className="actions">
-        <label className="inline-field">
-          <span className="muted">Look back</span>
-          <select value={days} onChange={(e) => setDays(Number(e.target.value))} disabled={syncing}>
-            {RANGES.map((d) => <option key={d} value={d}>{d} days</option>)}
-          </select>
-        </label>
-        <button className="btn" onClick={sync} disabled={syncing || !source.key_set} aria-busy={syncing}>{syncing ? "Syncing" : "Sync now"}</button>
-      </div>}
       {message ? <div className={message.ok ? "ok-text" : "error-text"} role="status">{message.text}</div> : null}
       <div className="muted">{oauth ? "The connection is" : "Your key is"} stored encrypted on the Talus server and never sent back to the browser. Only new activities are downloaded.</div>
     </section>

@@ -9,7 +9,7 @@ import GarminCard from "@/components/GarminCard";
 import StravaCard from "@/components/StravaCard";
 import ReadinessSettings from "@/components/ReadinessSettings";
 import SourceCard from "@/components/SourceCard";
-import SyncMethodCard from "@/components/SyncMethodCard";
+import SyncCard from "@/components/SyncCard";
 import ThresholdsCard from "@/components/ThresholdsCard";
 import UploadCard from "@/components/UploadCard";
 import WatchCard from "@/components/WatchCard";
@@ -42,13 +42,12 @@ export default async function SettingsPage() {
       <div className="row">
         <div style={{ flex: "1 1 380px", minWidth: 0, display: "flex", flexDirection: "column", gap: 16 }}>
           <h2 className="label" style={{ margin: "4px 0 -8px" }}>Data sources</h2>
-          <SyncMethodCard method={s.sync_method} />
-          {s.sync_method === "watch"
-            ? <WatchCard lastSync={s.sources.watch.last_sync} />
-            : <SourceCard source={s.source} lastSync={s.sources.intervals.last_sync} />}
+          <SyncCard sources={s.sources} />
+          <SourceCard source={s.source} />
           {s.sources.garmin.available ? <GarminCard garmin={s.sources.garmin} /> : null}
           {s.sources.coros.available ? <CorosCard coros={s.sources.coros} /> : null}
           {s.sources.strava_web?.available ? <StravaCard strava={s.sources.strava_web} /> : null}
+          <WatchCard watch={s.sources.watch} />
           <UploadCard upload={s.sources.upload} />
           <ReadinessSettings readiness={s.readiness} />
           <section className="card">

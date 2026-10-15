@@ -63,7 +63,7 @@ export default async function WelcomePage({ searchParams }: { searchParams: Prom
 
       {step === "connect" ? (
         <>
-          <SourceCard source={s.source} lastSync={s.sources.intervals.last_sync} returnTo="/welcome?step=connect" hideSync />
+          <SourceCard source={s.source} returnTo="/welcome?step=connect" setup />
           {s.sources.garmin.available ? <GarminCard garmin={s.sources.garmin} /> : null}
           <UploadCard upload={s.sources.upload} />
           <StepNav step="connect" skippable={false} markDone={false}

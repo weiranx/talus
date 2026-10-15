@@ -25,10 +25,6 @@ struct SettingsView: View {
 
                 Section {
                     if health.enabled {
-                        Button { Task { await health.sync(api) } } label: {
-                            BusyLabel(title: health.running ? "Syncing…" : "Sync now", busy: health.running)
-                        }
-                            .disabled(health.running)
                         Toggle("Sync when Talus opens", isOn: $health.enabled)
                     } else {
                         Button("Connect Apple Health") { Task { await health.turnOn(api) } }
@@ -42,7 +38,7 @@ struct SettingsView: View {
                 } header: {
                     Text("Apple Health")
                 } footer: {
-                    Text("Sends workouts with route and heart rate, plus HRV, resting heart rate and sleep, to your Talus engine. Apple Watch data is in Health, and so is Garmin data once Garmin Connect is set to write to Health. The first sync reads the last \(HealthSync.firstSyncDays) days.")
+                    Text("Sends workouts with route and heart rate, plus HRV, resting heart rate and sleep, to your Talus engine. Apple Watch data is in Health, and so is Garmin data once Garmin Connect is set to write to Health. The first sync reads the last \(HealthSync.firstSyncDays) days. Sync now under Data sources sends it along with your other sources.")
                 }
 
                 Section {
@@ -85,84 +81,163 @@ struct SettingsView: View {
 struct SourcesPage: View {
     var body: some View {
         SettingsPage(title: "Data sources") { s, reload in
-            if let method = s.syncMethod {
-                SyncMethodCard(method: method, reload: reload)
-            }
-            if s.syncMethod == "watch" {
-                WatchCard(lastSync: s.sources.watch?.lastSync, reload: reload)
-            } else {
-                IntervalsCard(source: s.source, lastSync: s.sources.intervals.lastSync, reload: reload)
-            }
+            SyncCard(settings: s, reload: reload)
+            IntervalsCard(source: s.source, reload: reload)
             if s.sources.garmin.available { GarminCard(garmin: s.sources.garmin, reload: reload) }
             if let coros = s.sources.coros, coros.available { CorosCard(coros: coros, reload: reload) }
             if let strava = s.sources.stravaWeb, strava.available { StravaCard(strava: strava, reload: reload) }
+            if s.sources.watch != nil { WatchCard(on: s.watchOn, lastSync: s.sources.watch?.lastSync, reload: reload) }
             UploadCard(upload: s.sources.upload, reload: reload)
         }
     }
 }
 
-/// How new activities arrive: intervals.icu's API, or straight off a Garmin watch over Bluetooth.
-private struct SyncMethodCard: View {
+/// One sync for everything: the sources the engine pulls (intervals.icu, Garmin Connect, COROS,
+/// Strava), then the watch and Apple Health, which only this phone can reach.
+private struct SyncCard: View {
+    let settings: SettingsData
     let reload: () async -> Void
     @EnvironmentObject private var api: API
-    @State private var method: String
-    @State private var message: String?
+    @EnvironmentObject private var watch: WatchSync
+    @EnvironmentObject private var health: HealthSync
+    @State private var days = 30
+    @State private var syncing = false
+    @State private var message: (ok: Bool, text: String)?
+    @State private var added: [AddedActivity] = []
 
-    init(method: String, reload: @escaping () async -> Void) {
-        self.reload = reload
-        _method = State(initialValue: method)
+    private struct Row: Identifiable { let id: String; let label: String; let line: String; let bad: Bool }
+
+    /// The sources the engine pulls itself, with their last run.
+    private var pulled: [Row] {
+        let src = settings.sources
+        var out: [Row] = []
+        func add(_ id: String, _ label: String, _ run: LastSync?) {
+            out.append(Row(id: id, label: label, line: run.map(SettingsText.sync) ?? "Not yet", bad: run?.error != nil))
+        }
+        if src.intervals.connected { add("intervals", "intervals.icu", src.intervals.lastSync) }
+        if src.garmin.available && src.garmin.connected { add("garmin", "Garmin Connect", src.garmin.lastSync) }
+        if let c = src.coros, c.available && c.connected { add("coros", "COROS", c.lastSync) }
+        if let st = src.stravaWeb, st.available && st.enabled {
+            out.append(Row(id: "strava", label: "Strava", line: st.lastSync.map(StravaCard.runLine) ?? "Not yet", bad: st.lastSync?.error != nil))
+        }
+        return out
+    }
+
+    private var rows: [Row] {
+        var out = pulled
+        if settings.watchOn {
+            out.append(Row(id: "watch", label: "Garmin watch", line: settings.sources.watch?.lastSync.map(SettingsText.when) ?? "Not yet", bad: false))
+        }
+        if health.enabled {
+            out.append(Row(id: "health", label: "Apple Health", line: health.lastSync?.formatted(.relative(presentation: .named)) ?? "Not yet", bad: false))
+        }
+        return out
     }
 
     var body: some View {
         Card {
-            SectionLabel("Sync method")
-            Picker("Sync method", selection: $method) {
-                Text("intervals.icu").tag("intervals")
-                Text("Garmin watch").tag("watch")
+            SectionLabel("Sync")
+            if rows.isEmpty {
+                Text("Nothing to sync from yet. Connect a source below, or upload files.").font(.caption).foregroundStyle(.secondary)
+            } else {
+                VStack(alignment: .leading, spacing: 6) {
+                    ForEach(rows) { r in
+                        LabeledContent(r.label) {
+                            Text(r.line).multilineTextAlignment(.trailing).foregroundStyle(r.bad ? Tone.bad.ink : .primary)
+                        }
+                    }
+                }
+                .font(.subheadline)
+                HStack {
+                    if !pulled.isEmpty {
+                        Picker("Look back", selection: $days) {
+                            ForEach(syncRanges, id: \.self) { Text("\($0) days").tag($0) }
+                        }
+                        .disabled(syncing)
+                    }
+                    Spacer()
+                    Button { Task { await sync() } } label: { BusyLabel(title: syncing ? "Syncing" : "Sync now", busy: syncing) }
+                        .buttonStyle(.borderedProminent)
+                        .disabled(syncing || watch.running || health.running)
+                }
+                if syncing, let phase = watch.running ? watch.phase : health.running ? health.status : nil {
+                    Text(phase).font(.caption).foregroundStyle(.secondary)
+                }
             }
-            .pickerStyle(.segmented)
-            .onChange(of: method) { old, new in Task { await save(new, before: old) } }
-            Text(method == "watch" ? "Sync activities straight from your watch over Bluetooth, here or in Chrome on Windows or Android." :
-                    "Talus pulls new activities and overnight data from intervals.icu.")
+            if let message { FormMessage(ok: message.ok, text: message.text) }
+            if !added.isEmpty {
+                VStack(alignment: .leading, spacing: 4) { ForEach(added) { a in Text(a.line) } }.font(.caption)
+            }
+            Text("Only new activities are downloaded, and a run two sources both have is kept once.")
                 .font(.caption).foregroundStyle(.secondary)
-            if let message { FormMessage(ok: false, text: message) }
-            Text("File upload works with either.").font(.caption).foregroundStyle(.secondary)
         }
     }
 
-    private func save(_ new: String, before: String) async {
-        struct Body: Encodable { let method: String }
+    private func sync() async {
+        syncing = true
         message = nil
-        do {
-            try await api.put("/api/settings/sync-method", Body(method: new))
-            await reload()
-        } catch {
-            method = before
-            message = error.localizedDescription
+        added = []
+        defer { syncing = false }
+        var lines: [String] = [], ok = true
+        if !pulled.isEmpty {
+            let r = await syncAll(api, days: days)
+            lines.append(r.text)
+            ok = r.ok
+            added = r.added
         }
+        if settings.watchOn {
+            await watch.sync(api)
+            if let r = watch.result { lines.append("Watch: \(r.text)"); ok = ok && r.ok }
+            added = (watch.added + added).sorted { ($0.startTime ?? "") > ($1.startTime ?? "") }
+        }
+        if health.enabled {
+            await health.sync(api)
+            if let status = health.status { lines.append("Apple Health: \(status)") }
+        }
+        message = (ok, lines.joined(separator: " "))
+        await reload()
     }
 }
 
-/// Sync from a Garmin watch: connect, list its files, download the new ones and import each.
+/// Syncing straight from a Garmin watch, switched on or off. The Sync card runs it, and so does
+/// opening the app; this card shows how the last run went.
 private struct WatchCard: View {
     let lastSync: String?
     let reload: () async -> Void
     @EnvironmentObject private var api: API
     @EnvironmentObject private var watch: WatchSync
+    @State private var on: Bool
+    @State private var message: String?
     @State private var showLog = false
+
+    init(on: Bool, lastSync: String?, reload: @escaping () async -> Void) {
+        self.lastSync = lastSync
+        self.reload = reload
+        _on = State(initialValue: on)
+    }
 
     var body: some View {
         Card {
-            SectionLabel("Garmin watch")
-            Text("Pulls new activities straight off your watch over Bluetooth, without Garmin Connect's servers. Talus syncs on its own when you open the app and the last sync is over an hour old. Sleep, HRV and resting heart rate still come from intervals.icu or Apple Health. Nothing on the watch is changed or deleted.")
-                .font(.caption).foregroundStyle(.secondary)
-            LabeledContent("Last sync", value: lastSync.map(SettingsText.when) ?? "Not yet")
-                .font(.subheadline)
-            Button { Task { await watch.sync(api) } } label: {
-                BusyLabel(title: watch.running ? "Syncing" : "Sync from watch", busy: watch.running)
+            HStack {
+                SectionLabel("Garmin watch")
+                Spacer()
+                Pill(text: "Experimental", tone: .warn)
             }
-            .buttonStyle(.borderedProminent)
-            .disabled(watch.running)
+            Text("Pulls new activities straight off your watch over Bluetooth, without Garmin Connect's servers. Talus syncs on its own when you open the app and the last sync is over an hour old. Sleep, HRV and resting heart rate still come from intervals.icu or Apple Health. Nothing on the watch is changed or deleted. It works alongside your other sources: a run two of them have is kept once.")
+                .font(.caption).foregroundStyle(.secondary)
+            // A binding rather than onChange, so putting it back after a failed save doesn't save again.
+            Toggle("Sync from the watch", isOn: Binding(get: { on }, set: { new in
+                let before = on
+                on = new
+                Task { await save(new, before: before) }
+            }))
+                .font(.subheadline)
+                .disabled(watch.running)
+            if let message { FormMessage(ok: false, text: message) }
+            if on {
+                LabeledContent("Last sync", value: lastSync.map(SettingsText.when) ?? "Not yet")
+                    .font(.subheadline)
+            }
             if watch.running {
                 VStack(alignment: .leading, spacing: 4) {
                     if let p = watch.progress {
@@ -195,63 +270,44 @@ private struct WatchCard: View {
         }
         .onChange(of: watch.running) { _, running in if !running { Task { await reload() } } }
     }
+
+    private func save(_ new: Bool, before: Bool) async {
+        struct Body: Encodable { let enabled: Bool }
+        message = nil
+        do {
+            try await api.put("/api/sources/watch", Body(enabled: new))
+            await reload()
+        } catch {
+            on = before
+            message = error.localizedDescription
+        }
+    }
 }
 
 let syncRanges = [7, 30, 90, 180]
 
-/// Run a sync for one source and turn the answer into a status line.
+/// Sync every source the engine pulls, and turn the answer into a status line.
 @MainActor
-func runSync(_ api: API, source: String, days: Int) async -> (ok: Bool, text: String) {
-    struct Body: Encodable { let days: Int; let source: String }
-    struct Result: Decodable { let saved: Int?; let duplicates: Int?; let error: String? }
+private func syncAll(_ api: API, days: Int) async -> (ok: Bool, text: String, added: [AddedActivity]) {
+    struct Body: Encodable { let days: Int }
+    struct Run: Decodable { let label: String?; let error: String? }
+    struct Result: Decodable { let saved: Int; let duplicates: Int?; let sources: [Run]?; let added: [AddedActivity]? }
     do {
-        let r = try api.decode(try await api.post("/api/sync", Body(days: days, source: source)), as: Result.self)
-        if let e = r.error { return (false, "Sync failed: \(e)") }
-        let saved = r.saved ?? 0
+        let r = try api.decode(try await api.post("/api/sync", Body(days: days)), as: Result.self)
+        let failed = (r.sources ?? []).filter { $0.error != nil }.compactMap(\.label)
         let dups = (r.duplicates ?? 0) > 0 ? " \(r.duplicates!) already here from another source." : ""
-        return (true, (saved > 0 ? "Pulled \(saved) new \(saved == 1 ? "activity" : "activities")." : "Up to date, nothing new.") + dups)
+        let stopped = failed.isEmpty ? "" : " \(failed.joined(separator: " and ")) didn't sync; see above."
+        let got = r.saved > 0 ? "Pulled \(r.saved) new \(r.saved == 1 ? "activity" : "activities")." : "Up to date, nothing new."
+        return (failed.isEmpty || r.saved > 0, got + dups + stopped, r.added ?? [])
     } catch {
-        return (false, error.localizedDescription)
-    }
-}
-
-private struct SyncControls: View {
-    let source: String
-    let enabled: Bool
-    let reload: () async -> Void
-    @EnvironmentObject private var api: API
-    @State private var days = 30
-    @State private var syncing = false
-    @State private var message: (ok: Bool, text: String)?
-
-    var body: some View {
-        HStack {
-            Picker("Look back", selection: $days) {
-                ForEach(syncRanges, id: \.self) { Text("\($0) days").tag($0) }
-            }
-            .disabled(syncing)
-            Spacer()
-            Button { Task { await sync() } } label: { BusyLabel(title: syncing ? "Syncing" : "Sync now", busy: syncing) }
-                .buttonStyle(.borderedProminent)
-                .disabled(syncing || !enabled)
-        }
-        if let message { FormMessage(ok: message.ok, text: message.text) }
-    }
-
-    private func sync() async {
-        syncing = true
-        message = nil
-        message = await runSync(api, source: source, days: days)
-        syncing = false
-        await reload()
+        return (false, error.localizedDescription, [])
     }
 }
 
 /// intervals.icu: the API key form (OAuth stays web-only until intervals.icu approves the app),
-/// what is in Talus, and a sync.
+/// and what is in Talus. The Sync card syncs it.
 private struct IntervalsCard: View {
     let source: SourceInfo
-    let lastSync: LastSync?
     let reload: () async -> Void
     @EnvironmentObject private var api: API
     @State private var editing = false
@@ -279,7 +335,6 @@ private struct IntervalsCard: View {
                     if source.keySet { LabeledContent("Athlete", value: athleteId ?? "Whoever owns the key") }
                 }
                 LabeledContent("In Talus", value: "\(source.activities.formatted())\(source.latestActivity.map { ", latest \(Fmt.day($0, .dateTime.month(.abbreviated).day().year()))" } ?? "")")
-                LabeledContent("Last sync") { Text(lastSync.map(SettingsText.sync) ?? "Not from here yet").multilineTextAlignment(.trailing) }
             }
             .font(.subheadline)
             if editing || (!source.keySet && !oauth) {
@@ -300,8 +355,6 @@ private struct IntervalsCard: View {
                 }
             }
             if let message { FormMessage(ok: message.ok, text: message.text) }
-            Divider()
-            SyncControls(source: "intervals", enabled: source.keySet, reload: reload)
             Text("\(oauth ? "The connection is" : "Your key is") stored encrypted on the Talus server and never sent back to the app. Only new activities are downloaded.")
                 .font(.caption).foregroundStyle(.secondary)
         }
@@ -317,7 +370,7 @@ private struct IntervalsCard: View {
             try await api.put("/api/settings/source", Body(apiKey: key.trimmingCharacters(in: .whitespaces), athleteId: a.isEmpty ? "0" : a))
             key = ""
             editing = false
-            message = (true, "Saved. Sync to pull your activities.")
+            message = (true, "Saved. Sync now pulls your activities.")
             await reload()
         } catch APIError.server(422, _) {
             message = (false, "Check the key, and that the athlete id looks like i123456.")
@@ -337,8 +390,8 @@ private struct IntervalsCard: View {
     }
 }
 
-/// Garmin Connect, unofficial and for the owner account only: sign in once (maybe with a code),
-/// then sync.
+/// Garmin Connect, unofficial and for the owner account only: sign in once (maybe with a code).
+/// The Sync card syncs it.
 private struct GarminCard: View {
     let garmin: Sources.Garmin
     let reload: () async -> Void
@@ -368,7 +421,6 @@ private struct GarminCard: View {
                 .font(.caption).foregroundStyle(.secondary)
             VStack(alignment: .leading, spacing: 6) {
                 LabeledContent("Sign-in", value: garmin.connected ? (garmin.updatedAt.map { "Saved \(SettingsText.when($0)), good for about 6 months" } ?? "Saved") : "Not yet")
-                LabeledContent("Last sync") { Text(garmin.lastSync.map(SettingsText.sync) ?? "Not yet").multilineTextAlignment(.trailing) }
             }
             .font(.subheadline)
             switch step {
@@ -392,7 +444,6 @@ private struct GarminCard: View {
                     Button("Start over") { step = "login" }.font(.subheadline)
                 }
             default:
-                SyncControls(source: "garmin", enabled: true, reload: reload)
                 HStack(spacing: 16) {
                     Button("Sign in again") { step = "login" }.buttonStyle(.bordered)
                     Button("Disconnect", role: .destructive) {
@@ -436,7 +487,7 @@ private struct GarminCard: View {
                 return
             }
             step = "idle"
-            message = (true, "Connected. Sync to pull your activities.")
+            message = (true, "Connected. Sync now pulls your activities.")
             await reload()
         } catch {
             message = (false, error.localizedDescription)

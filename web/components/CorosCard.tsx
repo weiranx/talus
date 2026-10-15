@@ -1,9 +1,9 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import Pill from "@/components/Pill";
-import { RANGES, runSync, syncLine, when } from "@/components/SourceCard";
+import { when } from "@/lib/sync";
 import type { Settings } from "@/lib/types";
 
 type Coros = Settings["sources"]["coros"];
@@ -12,12 +12,14 @@ const REGIONS: [string, string][] = [["en", "Americas, Asia-Pacific and the rest
 
 export default function CorosCard({ coros }: { coros: Coros }) {
   const router = useRouter();
-  const [login, setLogin] = useState(!coros.connected);
+  // COROS keeps one web sign-in per account, so a sync can find Talus signed out.
+  const signedOut = Boolean(coros.last_sync?.error?.includes("Sign in to COROS again"));
+  const [login, setLogin] = useState(!coros.connected || signedOut);
+  useEffect(() => { if (signedOut) setLogin(true); }, [signedOut]);
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [region, setRegion] = useState(coros.region ?? "en");
   const [busy, setBusy] = useState(false);
-  const [days, setDays] = useState(30);
   const [message, setMessage] = useState<{ ok: boolean; text: string } | null>(null);
 
   async function connect() {
@@ -33,23 +35,13 @@ export default function CorosCard({ coros }: { coros: Coros }) {
     if (!res.ok) return setMessage({ ok: false, text: data.detail ?? `COROS sign-in failed (${res.status}).` });
     setPassword("");
     setLogin(false);
-    setMessage({ ok: true, text: "Connected. Sync to pull your activities." });
+    setMessage({ ok: true, text: "Connected. Sync now pulls your activities." });
     router.refresh();
   }
 
   async function disconnect() {
     await fetch("/api/sources/coros", { method: "DELETE" }).catch(() => null);
     setLogin(true);
-    router.refresh();
-  }
-
-  async function sync() {
-    setBusy(true);
-    setMessage(null);
-    const result = await runSync("coros", days);
-    setBusy(false);
-    setMessage(result);
-    if (!result.ok && result.text.includes("Sign in to COROS again")) setLogin(true);
     router.refresh();
   }
 
@@ -71,8 +63,6 @@ export default function CorosCard({ coros }: { coros: Coros }) {
       <dl className="kv">
         <dt>Sign-in</dt>
         <dd>{coros.connected && coros.updated_at ? `Saved ${when(coros.updated_at)}` : "Not yet"}</dd>
-        <dt>Last sync</dt>
-        <dd>{coros.last_sync ? syncLine(coros.last_sync) : "Not yet"}</dd>
       </dl>
       {login ? (
         <form className="form" onSubmit={(e) => { e.preventDefault(); connect(); }}>
@@ -99,21 +89,10 @@ export default function CorosCard({ coros }: { coros: Coros }) {
           </div>
         </form>
       ) : (
-        <>
-          <div className="actions">
-            <label className="inline-field">
-              <span className="muted">Look back</span>
-              <select value={days} onChange={(e) => setDays(Number(e.target.value))} disabled={busy}>
-                {RANGES.map((d) => <option key={d} value={d}>{d} days</option>)}
-              </select>
-            </label>
-            <button className="btn" onClick={sync} disabled={busy} aria-busy={busy}>{busy ? "Syncing" : "Sync now"}</button>
-          </div>
-          <div className="actions">
-            <button className="btn light outline" onClick={() => setLogin(true)}>Sign in again</button>
-            <button className="link-btn" style={{ fontSize: 13 }} onClick={disconnect}>Disconnect</button>
-          </div>
-        </>
+        <div className="actions">
+          <button className="btn light outline" onClick={() => setLogin(true)}>Sign in again</button>
+          <button className="link-btn" style={{ fontSize: 13 }} onClick={disconnect}>Disconnect</button>
+        </div>
       )}
       {message ? <div className={message.ok ? "ok-text" : "error-text"} role="status">{message.text}</div> : null}
       <div className="muted">

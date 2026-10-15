@@ -303,6 +303,19 @@ export interface LastSync {
   error: string | null;
 }
 
+// What POST /api/sync answers: every connected source, one after another, and the totals.
+export interface SyncResult {
+  at: string;
+  since: string;
+  listed: number;
+  new: number;
+  saved: number;
+  duplicates: number;
+  error: string | null;
+  sources: (LastSync & { label: string; aliased?: number; error_code?: string | null })[];
+  added: { id: number; name: string | null; sport: string | null; start_time: string | null; distance_m: number | null; gain_m: number | null }[];
+}
+
 export interface LastImport {
   at: string;
   source: "file" | "apple_health";
@@ -350,11 +363,9 @@ export interface Settings {
     upload: { last_import: LastImport | null; max_mb: number };
     // Posted by the Talus iOS app to /api/import/healthkit.
     healthkit: { last_sync: { at: string; workouts_added: number; workouts_skipped: number; wellness_days: number } | null };
-    // Files the web or iOS app pulled straight off a Garmin watch over Bluetooth.
-    watch: { last_sync: string | null };
+    // Files the web or iOS app pulled straight off a Garmin watch over Bluetooth, when switched on.
+    watch: { enabled: boolean; last_sync: string | null; last_attempt: { at: string; error: string | null; saved: number } | null };
   };
-  // How new activities arrive. File upload works with either.
-  sync_method: "intervals" | "watch";
   coach: {
     enabled: boolean;
     key_set: boolean;

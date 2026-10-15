@@ -22,7 +22,6 @@ from contextvars import ContextVar
 from dataclasses import asdict
 from datetime import date, datetime, timedelta, timezone
 from http.cookies import SimpleCookie
-from pathlib import Path
 from typing import Literal
 
 import httpx
@@ -1858,8 +1857,7 @@ def _action_context(store: Store, day: date) -> dict:
             for r in store.planned_runs(day, day + timedelta(days=28))]
     inf = _suggested_thresholds(store)
     return {"scheduled_runs": runs, "suggested_thresholds": inf,
-            "can_sync": store.settings().get("sync_method", "intervals") == "intervals"
-                        and _intervals_credential() is not None}
+            "can_sync": bool(cli.connected_sources(get_accounts(), _account.get()))}
 
 
 def _suggested_thresholds(store: Store) -> dict | None:
@@ -1931,9 +1929,10 @@ def _proposal(store: Store, raw: dict, day: date) -> tuple[str, dict, str] | Non
             return None
         return kind, {"note": note}, f"Update your training goals to: \u201c{note}\u201d"
     if kind == "sync":
-        if store.settings().get("sync_method", "intervals") != "intervals" or _intervals_credential() is None:
+        names = [cli.LABELS[n] for n, _ in cli.connected_sources(get_accounts(), _account.get())]
+        if not names:
             return None
-        return kind, {}, "Sync new activities from intervals.icu"
+        return kind, {}, "Sync new activities from " + (", ".join(names[:-1]) + " and " if len(names) > 1 else "") + names[-1]
     if kind == "apply_thresholds":
         v = _suggested_thresholds(store)
         if v is None:
@@ -1989,7 +1988,7 @@ def confirm_action(action_id: int, background: BackgroundTasks) -> dict:
             result = "Training goals updated."
         elif a["kind"] == "sync":
             out = sync_now(SyncIn(), background)
-            if out.get("error"):
+            if out.get("error") and not out.get("saved"):
                 raise ValueError("The sync failed. Try Sync now under Settings.")
             result = f"Synced: {out.get('saved', 0)} new {'activity' if out.get('saved') == 1 else 'activities'}."
         elif a["kind"] == "apply_thresholds":
@@ -2105,7 +2104,8 @@ def get_settings() -> dict:
             "last_sync": saved.get("last_sync"),
         },
         "sources": _sources(saved),
-        "sync_method": saved.get("sync_method", "intervals"),
+        # For older iPhone builds, which read the watch switch from here.
+        "sync_method": "watch" if cli.watch_on(saved) else "intervals",
         "coach": {
             "enabled": cfg["coach_enabled"],
             "key_set": bool(os.environ.get("ANTHROPIC_API_KEY")),
@@ -2229,16 +2229,26 @@ def put_readiness(body: ReadinessIn) -> dict:
     return {"ok": True}
 
 
+class WatchIn(BaseModel):
+    enabled: bool
+
+
+@app.put("/api/sources/watch")
+def put_watch(body: WatchIn) -> dict:
+    """Turn syncing straight from a Garmin watch on or off. It runs alongside every other
+    source; runs two sources both have are kept once."""
+    get_store().save_settings({"watch_enabled": body.enabled})
+    return {"ok": True}
+
+
 class SyncMethodIn(BaseModel):
     method: Literal["intervals", "watch"]
 
 
 @app.put("/api/settings/sync-method")
 def put_sync_method(body: SyncMethodIn) -> dict:
-    """How new activities arrive: intervals.icu's API, or straight off a Garmin watch over
-    Bluetooth from the web (Chrome) or iOS app. File upload works either way."""
-    get_store().save_settings({"sync_method": body.method})
-    return {"ok": True}
+    """Older iPhone builds' intervals.icu-or-watch choice: now just the watch switch."""
+    return put_watch(WatchIn(enabled=body.method == "watch"))
 
 
 def _intervals_credential() -> dict | None:
@@ -2297,7 +2307,8 @@ def _sources(saved: dict) -> dict:
                        "last_sync": saved.get("last_sync_strava_web")},
         "upload": {"last_import": saved.get("last_import"), "max_mb": MAX_UPLOAD_MB},
         "healthkit": {"last_sync": saved.get("last_sync_healthkit")},
-        "watch": {"last_sync": saved.get("last_sync_watch")},
+        "watch": {"enabled": cli.watch_on(saved), "last_sync": saved.get("last_sync_watch"),
+                  "last_attempt": saved.get("watch_sync")},
     }
 
 
@@ -2327,64 +2338,38 @@ def _owner_source(source: str):
 
 class SyncIn(BaseModel):
     days: int = Field(default=30, ge=1, le=730)
-    source: str = Field(default="intervals", pattern="^(intervals|garmin|coros|strava_web)$")
+    # Blank syncs every connected source. Naming one is for older iPhone builds and scripts.
+    source: str | None = Field(default=None, pattern="^(intervals|garmin|coros|strava_web)$")
+
+
+def _syncable(source: str | None) -> None:
+    """Why a sync can't run, as the HTTP error to send: nothing connected, or a source that
+    isn't this account's to pull."""
+    accounts, account = get_accounts(), current_account()
+    if source == "intervals" and _intervals_credential() is None:
+        raise HTTPException(409, "Connect intervals.icu under Data sources first.")
+    if source in OWNER_SOURCES:
+        _owner_source(source)
+    if source == cli.STRAVA_WEB:
+        _strava_owner()
+    if not cli.connected_sources(accounts, account, source):
+        raise HTTPException(409, "Save a Strava session first." if source == cli.STRAVA_WEB
+                            else "Connect a data source under Data sources first.")
 
 
 @app.post("/api/sync")
 def sync_now(body: SyncIn, background: BackgroundTasks) -> dict:
-    store = get_store()
-    if body.source == "strava_web":
-        return _strava_web_now(store, body.days, background)
-    save = None
-    if body.source == "intervals":
-        cred = _intervals_credential()
-        if cred is None:
-            raise HTTPException(409, "Connect intervals.icu under Data sources first.")
-    else:
-        cred, save = _owner_source(body.source)
-    lines: list[str] = []
+    """Pull every source this account has connected, one after another (cli.sync_all). The
+    watch isn't one: only the phone or browser next to it can reach it."""
+    _syncable(body.source)
+    store, lines = get_store(), []
     since = date.today() - timedelta(days=body.days)
-    # The owner's personal Strava fallback (if enabled) follows, after the response; it paces
-    # itself at a request a second, so the button never waits on it.
-    background.add_task(_strava_web_after, store.dir, _account.get(), body.source, since)
-    try:
-        result = cli.sync(store, body.source, since, log=lines.append, credential=cred, save_credential=save)
-    except Exception:
-        return store.settings()[f"last_sync_{body.source}"] | {"log": lines}
+    result = cli.sync_all(get_accounts(), current_account(), store, since, log=lines.append, only=body.source)
     # The coach writes after the response, so the sync button doesn't wait on it.
     added = result.pop("added_ids")
     background.add_task(warm_coach, added)
     background.add_task(start_inferring, store.dir)
     return result | {"added": added_activities(store, added), "log": lines}
-
-
-def _strava_web_now(store: Store, days: int, background: BackgroundTasks) -> dict:
-    """Pull from Strava now, from its card. Owner only, and only once a session is saved."""
-    account = _strava_owner()
-    accounts = get_accounts()
-    cred = accounts.credential(account.id, cli.STRAVA_WEB)
-    if cred is None and not os.environ.get("STRAVA_SESSION_COOKIE"):
-        raise HTTPException(409, "Save a Strava session first.")
-    from .sources.strava_web import puller
-    lines: list[str] = []
-    try:
-        result = puller.sync(store, date.today() - timedelta(days=days), log=lines.append,
-                             saved_cookie=cred and cred.get("cookie"))
-    except Exception:
-        return store.settings()[f"last_sync_{cli.STRAVA_WEB}"] | {"log": lines}
-    added = result.pop("added_ids")
-    background.add_task(warm_coach, added)
-    background.add_task(start_inferring, store.dir)
-    # aliased are already here too, under their other source's record
-    return result | {"duplicates": result["duplicates"] + result["aliased"],
-                     "added": added_activities(store, added), "log": lines}
-
-
-def _strava_web_after(folder: Path, account: Account | None, source_name: str, since: date) -> None:
-    result = cli.strava_web_after(get_accounts(), account, Store(folder), source_name, since, log=lambda _: None)
-    if result and result["added_ids"]:
-        warm_coach(result["added_ids"])
-        start_inferring(folder)
 
 
 def added_activities(store: Store, ids: list[int]) -> list[dict]:
@@ -2660,7 +2645,7 @@ def _strava_owner() -> Account:
 @app.post("/api/sources/strava-web")
 def connect_strava_web(body: StravaWebIn) -> dict:
     """Owner only: check a Cookie header copied from a browser signed in to Strava, then save it
-    encrypted and turn on the Strava pull after each intervals.icu sync. Nothing is saved when
+    encrypted and turn on the Strava pull in each sync. Nothing is saved when
     Strava doesn't accept it. The cookie is never sent back."""
     account = _strava_owner()
     from .sources.strava_web import client, puller

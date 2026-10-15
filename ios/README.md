@@ -37,7 +37,7 @@ Running on a real phone needs your Apple Developer team set under Signing & Capa
 
 Settings > Connect Apple Health asks to read workouts and their routes, heart rate, walking, running and cycling distance, HRV, resting heart rate and sleep. Health holds Apple Watch data and anything Garmin Connect or other apps write to it, so this is the free route to those watches.
 
-The first sync reads the last 90 days. After that the app syncs when it opens (at most hourly) and on **Sync now**, re-reading the last two days each time so a late watch sync is picked up. Each run posts to `POST /api/import/healthkit`:
+The first sync reads the last 90 days. After that the app syncs when it opens (at most hourly) and on **Sync now** under Settings > Data sources, which also syncs the engine's sources and the Garmin watch when it's switched on, re-reading the last two days each time so a late watch sync is picked up. Each run posts to `POST /api/import/healthkit`:
 
 - Runs, hikes, walks and rides become a TCX with one trackpoint per GPS fix (position, altitude, distance along the route, and the latest heart rate). Indoor workouts get a point per heart-rate sample with distance from Health's distance samples. The engine scores them like any watch file and skips ones it already has from another source.
 - Each day's average HRV (SDNN), resting heart rate, and time asleep (core, deep, REM and unspecified, not time in bed) count toward the morning you wake up. The engine only fills days no other source covers, and doesn't use SDNN in readiness yet.

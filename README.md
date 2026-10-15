@@ -39,7 +39,7 @@ cp .env.example .env          # add INTERVALS_API_KEY and INTERVALS_ATHLETE_ID
 cd engine
 uv sync
 uv run talus thresholds --resting 45 --aet 150 --ant 172 --max 190
-uv run talus sync --days 180  # pulls original FIT files from intervals.icu
+uv run talus sync --days 180  # pulls original FIT files from every connected source
 uv run talus list             # mi, ft up, ft down, effort mi and the three loads
 uv run talus score 12         # full breakdown for one activity, with "times a usual day"
 uv run talus load             # each ledger against your normal, flags, last 14 days
@@ -101,7 +101,7 @@ The Settings screen (`/settings`) edits what the engine stores in SQLite:
 
 - **Heart rate and zones:** resting, AeT, AnT and max, with the zones they make. Leave AeT blank for 88% of AnT, marked provisional. Saving rescores every activity. Estimates from `talus infer` show beside your numbers with their confidence and source runs; **Use these** fills the form for you to check and save.
 - **Heart rate zones:** 3 zones (below AeT, AeT to AnT, above AnT) or 5 (recovery under 90% of AeT, aerobic base up to AeT, tempo to halfway to AnT, threshold to AnT, above AnT), with each zone's starting bpm editable and a reset. Zones set time in zone on Today, Load and Activity and what the coach reads. Cardio load, readiness and the 80% target always use AeT and AnT, so switching zones never changes a load. Activities keep a 1-bpm heart-rate histogram (`hr_hist`), so a new zone model needs no rescore; activities scored before it are rescored once on the first zone save.
-- **Data source:** **Connect intervals.icu** (OAuth, when the server has a client id) or add or replace this account's intervals.icu key and athlete id, activity count, the last sync (from here or the CLI) and **Sync now**.
+- **Data sources:** one **Sync** card at the top, with a line per source (its last run, from here or the CLI) and one **Sync now** that pulls every connected source one after another: intervals.icu first, then Garmin Connect, COROS and Strava for the owner. A source that fails is shown on its line and never stops the ones after it. Below it, a card per source only connects or disconnects: **Connect intervals.icu** (OAuth, when the server has a client id) or add or replace this account's intervals.icu key and athlete id; Garmin Connect, COROS and Strava for the owner; the Garmin watch, switched on or off (it syncs from the iPhone app, or Chrome on Windows or Android, alongside the others); and file upload. Runs two sources both have are kept once. `POST /api/sync` without `source` is that sync; naming one still pulls just that one.
 - **AI coach:** on or off, the coaching style, and the model for the brief and for workout analysis, with an estimated cost per call and per month (from your own token usage once the coach has run).
 - **Units:** miles and feet.
 
@@ -133,7 +133,7 @@ Numbers with a dotted underline open their working when tapped: on Today, each l
 - **AeT:** the drift test read from ordinary runs. A steady, flat hour that drifts less than 5% in pace-to-heart-rate sets a floor; one that drifts more sets a ceiling. With no such run, 88% of AnT, marked provisional.
 - **Max:** the highest heart rate held for 5 seconds. A true max may be higher.
 
-Other commands: `talus import <files>` for FIT/GPX/TCX, `talus rescore` after changing thresholds or the model, `talus sync --source garmin` for the unofficial Garmin library (`uv sync --extra garmin`).
+Other commands: `talus import <files>` for FIT/GPX/TCX, `talus rescore` after changing thresholds or the model, `talus sync` pulls every connected source, like **Sync now**; `--source intervals|garmin|coros|strava_web` pulls just one (Garmin needs `uv sync --extra garmin`). It exits non-zero when any source failed.
 
 ## Assumptions to check against real runs
 
@@ -155,9 +155,9 @@ intervals.icu connects with OAuth when `INTERVALS_CLIENT_ID` and `INTERVALS_CLIE
 
 - **Personal only.** It runs only for the owner account, once a session is saved. The **Strava** card in Settings > Data sources shows only to the owner.
 - **Terms of service:** scraping strava.com is against Strava's terms. Keep it to your own account; Strava can change the site, or lock the account, at any time.
-- **Setup:** in Settings > Data sources, the **Strava** card lists where to copy the `Cookie` header in Chrome's DevTools while signed in to Strava; **Check and save** tries it with Strava before saving it encrypted and turning the sync on. The card shows the last run, says when Strava ends the session, and has **Pull now**, **Replace session** and **Turn off**. From a terminal, `uv run talus strava-web setup` explains the above, shows where to copy the `Cookie` header from Chrome's DevTools while signed in to Strava, reads it without showing it, and checks it against your activity list before saving anything. It is saved encrypted in `accounts.db`, like the Garmin tokens, and the sync is turned on. It offers to pull the last 30 days. `talus strava-web status` shows whether it's on, when the session was saved and the last run; `talus strava-web off` turns it off and forgets the session.
+- **Setup:** in Settings > Data sources, the **Strava** card lists where to copy the `Cookie` header in Chrome's DevTools while signed in to Strava; **Check and save** tries it with Strava before saving it encrypted and turning the sync on. The card says when Strava ends the session and has **Replace session** and **Turn off**; its last run is on the **Sync** card. From a terminal, `uv run talus strava-web setup` explains the above, shows where to copy the `Cookie` header from Chrome's DevTools while signed in to Strava, reads it without showing it, and checks it against your activity list before saving anything. It is saved encrypted in `accounts.db`, like the Garmin tokens, and the sync is turned on. It offers to pull the last 30 days. `talus strava-web status` shows whether it's on, when the session was saved and the last run; `talus strava-web off` turns it off and forgets the session.
 - **No password:** Talus never signs in to Strava. Strava's sign-in page is an email-first app (no form a server can post a password to), and a server signing in is what gets an account flagged. When Strava ends the session, runs stop with `session_expired`: save a fresh cookie on the card, or run setup again. `STRAVA_SESSION_COOKIE` in `.env` overrides the saved session.
-- **When it runs:** after each intervals.icu sync (`talus sync`, **Sync now**), even one that failed. From the web it runs after the response.
+- **When it runs:** in each sync (`talus sync`, **Sync now**, the coach's sync), after intervals.icu so it finds those runs and keeps them once, even when intervals.icu failed. `talus sync --source strava_web` runs it alone.
 - **The session on disk:** cookies Strava refreshes are kept in the account's folder (`strava_web_cookies.json`, mode 0600, left out of exports). A captcha stops the run and is never retried. One request at a time, at most one a second.
 - **What it reads:** the My Activities list (`/athlete/training_activities`, 20 a page, newest first, back to the sync's start) and each new activity's original upload (`export_original`). Endpoints are in `reverse-engineering/strava-web.md`.
 - **Duplicates:** an activity starting within 60 s of one already stored, with the same distance within 1%, is not downloaded; its Strava id is kept as an alias of the stored record (preferring one kept as an original FIT). Anything near enough for the engine's usual check (180 s, 15%) is skipped too, so nothing counts twice. New ones are scored like any file.

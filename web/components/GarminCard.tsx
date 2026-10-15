@@ -3,7 +3,7 @@
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 import Pill from "@/components/Pill";
-import { RANGES, runSync, syncLine, when } from "@/components/SourceCard";
+import { when } from "@/lib/sync";
 import type { Settings } from "@/lib/types";
 
 type Garmin = Settings["sources"]["garmin"];
@@ -15,7 +15,6 @@ export default function GarminCard({ garmin }: { garmin: Garmin }) {
   const [password, setPassword] = useState("");
   const [code, setCode] = useState("");
   const [busy, setBusy] = useState(false);
-  const [days, setDays] = useState(30);
   const [message, setMessage] = useState<{ ok: boolean; text: string } | null>(null);
 
   async function post(path: string, body: object) {
@@ -33,21 +32,13 @@ export default function GarminCard({ garmin }: { garmin: Garmin }) {
       return setMessage({ ok: true, text: "Garmin sent a code to your email or phone. Enter it here." });
     }
     setStep("idle");
-    setMessage({ ok: true, text: "Connected. Sync to pull your activities." });
+    setMessage({ ok: true, text: "Connected. Sync now pulls your activities." });
     router.refresh();
   }
 
   async function disconnect() {
     await fetch("/api/sources/garmin", { method: "DELETE" }).catch(() => null);
     setStep("login");
-    router.refresh();
-  }
-
-  async function sync() {
-    setBusy(true);
-    setMessage(null);
-    setMessage(await runSync("garmin", days));
-    setBusy(false);
     router.refresh();
   }
 
@@ -68,8 +59,6 @@ export default function GarminCard({ garmin }: { garmin: Garmin }) {
       <dl className="kv">
         <dt>Sign-in</dt>
         <dd>{garmin.connected && garmin.updated_at ? `Saved ${when(garmin.updated_at)}, good for about 6 months` : "Not yet"}</dd>
-        <dt>Last sync</dt>
-        <dd>{garmin.last_sync ? syncLine(garmin.last_sync) : "Not yet"}</dd>
       </dl>
       {step === "login" ? (
         <form className="form" onSubmit={(e) => { e.preventDefault(); post("/api/sources/garmin", { email: email.trim(), password }); }}>
@@ -101,21 +90,10 @@ export default function GarminCard({ garmin }: { garmin: Garmin }) {
           </div>
         </form>
       ) : (
-        <>
-          <div className="actions">
-            <label className="inline-field">
-              <span className="muted">Look back</span>
-              <select value={days} onChange={(e) => setDays(Number(e.target.value))} disabled={busy}>
-                {RANGES.map((d) => <option key={d} value={d}>{d} days</option>)}
-              </select>
-            </label>
-            <button className="btn" onClick={sync} disabled={busy} aria-busy={busy}>{busy ? "Syncing" : "Sync now"}</button>
-          </div>
-          <div className="actions">
-            <button className="btn light outline" onClick={() => setStep("login")}>Sign in again</button>
-            <button className="link-btn" style={{ fontSize: 13 }} onClick={disconnect}>Disconnect</button>
-          </div>
-        </>
+        <div className="actions">
+          <button className="btn light outline" onClick={() => setStep("login")}>Sign in again</button>
+          <button className="link-btn" style={{ fontSize: 13 }} onClick={disconnect}>Disconnect</button>
+        </div>
       )}
       {message ? <div className={message.ok ? "ok-text" : "error-text"} role="status">{message.text}</div> : null}
       <div className="muted">Runs that intervals.icu also has are recognized and kept once.</div>

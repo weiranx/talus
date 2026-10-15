@@ -2,6 +2,7 @@
 
 from datetime import date, datetime, timedelta, timezone
 
+from talus import cli
 from talus.cli import main
 from talus.sources.base import WellnessDay
 from talus.store import Store
@@ -153,10 +154,18 @@ def test_sync_method_and_watch_file_keys(tmp_path, monkeypatch):
     monkeypatch.setenv("TALUS_DATA_DIR", str(tmp_path / "data"))
     main(["thresholds", "--resting", "50", "--max", "190", "--ant", "170"])
     client = sign_in()
-    assert client.get("/api/settings").json()["sync_method"] == "intervals"
-    assert client.put("/api/settings/sync-method", json={"method": "watch"}).status_code == 200
+    settings = lambda: client.get("/api/settings").json()  # noqa: E731
+    assert settings()["sources"]["watch"]["enabled"] is False and settings()["sync_method"] == "intervals"
+    assert client.put("/api/sources/watch", json={"enabled": True}).status_code == 200
+    assert settings()["sources"]["watch"]["enabled"] is True
+    assert settings()["sync_method"] == "watch"  # what older iPhone builds read the switch from
+    # Older iPhone builds still set it as a sync method.
+    assert client.put("/api/settings/sync-method", json={"method": "intervals"}).status_code == 200
+    assert settings()["sources"]["watch"]["enabled"] is False
     assert client.put("/api/settings/sync-method", json={"method": "strava"}).status_code == 422
-    assert client.get("/api/settings").json()["sync_method"] == "watch"
+    # An account that picked the watch before the switch keeps it on.
+    assert cli.watch_on({"sync_method": "watch"}) and not cli.watch_on({"sync_method": "intervals"})
+    assert not cli.watch_on({"sync_method": "watch", "watch_enabled": False})
 
     assert client.get("/api/import/watch").json() == {"files": [], "last_sync": None, "last_attempt": None,
                                                       "taken": []}

@@ -66,11 +66,11 @@ def sources(accounts: Accounts, account: Account, store: Store, saved: dict) -> 
     intervals = cli.credential_for(accounts, account)
     garmin = accounts.credential(account.id, "garmin")
     coros = accounts.credential(account.id, "coros")
-    method = saved.get("sync_method", "intervals")
+    watch = cli.watch_on(saved)
     last_intervals = saved.get("last_sync_intervals") or (
         saved.get("last_sync") if (saved.get("last_sync") or {}).get("source") == "intervals" else None)
     rows = []
-    if intervals or last_intervals or method == "intervals":
+    if intervals or last_intervals or not watch:
         row = _run("intervals", "intervals.icu", last_intervals, intervals is not None, synced=True)
         row["how"] = None if intervals is None else ("connected app" if intervals.get("kind") == "oauth" else "API key")
         rows.append(row)
@@ -78,9 +78,12 @@ def sources(accounts: Accounts, account: Account, store: Store, saved: dict) -> 
         rows.append(_run("garmin", "Garmin Connect", saved.get("last_sync_garmin"), garmin is not None, synced=True))
     if coros or saved.get("last_sync_coros"):
         rows.append(_run("coros", "COROS", saved.get("last_sync_coros"), coros is not None, synced=True))
-    if method == "watch" or saved.get("last_sync_watch"):
+    strava = account.is_owner and accounts.strava_web_enabled(account.id)
+    if strava or saved.get(f"last_sync_{cli.STRAVA_WEB}"):
+        rows.append(_run(cli.STRAVA_WEB, "Strava", saved.get(f"last_sync_{cli.STRAVA_WEB}"), strava, synced=True))
+    if watch or saved.get("last_sync_watch"):
         run = saved.get("watch_sync") or saved.get("last_sync_watch")
-        rows.append(_run("watch", "Garmin watch", run, None, synced=method == "watch"))
+        rows.append(_run("watch", "Garmin watch", run, None, synced=watch))
     if saved.get("last_sync_healthkit"):
         rows.append(_run("healthkit", "Apple Health", saved.get("last_sync_healthkit"), None, synced=False))
     if saved.get("last_import"):

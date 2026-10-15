@@ -104,3 +104,20 @@ def test_overpass_timeouts_are_failures_not_empty_answers(monkeypatch):
     monkeypatch.setattr(naming, "_get", lambda *a, **k: {"elements": [], "remark": "runtime error: Query timed out"})
     with pytest.raises(naming.LookupFailed):
         naming.peak_name(34.1, -118.3)
+
+
+def test_every_sync_names_its_new_activities_even_with_the_coach_off(tmp_path, monkeypatch):
+    client = _demo(tmp_path, monkeypatch)
+    monkeypatch.setattr(naming, "area_name", lambda lat, lon: "Griffith Park")
+    monkeypatch.setattr(naming, "peak_name", lambda lat, lon: None)
+    monkeypatch.setattr(api, "coach_client", lambda: None)  # no key: the brief is skipped, naming isn't
+    ids = [a["id"] for a in client.get("/api/activities").json()[:3]]
+    client.put(f"/api/activities/{ids[0]}/name", json={"name": "Sunrise with Sam"})
+    lines = api.warm_coach(ids)
+    assert sum(line.startswith("Named activity") for line in lines) == 2 and "Coach skipped" in lines[-1]
+    names = {a["id"]: (a["name"], a["name_by"]) for a in client.get("/api/activities").json()}
+    assert names[ids[0]] == ("Sunrise with Sam", "you")
+    assert names[ids[1]] == names[ids[2]] == ("Run at Griffith Park", "ai")
+    # Synced again, an activity already named isn't asked about twice.
+    monkeypatch.setattr(api, "_ai_name", lambda *a, **k: (_ for _ in ()).throw(AssertionError("asked again")))
+    assert not [line for line in api.warm_coach(ids) if "name activity" in line or "Named" in line]

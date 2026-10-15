@@ -4,9 +4,9 @@ A native SwiftUI app (iOS 17+) over the Talus engine API: Today, Plan, Load, Act
 
 | Screen | What it shows |
 |---|---|
-| Today | The call for the day (the AI coach's brief when it's on, rule-based otherwise), the morning check-in, engine and legs readiness, overnight HRV, resting HR and sleep, each ledger against your normal, this week's miles and vert, and 28-day intensity |
+| Today | The call for the day (the AI coach's brief when it's on, rule-based otherwise), the morning check-in, engine and legs readiness, overnight HRV, resting HR and sleep, each ledger against your normal (tap a number to see how it's worked out), this week's miles and vert, and 28-day intensity |
 | Plan | The objective and its plan: the next run, this week against its target, the calendar of scheduled runs (add, move, edit, delete), the road to the objective week by week, readiness for the day, the coach's read and weekly review, and chat. Until a plan is accepted, a three-step setup: objective (type it or pick a GPX), training days, review and accept |
-| Load | Cardio, distance, climb and descent ledgers over 6 weeks, 6 months or a year: daily load, your normal and your last 7 days; intensity by week; biggest days |
+| Load | The coach's take on last week, the trend, what to watch and the next 7 days; how much the next 7 days can hold beside what's scheduled; weekly stats for the last 8 weeks; cardio, distance, climb and descent ledgers over 6 weeks, 6 months or a year: your normal, your last 7 days, the room before ramping too fast and where scheduled runs take them; intensity by week; biggest days |
 | Activity | Every activity by week, with each week's miles, ft up and ft down; the detail has the route map, the elevation profile, the coach's read, the loads against a usual day, and climb and descent segments |
 | Settings | Data sources (intervals.icu key, Garmin Connect, file upload, Apple Health), heart rate thresholds with the estimate from your runs, zones, the AI coach, sleep need, appearance, account (password, export, delete), the engine address, and Admin for the admin account |
 

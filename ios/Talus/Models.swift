@@ -156,6 +156,7 @@ struct Week: Codable, Hashable {
 
 struct Today: Codable, Hashable {
     let date: String
+    let planned: PlannedToday?
     let checkin: CheckIn?
     let wellness: Wellness?
     let readiness: Readiness
@@ -212,6 +213,7 @@ struct History: Codable, Hashable {
 struct WeekIntensity: Codable, Hashable {
     let start: String
     let share: [String: Double]
+    let zones: ZoneShare?
 }
 
 struct LoadData: Codable, Hashable {
@@ -221,6 +223,12 @@ struct LoadData: Codable, Hashable {
     let intensityByWeek: [WeekIntensity]
     let biggestDays: [ActivitySummary]
     let thresholds: Thresholds?
+    // Optional so an older engine's answer still decodes (LoadModels.swift).
+    let weekly: [WeekTotals]?
+    let lastWeekToDate: WeekTotals?
+    let zoneModel: ZoneModel?
+    let projection: Projection?
+    let nextWeek: NextWeek?
 }
 
 struct LoadUsual: Codable, Hashable {

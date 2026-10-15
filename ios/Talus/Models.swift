@@ -245,6 +245,9 @@ struct Segment: Codable, Hashable, Identifiable {
     let lossFt: Double
     let avgGrade: Double
     let timeS: Double
+    let hikeShare: Double?
+    let avgHr: Double?
+    let vertRateFtH: Double?
     var id: Int { index }
 }
 
@@ -260,6 +263,9 @@ struct Streams: Codable, Hashable {
 struct ActivityDetail: Codable, Hashable {
     let id: Int
     let name: String?
+    let sourceName: String?
+    /// Who the shown name is by: "you", "ai" (the coach) or "source" (the device or platform).
+    let nameBy: String?
     let day: String
     let startTime: String
     let source: String
@@ -275,9 +281,12 @@ struct ActivityDetail: Codable, Hashable {
     let longestClimbFt: Double?
     let longestDescentFt: Double?
     let minutesAbove8000Ft: Double?
+    let gainByBandFt: [String: Double]?
+    let lossByBandFt: [String: Double]?
     let notes: [String]
     let loads: [String: LoadUsual]
     let segments: [Segment]
+    let terrain: Terrain?
     let streams: Streams
 }
 

@@ -1,0 +1,485 @@
+{
+ "id": 50,
+ "name": "Big ridge day",
+ "source_name": "Big ridge day",
+ "name_by": "source",
+ "day": "2026-10-12",
+ "start_time": "2026-10-12T14:00:00",
+ "source": "demo",
+ "device_name": null,
+ "sport": "running",
+ "distance_mi": 16.118348948136518,
+ "gain_ft": 6511.4829396065,
+ "loss_ft": 6524.6062991865,
+ "effort_mi": 28.450703000421555,
+ "moving_time_s": 23494.0,
+ "elapsed_time_s": 23494.0,
+ "hike_share": 0.5159615220907465,
+ "zone_minutes": {
+  "z1": 341.06666666666666,
+  "z2": 50.5,
+  "z3": 0.0
+ },
+ "zone_model": {
+  "zones": 3,
+  "custom": false,
+  "list": [
+   {
+    "zone": 1,
+    "name": "Easy aerobic",
+    "low": null,
+    "high": 149,
+    "text": "under 150 bpm"
+   },
+   {
+    "zone": 2,
+    "name": "The gap",
+    "low": 150,
+    "high": 172,
+    "text": "150 to 172 bpm"
+   },
+   {
+    "zone": 3,
+    "name": "Threshold and up",
+    "low": 173,
+    "high": null,
+    "text": "173 bpm and up"
+   }
+  ]
+ },
+ "hr_zone_minutes": {
+  "z1": 341.0666666666667,
+  "z2": 50.499999999999986,
+  "z3": 0.0
+ },
+ "gain_by_band_ft": {
+  "<8": 353.018372701999,
+  "8-20": 3695.538057728001,
+  ">20": 2462.9265091764996
+ },
+ "loss_by_band_ft": {
+  "<8": 298.88451443449895,
+  "8-20": 3151.2467191475007,
+  ">20": 3074.4750656045
+ },
+ "longest_climb_ft": 6511.4829396065,
+ "longest_descent_ft": 6524.6062991865,
+ "minutes_above_8000ft": 224.56666666666666,
+ "cardio_estimated": false,
+ "notes": [
+  "GPS-only elevation: gain and loss are less reliable"
+ ],
+ "segments": [
+  {
+   "index": 0,
+   "kind": "flat",
+   "distance_mi": 0.3633407562186582,
+   "gain_ft": 42.3228346455003,
+   "loss_ft": 0.0,
+   "avg_grade": 2.2061076944084492,
+   "grade_band": "<8",
+   "hike_share": 0.0,
+   "time_s": 336.0,
+   "start_s": 0.0,
+   "end_s": 336.0,
+   "zone_minutes": {
+    "z1": 5.6,
+    "z2": 0.0,
+    "z3": 0.0
+   },
+   "hr_zone_minutes": {
+    "z1": 5.6,
+    "z2": 0.0,
+    "z3": 0.0
+   },
+   "climb_load": 31.742125984125227,
+   "descent_load": 0.0,
+   "avg_hr": 134.2,
+   "vert_rate_ft_h": null
+  },
+  {
+   "index": 1,
+   "kind": "climb",
+   "distance_mi": 7.459096525172639,
+   "gain_ft": 6457.349081339,
+   "loss_ft": 0.0,
+   "avg_grade": 16.39585674262628,
+   "grade_band": "8-20",
+   "hike_share": 0.7032138299106625,
+   "time_s": 17236.0,
+   "start_s": 338.0,
+   "end_s": 17574.0,
+   "zone_minutes": {
+    "z1": 236.8,
+    "z2": 50.5,
+    "z3": 0.0
+   },
+   "hr_zone_minutes": {
+    "z1": 236.8,
+    "z2": 50.5,
+    "z3": 0.0
+   },
+   "climb_load": 6998.3595800245,
+   "descent_load": 0.0,
+   "avg_hr": 138.3,
+   "vert_rate_ft_h": 1349
+  },
+  {
+   "index": 2,
+   "kind": "flat",
+   "distance_mi": 0.7310156230405596,
+   "gain_ft": 11.811023621999702,
+   "loss_ft": 76.7716535429988,
+   "avg_grade": -1.6830214318985106,
+   "grade_band": "<8",
+   "hike_share": 0.0,
+   "time_s": 478.0,
+   "start_s": 17576.0,
+   "end_s": 18054.0,
+   "zone_minutes": {
+    "z1": 8.0,
+    "z2": 0.0,
+    "z3": 0.0
+   },
+   "hr_zone_minutes": {
+    "z1": 8.0,
+    "z2": 0.0,
+    "z3": 0.0
+   },
+   "climb_load": 8.858267716499777,
+   "descent_load": 38.3858267714994,
+   "avg_hr": 130.6,
+   "vert_rate_ft_h": null
+  }
+ ],
+ "terrain": {
+  "bands": [
+   {
+    "key": "c3",
+    "label": "3 to 8%",
+    "kind": "climb",
+    "time_s": 1054,
+    "distance_mi": 0.98,
+    "vert_ft": 299,
+    "vert_rate_ft_h": 1021,
+    "pace_min_mi": 17.9,
+    "hike_share": 0.0,
+    "avg_hr": 140.9,
+    "hike": null,
+    "run": {
+     "time_s": 1054,
+     "vert_rate_ft_h": 1021,
+     "pace_min_mi": 17.9,
+     "avg_hr": 140.9
+    },
+    "usual": {
+     "runs": 39,
+     "vert_rate_ft_h": 1114,
+     "avg_hr": 142,
+     "rate_change_pct": -8,
+     "hr_change_bpm": -1,
+     "fastest": false
+    }
+   },
+   {
+    "key": "c8",
+    "label": "8 to 15%",
+    "kind": "climb",
+    "time_s": 2250,
+    "distance_mi": 1.66,
+    "vert_ft": 969,
+    "vert_rate_ft_h": 1551,
+    "pace_min_mi": 22.54,
+    "hike_share": 0.0,
+    "avg_hr": 150.4,
+    "hike": null,
+    "run": {
+     "time_s": 2250,
+     "vert_rate_ft_h": 1551,
+     "pace_min_mi": 22.54,
+     "avg_hr": 150.4
+    },
+    "usual": {
+     "runs": 20,
+     "vert_rate_ft_h": 1636,
+     "avg_hr": 149,
+     "rate_change_pct": -5,
+     "hr_change_bpm": 1,
+     "fastest": false
+    }
+   },
+   {
+    "key": "c15",
+    "label": "15 to 25%",
+    "kind": "climb",
+    "time_s": 10662,
+    "distance_mi": 3.97,
+    "vert_ft": 4003,
+    "vert_rate_ft_h": 1352,
+    "pace_min_mi": 44.78,
+    "hike_share": 0.83,
+    "avg_hr": 136.9,
+    "hike": {
+     "time_s": 8850,
+     "vert_rate_ft_h": 1246,
+     "pace_min_mi": 50.21,
+     "avg_hr": 132.8
+    },
+    "run": {
+     "time_s": 1812,
+     "vert_rate_ft_h": 1869,
+     "pace_min_mi": 29.31,
+     "avg_hr": 156.8
+    },
+    "usual": {
+     "runs": 18,
+     "vert_rate_ft_h": 1423,
+     "avg_hr": 139,
+     "rate_change_pct": -5,
+     "hr_change_bpm": -2,
+     "fastest": false
+    }
+   },
+   {
+    "key": "c25",
+    "label": "Over 25%",
+    "kind": "climb",
+    "time_s": 3272,
+    "distance_mi": 0.85,
+    "vert_ft": 1186,
+    "vert_rate_ft_h": 1305,
+    "pace_min_mi": 64.32,
+    "hike_share": 1.0,
+    "avg_hr": 133.6,
+    "hike": {
+     "time_s": 3272,
+     "vert_rate_ft_h": 1305,
+     "pace_min_mi": 64.32,
+     "avg_hr": 133.6
+    },
+    "run": null,
+    "usual": null
+   },
+   {
+    "key": "d3",
+    "label": "3 to 8%",
+    "kind": "descent",
+    "time_s": 638,
+    "distance_mi": 0.99,
+    "vert_ft": 238,
+    "vert_rate_ft_h": 1342,
+    "pace_min_mi": 10.77,
+    "hike_share": 0.0,
+    "avg_hr": 130.3,
+    "hike": null,
+    "run": {
+     "time_s": 638,
+     "vert_rate_ft_h": 1342,
+     "pace_min_mi": 10.77,
+     "avg_hr": 130.3
+    },
+    "usual": {
+     "runs": 39,
+     "vert_rate_ft_h": 1544,
+     "avg_hr": 130,
+     "rate_change_pct": -13,
+     "hr_change_bpm": 0,
+     "fastest": false
+    }
+   },
+   {
+    "key": "d8",
+    "label": "8 to 15%",
+    "kind": "descent",
+    "time_s": 1690,
+    "distance_mi": 2.46,
+    "vert_ft": 1637,
+    "vert_rate_ft_h": 3487,
+    "pace_min_mi": 11.46,
+    "hike_share": 0.0,
+    "avg_hr": 130.0,
+    "hike": null,
+    "run": {
+     "time_s": 1690,
+     "vert_rate_ft_h": 3487,
+     "pace_min_mi": 11.46,
+     "avg_hr": 130.0
+    },
+    "usual": {
+     "runs": 20,
+     "vert_rate_ft_h": 3453,
+     "avg_hr": 130,
+     "rate_change_pct": 1,
+     "hr_change_bpm": 0,
+     "fastest": false
+    }
+   },
+   {
+    "key": "d15",
+    "label": "15 to 25%",
+    "kind": "descent",
+    "time_s": 2478,
+    "distance_mi": 3.38,
+    "vert_ft": 3601,
+    "vert_rate_ft_h": 5232,
+    "pace_min_mi": 12.22,
+    "hike_share": 0.0,
+    "avg_hr": 130.0,
+    "hike": null,
+    "run": {
+     "time_s": 2478,
+     "vert_rate_ft_h": 5232,
+     "pace_min_mi": 12.22,
+     "avg_hr": 130.0
+    },
+    "usual": {
+     "runs": 13,
+     "vert_rate_ft_h": 4757,
+     "avg_hr": 130,
+     "rate_change_pct": 10,
+     "hr_change_bpm": 0,
+     "fastest": true
+    }
+   },
+   {
+    "key": "d25",
+    "label": "Over 25%",
+    "kind": "descent",
+    "time_s": 624,
+    "distance_mi": 0.71,
+    "vert_ft": 988,
+    "vert_rate_ft_h": 5697,
+    "pace_min_mi": 14.74,
+    "hike_share": 0.0,
+    "avg_hr": 130.0,
+    "hike": null,
+    "run": {
+     "time_s": 624,
+     "vert_rate_ft_h": 5697,
+     "pace_min_mi": 14.74,
+     "avg_hr": 130.0
+    },
+    "usual": null
+   }
+  ],
+  "durability": {
+   "first": {
+    "time_s": 11746,
+    "distance_mi": 4.88,
+    "gain_ft": 4276,
+    "flat_pace_min_mi": 24.37,
+    "climb_rate_ft_h": 1346,
+    "avg_hr": 137.1,
+    "efficiency": 0.465
+   },
+   "second": {
+    "time_s": 11748,
+    "distance_mi": 11.23,
+    "gain_ft": 2236,
+    "flat_pace_min_mi": 15.42,
+    "climb_rate_ft_h": 1420,
+    "avg_hr": 135.2,
+    "efficiency": 0.772
+   },
+   "flat_pace_min_mi": 18.88,
+   "pace_change_pct": -36.7,
+   "climb_rate_change_pct": 5.5,
+   "decoupling_pct": -66.1,
+   "verdict": "held",
+   "usual_decoupling_pct": -50.0,
+   "usual_runs": 25
+  },
+  "hike_or_run": [
+   {
+    "key": "c15",
+    "label": "15 to 25%",
+    "hike_rate_ft_h": 1246,
+    "run_rate_ft_h": 1869,
+    "run_rate_gain_pct": 50,
+    "hike_hr": 132.8,
+    "run_hr": 156.8,
+    "run_hr_cost_bpm": 24
+   }
+  ]
+ },
+ "streams": {
+  "time_s": [
+   0.0,
+   28.0,
+   56.0,
+   84.0,
+   112.0,
+   140.0
+  ],
+  "distance_mi": [
+   0.0,
+   0.041,
+   0.079,
+   0.114,
+   0.147,
+   0.178
+  ],
+  "altitude_ft": [
+   5249.0,
+   5254.0,
+   5260.0,
+   5264.0,
+   5269.0,
+   5273.0
+  ],
+  "heart_rate": [
+   129.0,
+   132.0,
+   133.0,
+   133.0,
+   133.0,
+   132.0
+  ],
+  "zone": [
+   1,
+   1,
+   1,
+   1,
+   1,
+   1
+  ],
+  "lat": [
+   34.283594,
+   34.283795,
+   34.283985,
+   34.284165,
+   34.284333,
+   34.284489
+  ],
+  "lon": [
+   -117.626897,
+   -117.626225,
+   -117.625604,
+   -117.625027,
+   -117.624487,
+   -117.623978
+  ]
+ },
+ "loads": {
+  "cardio": {
+   "load": 296.90120902785293,
+   "times_usual_day": 3.812200771286462,
+   "six_week_high": true
+  },
+  "distance": {
+   "load": 16.118348948136518,
+   "times_usual_day": 3.018405336281721,
+   "six_week_high": true
+  },
+  "climb": {
+   "load": 7038.959973725125,
+   "times_usual_day": 4.796811639975684,
+   "six_week_high": true
+  },
+  "descent": {
+   "load": 7912.4015747715,
+   "times_usual_day": 5.847812352431094,
+   "six_week_high": true
+  }
+ }
+}

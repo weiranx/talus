@@ -123,6 +123,10 @@ struct Constraints: Codable, Hashable {
     var weekendMin: Int
     var longDay: Int
     var notes: String
+    /// Two long days in a row for long objectives. Left out of a save, the engine keeps its setting.
+    var backToBack: Bool?
+    /// The weekly speed session: "none" or one of PlanText.workoutText's keys.
+    var workout: String?
 }
 
 struct LongDay: Codable, Hashable {
@@ -150,6 +154,11 @@ struct PlanWeek: Codable, Hashable, Identifiable {
     let long: LongDay?
     let limitedBy: [String]
     let notes: [String]
+    /// The week's speed session and hill session, when it has them.
+    let workout: String?
+    let hillSession: String?
+    /// The AI coach's line for the week, when it built the plan.
+    let coachNote: String?
     var id: String { start }
 }
 
@@ -183,8 +192,33 @@ struct Plan: Codable, Hashable {
     let reachable: Bool
     let options: PlanOptions
     let changes: [PlanChange]
+    let backToBack: Bool?
+    /// mountain, road, hundred or multiday.
+    let raceType: String?
+    let goal: String?
+    /// A yearly target: done so far, planned, and the year's totals.
+    let target: YearTarget?
+    /// "coach" when the AI coach built the weeks and the engine held them to its limits.
+    let builder: String?
     /// The AI coach is still drafting and checking this plan; until it's done there's nothing to review.
     let building: Bool?
+    let approach: String?
+    let heldWeeks: Int?
+    /// The coach's second read of its plan.
+    let check: PlanCheck?
+}
+
+struct PlanCheck: Codable, Hashable {
+    let ok: Bool
+    let summary: String
+    let issues: [String]
+    let revised: Bool
+}
+
+struct YearTarget: Codable, Hashable {
+    let done: Vol
+    let planned: Vol
+    let totals: Vol
 }
 
 struct PlanSession: Codable, Hashable {
@@ -199,6 +233,12 @@ struct PlanSession: Codable, Hashable {
     /// What the session does for the athlete.
     let benefit: String?
     let own: Bool?
+    /// How to run it, warm-up to cool-down, with heart-rate targets.
+    let steps: [String]?
+    /// The hill day's session, or recovery or strides on an easy day.
+    let type: String?
+    /// Strength is added after the run.
+    let strength: Bool?
 }
 
 struct ReviewFlag: Codable, Hashable {
@@ -251,8 +291,18 @@ struct ScheduledRun: Codable, Hashable {
     let source: String
     let title: String
     let how: String?
+    let detail: String?
     let status: String
     let activity: Matched?
+}
+
+/// An activity on foot that no scheduled run matched, so the calendar shows every day you trained.
+struct UnmatchedActivity: Codable, Hashable {
+    let id: Int
+    let day: String
+    let name: String?
+    let distanceMi: Double
+    let gainFt: Double
 }
 
 struct ScheduleWarning: Codable, Hashable {
@@ -273,6 +323,7 @@ struct Schedule: Codable, Hashable {
     let warnings: [ScheduleWarning]
     let kinds: [RunKind]
     let zoneModel: ZoneModel?
+    let activities: [UnmatchedActivity]?
 }
 
 /// A coach reply of any shape: the brief, the plan read, the weekly review or a workout read.
@@ -322,6 +373,8 @@ struct ChatMessage: Codable, Hashable {
     let source: String?
     let logId: Int?
     let cost: AICost?
+    /// Cards the coach offered in this reply (CoachChat.swift).
+    var actions: [CoachAction]?
 }
 
 struct ChatLog: Codable, Hashable {

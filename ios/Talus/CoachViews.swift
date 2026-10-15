@@ -86,37 +86,68 @@ struct CoachRead: View {
 }
 
 /// Coach text, rendered for reading: paragraphs, bulleted and numbered lists, and **bold** for the
-/// numbers that matter. The same small subset of markdown the web app renders.
+/// numbers that matter. The same small subset of markdown the web app renders
+/// (web/components/CoachText.tsx), so a stray "*" or "_" in a reply shows as itself.
 struct CoachText: View {
     let text: String
 
-    enum Block { case paragraph(String), bullet(String), numbered(String, String) }
+    enum Block: Equatable { case paragraph(String), bullet(String), numbered(String, String) }
 
     static func blocks(_ text: String) -> [Block] {
         var out: [Block] = []
         var para: [String] = []
+        // The number the next item of a running numbered list gets; nil outside one.
+        var next: Int?
         func flush() { if !para.isEmpty { out.append(.paragraph(para.joined(separator: "\n"))); para = [] } }
-        for raw in text.replacingOccurrences(of: "\r\n", with: "\n").components(separatedBy: "\n") {
+        for raw in text.replacingOccurrences(of: "\r\n", with: "\n").replacingOccurrences(of: "\r", with: "\n")
+            .components(separatedBy: "\n") {
             let line = raw.trimmingCharacters(in: .whitespaces)
-            if line.isEmpty { flush(); continue }
+            if line.isEmpty { flush(); next = nil; continue }
             if let r = line.range(of: #"^[-*•]\s+"#, options: .regularExpression) {
-                flush(); out.append(.bullet(String(line[r.upperBound...])))
+                flush(); next = nil
+                out.append(.bullet(String(line[r.upperBound...])))
             } else if let r = line.range(of: #"^\d{1,2}[.)]\s+"#, options: .regularExpression) {
                 flush()
-                let mark = line[..<r.upperBound].trimmingCharacters(in: .whitespaces).replacingOccurrences(of: ")", with: ".")
-                out.append(.numbered(mark, String(line[r.upperBound...])))
-            } else if let r = line.range(of: #"^#{1,4}\s+"#, options: .regularExpression) {
-                flush(); out.append(.paragraph("**\(line[r.upperBound...].replacingOccurrences(of: "**", with: ""))**"))
+                // Items count on from the first one's number, as an HTML list does; a list split
+                // by a blank line starts again from the number written.
+                let written = Int(line.prefix { $0.isNumber }) ?? 1
+                let n = next ?? written
+                next = n + 1
+                out.append(.numbered("\(n).", String(line[r.upperBound...])))
             } else {
-                para.append(line)
+                let heading = line.range(of: #"^#{1,4}\s+"#, options: .regularExpression)
+                let t = heading.map { "**\(line[$0.upperBound...].replacingOccurrences(of: "**", with: ""))**" } ?? line
+                // An indented line right after a list item continues that item.
+                if para.isEmpty, raw.first?.isWhitespace == true, let last = out.last {
+                    switch last {
+                    case .bullet(let item): out[out.count - 1] = .bullet(item + " " + t); continue
+                    case .numbered(let n, let item): out[out.count - 1] = .numbered(n, item + " " + t); continue
+                    case .paragraph: break
+                    }
+                }
+                next = nil
+                para.append(t)
             }
         }
         flush()
         return out
     }
 
+    private static let bold = try! Regex(#"\*\*([^*]+?)\*\*"#)
+
+    /// Only **bold**; everything else is shown as written.
     static func inline(_ s: String) -> AttributedString {
-        (try? AttributedString(markdown: s, options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace))) ?? AttributedString(s)
+        var out = AttributedString()
+        var at = s.startIndex
+        for m in s.matches(of: bold) {
+            out += AttributedString(String(s[at..<m.range.lowerBound]))
+            var b = AttributedString(String(s[m.range].dropFirst(2).dropLast(2)))
+            b.inlinePresentationIntent = .stronglyEmphasized
+            out += b
+            at = m.range.upperBound
+        }
+        out += AttributedString(String(s[at...]))
+        return out
     }
 
     var body: some View {

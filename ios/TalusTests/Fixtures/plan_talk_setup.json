@@ -1,0 +1,36 @@
+{
+ "messages": [
+  {
+   "role": "coach",
+   "text": "Let's build your plan. Six quick questions, and I'll draft it from your last four weeks of training.",
+   "step": null,
+   "groups": [],
+   "actions": []
+  },
+  {
+   "role": "coach",
+   "text": "What are you training for? For a race or a mountain objective, tell me the name, the date, the distance and the vert, like \"Baldy 50k on Jan 2, 31 mi, 8,000 ft\", or upload the route's GPX. No race day? Pick a goal below.",
+   "step": "objective",
+   "groups": [
+    {
+     "key": "goal_kind",
+     "options": [
+      "Build base",
+      "Maintain fitness",
+      "Come back from a break",
+      "Get faster",
+      "Yearly target",
+      "Ongoing plan"
+     ],
+     "label": "No race day",
+     "value": null
+    }
+   ],
+   "actions": []
+  }
+ ],
+ "step": "objective",
+ "mode": "setup",
+ "building": false,
+ "reads_with_ai": false
+}

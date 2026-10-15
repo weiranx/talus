@@ -4,28 +4,52 @@ import SwiftUI
 
 struct ActivitiesView: View {
     @EnvironmentObject private var api: API
+    @State private var mode = Mode.list
+
+    /// The web's List and Heatmap tabs, with the heatmap's Routes and Calendar side by side.
+    enum Mode: String, CaseIterable {
+        case list = "List", routes = "Routes", calendar = "Calendar"
+    }
 
     var body: some View {
         NavigationStack {
-            Loader(load: { try await api.get("/api/activities?limit=200", as: [ActivitySummary].self) }) { acts, reload in
-                List {
-                    if acts.isEmpty {
-                        Text("No activities yet. Sync from intervals.icu or Apple Health in Settings.").foregroundStyle(.secondary)
-                    }
-                    ForEach(ActivityWeek.group(acts)) { w in
-                        Section {
-                            ForEach(w.acts) { a in
-                                NavigationLink(value: a.id) { ActivityListRow(a: a) }
-                            }
-                        } header: {
-                            WeekHeader(w: w)
-                        }
-                    }
+            Group {
+                if mode == .list {
+                    list
+                } else {
+                    HeatmapScreen(calendar: mode == .calendar)
                 }
-                .refreshable { await reload() }
+            }
+            .safeAreaInset(edge: .top, spacing: 0) {
+                Picker("Activities view", selection: $mode) {
+                    ForEach(Mode.allCases, id: \.self) { Text($0.rawValue) }
+                }
+                .pickerStyle(.segmented)
+                .padding(.horizontal).padding(.bottom, 8)
+                .background(.bar)
             }
             .navigationDestination(for: Int.self) { ActivityDetailView(id: $0) }
             .navigationTitle("Activity")
+        }
+    }
+
+    private var list: some View {
+        Loader(load: { try await api.get("/api/activities?limit=200", as: [ActivitySummary].self) }) { acts, reload in
+            List {
+                if acts.isEmpty {
+                    Text("No activities yet. Sync from intervals.icu or Apple Health in Settings.").foregroundStyle(.secondary)
+                }
+                ForEach(ActivityWeek.group(acts)) { w in
+                    Section {
+                        ForEach(w.acts) { a in
+                            NavigationLink(value: a.id) { ActivityListRow(a: a) }
+                        }
+                    } header: {
+                        WeekHeader(w: w)
+                    }
+                }
+            }
+            .refreshable { await reload() }
         }
     }
 }
@@ -115,9 +139,10 @@ private struct ActivityListRow: View {
 struct ActivityDetailView: View {
     let id: Int
     @EnvironmentObject private var api: API
+    @State private var renaming = false
 
     var body: some View {
-        Loader(load: { try await api.get("/api/activities/\(id)", as: ActivityDetail.self) }) { a, _ in
+        Loader(load: { try await api.get("/api/activities/\(id)", as: ActivityDetail.self) }) { a, reload in
             ScrollView {
                 VStack(alignment: .leading, spacing: 14) {
                     Header(a: a)
@@ -126,6 +151,12 @@ struct ActivityDetailView: View {
                     ActivityCoachCard(id: a.id)
                     LoadsCard(a: a)
                     if !a.segments.isEmpty { SegmentsCard(segments: a.segments) }
+                    if let t = a.terrain, !t.bands.isEmpty {
+                        GradeCard(t: t, footer: longest(a))
+                    } else if let gain = a.gainByBandFt, let loss = a.lossByBandFt {
+                        VertByGradeCard(gain: gain, loss: loss, footer: longest(a))
+                    }
+                    if let d = a.terrain?.durability { DurabilityCard(d: d) }
                     if !a.notes.isEmpty {
                         Card {
                             SectionLabel("Notes")
@@ -138,7 +169,18 @@ struct ActivityDetailView: View {
             .background(Color(uiColor: .systemGroupedBackground))
             .navigationTitle(a.name ?? "Activity")
             .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .primaryAction) { Button("Rename") { renaming = true } }
+            }
+            .sheet(isPresented: $renaming) {
+                RenameActivitySheet(id: a.id, name: a.name, by: a.nameBy ?? "source", saved: reload)
+            }
         }
+    }
+
+    private func longest(_ a: ActivityDetail) -> String {
+        let high = (a.minutesAbove8000Ft ?? 0) >= 1 ? " \(Fmt.n0(a.minutesAbove8000Ft)) min above 8,000 ft." : ""
+        return "Longest climb \(Fmt.n0(a.longestClimbFt)) ft. Longest descent \(Fmt.n0(a.longestDescentFt)) ft.\(high)"
     }
 }
 
@@ -150,6 +192,10 @@ private struct Header: View {
             Text(Fmt.day(a.day, .dateTime.weekday(.wide).month(.abbreviated).day().year())
                  + (a.deviceName.map { " · \($0)" } ?? ""))
                 .font(.subheadline).foregroundStyle(.secondary)
+            if a.nameBy == "ai" {
+                Text("Named by the coach" + (a.sourceName.map { ". Device name: \($0)" } ?? ""))
+                    .font(.caption).foregroundStyle(.secondary)
+            }
             HStack(alignment: .firstTextBaseline, spacing: 14) {
                 stat(Fmt.mi(a.distanceMi), "mi")
                 stat(Fmt.n0(a.gainFt), "ft up")
@@ -207,12 +253,8 @@ private struct ProfileCard: View {
                 HStack(spacing: 16) {
                     Text("Low \(Fmt.n0(lo)) ft")
                     Text("High \(Fmt.n0(hi)) ft")
-                    if let c = a.longestClimbFt, c > 0 { Text("Longest climb \(Fmt.n0(c)) ft") }
                 }
                 .font(.caption.monospacedDigit()).foregroundStyle(.secondary)
-                if let m = a.minutesAbove8000Ft, m > 0 {
-                    Text("\(Fmt.n0(m)) min above 8,000 ft.").font(.caption).foregroundStyle(.secondary)
-                }
             }
         }
     }
@@ -268,14 +310,21 @@ private struct SegmentsCard: View {
                     VStack(alignment: .leading, spacing: 1) {
                         Text("\(Fmt.mi(s.distanceMi)) mi · \(Fmt.n0(s.gainFt)) ft up · \(Fmt.n0(s.lossFt)) ft down")
                             .font(.subheadline.monospacedDigit())
-                        Text("\(Fmt.capitalized(s.kind)), \(Int(s.avgGrade.rounded()))% average grade")
-                            .font(.caption).foregroundStyle(.secondary)
+                        Text(detail(s)).font(.caption.monospacedDigit()).foregroundStyle(.secondary)
                     }
                     Spacer()
                     Text(Fmt.duration(s.timeS)).font(.caption.monospacedDigit()).foregroundStyle(.secondary)
                 }
             }
+            Text("ft/h is vertical feet gained or lost per moving hour.").font(.caption).foregroundStyle(.secondary)
         }
+    }
+
+    private func detail(_ s: Segment) -> String {
+        var parts = ["\(Fmt.capitalized(s.kind)), \(Int(abs(s.avgGrade).rounded()))% average grade"]
+        if let r = s.vertRateFtH, r > 0 { parts.append("\(Fmt.n0(r)) ft/h") }
+        if let h = s.hikeShare { parts.append(h > 0.8 ? "Hike" : h > 0.2 ? "Run and hike" : "Run") }
+        return parts.joined(separator: " · ")
     }
 }
 

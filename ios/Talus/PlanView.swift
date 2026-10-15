@@ -61,11 +61,11 @@ private struct PlanScreen: View {
                         CoachPlanSection()
                         if let review = p.review { ReviewSection(fallback: review, reload: reload) }
                     }
-                    ChatCard(initial: b.chat)
+                    ChatCard(initial: b.chat, onConfirmed: reload)
                 } else {
                     PlanSetup(p: p, reload: reload)
                     CalendarCard(initial: b.schedule, compact: false, onChange: reload)
-                    ChatCard(initial: b.chat)
+                    ChatCard(initial: b.chat, onConfirmed: reload)
                 }
             }
             .padding()
@@ -792,97 +792,5 @@ private struct ReviewSection: View {
             }
         }
         .task { r = try? await api.get("/api/coach/review", as: ReviewResponse.self) }
-    }
-}
-
-// MARK: Chat
-
-/// Ask the coach. Every number in an answer is checked against your data before it shows.
-private struct ChatCard: View {
-    @EnvironmentObject private var api: API
-    @State private var messages: [ChatMessage]
-    @State private var question = ""
-    @State private var busy = false
-    @State private var error: String?
-
-    init(initial: [ChatMessage]) {
-        _messages = State(initialValue: initial)
-    }
-
-    var body: some View {
-        Card {
-            HStack {
-                SectionLabel("Ask the coach")
-                Spacer()
-                if !messages.isEmpty { Button("Clear") { Task { await clear() } }.font(.subheadline) }
-            }
-            if messages.isEmpty {
-                Text("Ask about your plan, your loads or your objective. For example: can I swap Saturday's long day to Sunday?")
-                    .font(.subheadline).foregroundStyle(.secondary)
-            }
-            ForEach(Array(messages.enumerated()), id: \.offset) { _, m in
-                bubble(m)
-            }
-            if busy {
-                HStack(spacing: 8) {
-                    ProgressView().controlSize(.small)
-                    Text("The coach is reading your numbers.").font(.caption).foregroundStyle(.secondary)
-                }
-            }
-            HStack {
-                TextField("Ask a question", text: $question, axis: .vertical)
-                    .lineLimit(1...4)
-                    .textFieldStyle(.roundedBorder)
-                    .onSubmit { Task { await ask() } }
-                Button("Ask") { Task { await ask() } }
-                    .buttonStyle(.borderedProminent)
-                    .disabled(busy || question.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-            }
-            if let error { Text(error).font(.caption).foregroundStyle(Tone.bad.ink) }
-        }
-    }
-
-    private func bubble(_ m: ChatMessage) -> some View {
-        let mine = m.role == "athlete"
-        return HStack {
-            if mine { Spacer(minLength: 40) }
-            VStack(alignment: .leading, spacing: 6) {
-                if mine { Text(m.text) } else { CoachText(text: m.text) }
-                if !mine, m.source == "coach", let id = m.logId {
-                    Text("AI coach, numbers checked").font(.caption2).foregroundStyle(.secondary)
-                    if let cost = m.cost { Text(cost.text).font(.caption2.monospacedDigit()).foregroundStyle(.secondary) }
-                    CoachFeedback(logId: id, initial: nil)
-                }
-            }
-            .font(.subheadline)
-            .padding(.horizontal, 12).padding(.vertical, 8)
-            .foregroundStyle(mine ? Color(uiColor: .systemBackground) : .primary)
-            .background(mine ? Color.primary : Color.secondary.opacity(0.12), in: RoundedRectangle(cornerRadius: 12))
-            if !mine { Spacer(minLength: 40) }
-        }
-    }
-
-    private func ask() async {
-        struct Question: Encodable { let question: String }
-        let q = question.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !q.isEmpty, !busy else { return }
-        let before = messages
-        busy = true
-        error = nil
-        messages.append(ChatMessage(id: -1, createdAt: "", role: "athlete", text: q, source: nil, logId: nil, cost: nil))
-        question = ""
-        defer { busy = false }
-        do {
-            let data = try await api.post("/api/coach/chat", Question(question: q))
-            messages = try api.decode(data, as: ChatLog.self).messages
-        } catch {
-            messages = before
-            question = q
-            self.error = "Could not reach the coach. \(error.localizedDescription)"
-        }
-    }
-
-    private func clear() async {
-        if (try? await api.delete("/api/coach/chat")) != nil { messages = [] }
     }
 }

@@ -318,6 +318,8 @@ struct ChatMessage: Codable, Hashable {
     let source: String?
     let logId: Int?
     let cost: AICost?
+    /// Cards the coach offered in this reply (CoachChat.swift).
+    var actions: [CoachAction]?
 }
 
 struct ChatLog: Codable, Hashable {

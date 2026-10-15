@@ -40,6 +40,7 @@ struct TodayView: View {
                 }
             }
             .background(Color(uiColor: .systemGroupedBackground))
+            .settingsButton()
         }
     }
 

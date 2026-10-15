@@ -1,11 +1,12 @@
 # Talus for iPhone
 
-A native SwiftUI app (iOS 17+) over the Talus engine API: Today, Plan, Load, Activity and Settings, plus Apple Health sync. It does what the web app does, except Google sign-in and the intervals.icu OAuth button, which stay on the web. Every number comes from the engine; the app only formats it, in miles and feet, distance and vert together.
+A native SwiftUI app (iOS 17+) over the Talus engine API: Today, Plan, Coach, Load and Activity tabs, Settings behind the gear on Today, plus Apple Health sync. It does what the web app does, except Google sign-in and the intervals.icu OAuth button, which stay on the web. Every number comes from the engine; the app only formats it, in miles and feet, distance and vert together.
 
 | Screen | What it shows |
 |---|---|
 | Today | The call for the day (the AI coach's brief when it's on, rule-based otherwise), the morning check-in, engine and legs readiness, overnight HRV, resting HR and sleep, each ledger against your normal, this week's miles and vert, and 28-day intensity |
 | Plan | The objective and its plan: the next run, this week against its target, the calendar of scheduled runs (add, move, edit, delete), the road to the objective week by week, readiness for the day, the coach's read and weekly review, and chat. Until a plan is accepted, a three-step setup: objective (type it or pick a GPX), training days, review and accept |
+| Coach | Your training goals (typed, or drafted by the AI coach from three questions and your recent weeks) and the chat, shared with Plan, with starter questions. The coach can offer to add, move or delete a run, update your goals, sync or apply thresholds; each shows as a card and nothing runs until Confirm |
 | Load | Cardio, distance, climb and descent ledgers over 6 weeks, 6 months or a year: daily load, your normal and your last 7 days; intensity by week; biggest days |
 | Activity | Every activity by week, with each week's miles, ft up and ft down; the detail has the route map, the elevation profile, the coach's read, the loads against a usual day, and climb and descent segments |
 | Settings | Data sources (intervals.icu key, Garmin Connect, file upload, Apple Health), heart rate thresholds with the estimate from your runs, zones, the AI coach, sleep need, appearance, account (password, export, delete), the engine address, and Admin for the admin account |

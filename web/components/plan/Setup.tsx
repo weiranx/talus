@@ -80,7 +80,7 @@ export function DraftDetail({ p }: { p: PlanPage }) {
           <h2 style={{ fontSize: 18, fontWeight: 600 }}>The draft for {obj.name}</h2>
           <div className="muted">{objectiveWhen(obj)} · {objectiveSize(obj)}</div>
         </div>
-        {isEvent(obj) || obj.goal === "target" ? (
+        {!draft.building && (isEvent(obj) || obj.goal === "target") ? (
           <Pill tone={draft.reachable ? "good" : "bad"}>
             {draft.reachable ? (obj.goal === "target" ? "On pace for the year" : "Reachable inside the limits")
               : obj.goal === "target" ? "Short of the year's target" : "Out of reach by this date"}
@@ -88,6 +88,7 @@ export function DraftDetail({ p }: { p: PlanPage }) {
         ) : null}
       </div>
       <BuiltBy plan={draft} />
+      {draft.building ? null : <>
       <div className="row">
         <div style={{ flex: "2 1 520px", minWidth: 0, display: "flex", flexDirection: "column", gap: 12 }}>
           <h3 className="label">The first weeks</h3>
@@ -100,6 +101,7 @@ export function DraftDetail({ p }: { p: PlanPage }) {
         </div>
       </div>
       <div className="muted">Nothing is on your calendar until you accept.</div>
+      </>}
     </section>
   );
 }
@@ -138,7 +140,12 @@ export default function Setup({ p, step }: { p: PlanPage; step: Step }) {
         </>
       ) : null}
       {step === "review" && obj ? (
-        draft ? (
+        draft?.building ? (
+          <>
+            <h2 style={{ fontSize: 20, fontWeight: 600 }}>Your plan for {obj.name}</h2>
+            <div style={{ maxWidth: 760 }}><BuiltBy plan={draft} /></div>
+          </>
+        ) : draft ? (
           <>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 12, flexWrap: "wrap" }}>
               <div>

@@ -365,7 +365,7 @@ export interface Settings {
     ai_plans?: boolean;
     styles: { key: string; label: string; description: string }[];
     models: { id: string; label: string; input: number; output: number }[];
-    estimate: { brief: Record<string, CostEstimate>; analysis: Record<string, CostEstimate>; build?: Record<string, CostEstimate> };
+    estimate: { brief: Record<string, CostEstimate>; analysis: Record<string, CostEstimate>; build?: Record<string, CostEstimate>; check?: Record<string, CostEstimate> };
     // This month's spending on the server's Anthropic key. ceiling is null for the owner.
     cap: { limit: number | null; ceiling: number | null; spent: number; month: string };
   };
@@ -504,6 +504,8 @@ export interface Plan {
   building?: boolean;
   approach?: string | null;
   held_weeks?: number | null;
+  // The coach's second read of its plan; revised when it sent back changes the engine accepted.
+  check?: { ok: boolean; summary: string; issues: string[]; revised: boolean; kept?: string } | null;
   options: { smaller: { factor: number; distance_mi: number; gain_ft: number; loss_ft: number } | null; later: string | null };
   now: ReadinessEval | null;
   changes: { start: string; before: WeekBrief | null; after: WeekBrief }[];
@@ -524,6 +526,8 @@ export interface PlanSession {
   how: string;
   // How to run it, warm-up to cool-down, with heart-rate targets.
   steps?: string[];
+  // What the session does for the athlete.
+  benefit?: string | null;
   // The hill day's session, or recovery/strides on an easy day; strength is added after the run.
   type?: string;
   strength?: boolean;
@@ -565,6 +569,7 @@ export interface WeekProgress { start: string; dated: boolean; target: (Vol & { 
 
 export interface PlanReply { verdict: string; limiter: string; plan: string }
 export interface ReviewReply { week: string; next: string }
+export interface FitReply { helps: string; week: string; next: string }
 
 export interface CoachAction { id: number; kind: string; summary: string; status: "proposed" | "running" | "done" | "dismissed" | "failed"; result: string | null }
 export interface ChatMessage { id: number; created_at: string; role: "athlete" | "coach"; text: string; source: string | null; log_id: number | null; cost?: AiCost | null; actions?: CoachAction[] }
@@ -585,6 +590,7 @@ export interface ScheduledRun {
   source: "manual" | "plan";
   title: string;
   how: string | null;
+  benefit?: string | null;
   detail: string;
   status: "done" | "missed" | "today" | "planned";
   activity: { id: number; name: string | null; sport: string | null; distance_mi: number; gain_ft: number; loss_ft: number; moving_time_s: number } | null;

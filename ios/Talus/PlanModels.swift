@@ -183,6 +183,8 @@ struct Plan: Codable, Hashable {
     let reachable: Bool
     let options: PlanOptions
     let changes: [PlanChange]
+    /// The AI coach is still drafting and checking this plan; until it's done there's nothing to review.
+    let building: Bool?
 }
 
 struct PlanSession: Codable, Hashable {
@@ -194,6 +196,8 @@ struct PlanSession: Codable, Hashable {
     let minutes: Double
     let title: String
     let how: String
+    /// What the session does for the athlete.
+    let benefit: String?
     let own: Bool?
 }
 

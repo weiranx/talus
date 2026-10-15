@@ -33,6 +33,7 @@ export default function DayCards({ sessions, today }: { sessions: PlanSession[];
                 </ol>
               </details>
             ) : <div style={{ fontSize: 12, color: objective ? "var(--feature-soft)" : "var(--muted)" }}>{s.how}</div>}
+            {s.benefit ? <div style={{ fontSize: 12 }}><span style={{ fontWeight: 600 }}>Why: </span>{s.benefit}</div> : null}
           </div>
         );
       })}

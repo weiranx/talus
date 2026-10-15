@@ -240,7 +240,12 @@ private struct SetupReview: View {
     @State private var confirmDelete = false
 
     var body: some View {
-        if let draft = p.draft {
+        if let draft = p.draft, draft.building == true {
+            Card {
+                Text("Your plan for \(obj.name)").font(.title3.weight(.semibold))
+                DraftBuilding(reload: reload)
+            }
+        } else if let draft = p.draft {
             Card {
                 HStack(alignment: .top) {
                     Text("Your plan for \(obj.name)").font(.title3.weight(.semibold))
@@ -384,12 +389,43 @@ struct PlanActions: View {
 }
 
 /// A drafted plan waiting for a decision: what changes against the accepted plan, or its weeks.
+/// While the AI coach drafts and checks the plan: no weeks to review yet, and the screen checks back.
+private struct DraftBuilding: View {
+    let reload: () async -> Void
+
+    var body: some View {
+        HStack(spacing: 10) {
+            ProgressView()
+            Text("The AI coach is drafting your plan, then checking it a second time. It shows here when it's ready, usually in a few minutes.")
+                .font(.subheadline).foregroundStyle(.secondary)
+        }
+        .task {
+            while !Task.isCancelled {
+                try? await Task.sleep(for: .seconds(5))
+                if Task.isCancelled { break }
+                await reload()
+            }
+        }
+    }
+}
+
 private struct DraftCard: View {
     let draft: Plan
     let hasAccepted: Bool
     let reload: () async -> Void
 
     var body: some View {
+        if draft.building == true {
+            Card {
+                SectionLabel("Drafted plan: \(draft.reasonText.lowercased())")
+                DraftBuilding(reload: reload)
+            }
+        } else {
+            ready
+        }
+    }
+
+    private var ready: some View {
         Card {
             HStack(alignment: .top) {
                 SectionLabel("Drafted plan: \(draft.reasonText.lowercased())")
@@ -448,6 +484,10 @@ private struct NextRunCard: View {
                 Text(Fmt.distVert(mi: next.miles, gain: next.gainFt, loss: next.lossFt))
                     .font(.headline.monospacedDigit()).foregroundStyle(.white)
                 Text("\(PlanText.minutes(next.minutes)). \(next.how)").foregroundStyle(.white.opacity(0.85))
+                if let why = next.benefit {
+                    (Text("Why: ").fontWeight(.semibold).foregroundStyle(.white) + Text(why).foregroundStyle(.white.opacity(0.85)))
+                        .font(.subheadline)
+                }
                 if runs.count > 1 {
                     Divider().overlay(Color.white.opacity(0.2))
                     ForEach(runs.dropFirst().prefix(3), id: \.day) { s in

@@ -679,26 +679,31 @@ def _weekday(iso: str) -> str:
     return DAY_NAMES[date.fromisoformat(iso).weekday()]
 
 
-BUILDING_TEXT = ("The AI coach is now building its own version from your training, goals and answers. It shows up "
-                 "here when it's ready, usually in a minute or two. Until then this is the engine's draft.")
+BUILDING_TEXT = ("The AI coach is drafting your plan from your training, goals and answers, then checking it a "
+                 "second time. It shows up here when it's ready, usually in a few minutes.")
 
 
-def built_text(plan: dict) -> str:
-    """The message when the coach's build of a draft finishes."""
-    if plan.get("builder") != "coach":
-        return "The AI coach couldn't build a version this time, so the engine's draft above stands."
-    weeks = [w for w in plan["weeks"] if w["focus"] != "race"] or plan["weeks"]
-    big = max(weeks, key=lambda w: (w["miles"] + w["gain_ft"] / 528))
-    return " ".join(["The AI coach's version is ready."] + _built_by(plan) + [
-        f"Its biggest week is {big['miles']:.0f} mi with {big['gain_ft']:,.0f} ft up."])
+def built_text(plan: dict, mode: str = "setup", a: dict | None = None) -> str:
+    """The message when the coach's build of a draft finishes: the coach's plan, or the engine's
+    draft when the coach couldn't build one."""
+    head = ("The AI coach's plan is ready." if plan.get("builder") == "coach"
+            else "The AI coach couldn't build a plan this time, so here's the engine's draft.")
+    if mode == "change":
+        return "\n".join([head, *_built_by(plan), *_change_lines(plan.get("changes") or []),
+                          "Accept the new draft, or keep changing it."])
+    c = plan.get("constraints") or {}
+    return head + " " + draft_summary(plan, plan["objective"]["name"], c.get("long_day", 5), a or {})
 
 
 def _built_by(plan: dict) -> list[str]:
-    """How the AI coach shaped the draft, and how many weeks the engine held to its limits."""
+    """How the AI coach shaped the draft, what its second check found, and how many weeks the
+    engine held to its limits."""
     if plan.get("builder") != "coach":
         return []
     out = [f"The AI coach built this one: {plan['approach'].strip()}" if plan.get("approach") else
            "The AI coach built this one."]
+    if (ck := plan.get("check")) and ck.get("summary"):
+        out.append(("Its second check changed it: " if ck.get("revised") else "Its second check: ") + ck["summary"])
     if n := plan.get("held_weeks"):
         out.append(f"The engine held {n} week{'s' if n != 1 else ''} it asked for to the 10% build limit.")
     return out
@@ -792,23 +797,28 @@ def draft_summary(plan: dict, name: str, long_day: int, a: dict) -> str:
     return " ".join(lines)
 
 
-def change_text(done: list[str], skipped: list[str], changes: list[dict]) -> str:
+def change_text(done: list[str], skipped: list[str], changes: list[dict] | None) -> str:
+    """What a change did. changes is None while the AI coach is still drafting the new plan."""
     out = []
     if done:
         out.append("Done: " + "; ".join(done) + ".")
     if skipped:
         out.append("I couldn't do all of it: " + "; ".join(skipped) + ".")
-    if done:
-        if not changes:
-            out.append("No week moves by more than 5%.")
-        for c in changes[:4]:
-            a, b = c["after"], c["before"]
-            out.append(f"Week of {week_label(c['start'])}: {_mi(a['miles'])} mi, {_ft(a['gain_ft'])} ft up"
-                       + (f" (was {_mi(b['miles'])} mi, {_ft(b['gain_ft'])} ft up)." if b else "."))
-        if len(changes) > 4:
-            out.append(f"And {len(changes) - 4} more weeks.")
+    if done and changes is not None:
+        out += _change_lines(changes)
         out.append("Accept the new draft, or keep changing it.")
     return "\n".join(out)
+
+
+def _change_lines(changes: list[dict]) -> list[str]:
+    out = [] if changes else ["No week moves by more than 5%."]
+    for c in changes[:4]:
+        a, b = c["after"], c["before"]
+        out.append(f"Week of {week_label(c['start'])}: {_mi(a['miles'])} mi, {_ft(a['gain_ft'])} ft up"
+                   + (f" (was {_mi(b['miles'])} mi, {_ft(b['gain_ft'])} ft up)." if b else "."))
+    if len(changes) > 4:
+        out.append(f"And {len(changes) - 4} more weeks.")
+    return out
 
 
 def _join_words(xs: list[str]) -> str:

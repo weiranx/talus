@@ -10,6 +10,7 @@ import ConstraintsForm from "@/components/plan/ConstraintsForm";
 import DeletePlan from "@/components/plan/DeletePlan";
 import ObjectiveForm from "@/components/plan/ObjectiveForm";
 import PlanActions from "@/components/plan/PlanActions";
+import PlanFit from "@/components/plan/PlanFit";
 import Review from "@/components/plan/Review";
 import PlanTalk from "@/components/plan/PlanTalk";
 import Setup, { DraftDetail, type Step } from "@/components/plan/Setup";
@@ -37,9 +38,17 @@ function Draft({ draft, hasAccepted }: { draft: Plan; hasAccepted: boolean }) {
     <section className="card" style={{ outline: "2px solid var(--ink)" }}>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
         <h2 className="label">Drafted plan: {draft.reason_text.toLowerCase()}</h2>
-        <Pill tone={draft.reachable ? "good" : "bad"}>{draft.reachable ? "Reachable inside the limits" : "Out of reach by this date"}</Pill>
+        {draft.building ? null : <Pill tone={draft.reachable ? "good" : "bad"}>{draft.reachable ? "Reachable inside the limits" : "Out of reach by this date"}</Pill>}
       </div>
       <BuiltBy plan={draft} />
+      {draft.building ? null : <DraftBody draft={draft} hasAccepted={hasAccepted} />}
+    </section>
+  );
+}
+
+function DraftBody({ draft, hasAccepted }: { draft: Plan; hasAccepted: boolean }) {
+  return (
+    <>
       {!draft.reachable ? (
         <div>
           The engine can&apos;t get you there inside the load limits by this date, and it won&apos;t loosen them.
@@ -69,7 +78,7 @@ function Draft({ draft, hasAccepted }: { draft: Plan; hasAccepted: boolean }) {
       )}
       <div className="muted">Nothing changes until you accept. The coach&apos;s read of this draft is below.</div>
       <PlanActions draftId={draft.id} />
-    </section>
+    </>
   );
 }
 
@@ -190,8 +199,9 @@ export default async function PlanPageView({ searchParams }: { searchParams: Pro
         <div style={{ flex: "3 1 420px", minWidth: 0, display: "flex" }}>
           <div style={{ flex: 1, display: "flex", flexDirection: "column" }}><NextRun sessions={p.sessions} today={p.date} /></div>
         </div>
-        <div style={{ flex: "2 1 320px", minWidth: 0, display: "flex", flexDirection: "column" }}>
+        <div style={{ flex: "2 1 320px", minWidth: 0, display: "flex", flexDirection: "column", gap: 16 }}>
           {p.this_week ? <ThisWeek w={p.this_week} /> : null}
+          <Suspense fallback={null}><PlanFit /></Suspense>
         </div>
       </div>
 

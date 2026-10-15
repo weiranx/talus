@@ -1,3 +1,4 @@
+import re
 from datetime import date, datetime, timedelta
 
 import pytest
@@ -341,6 +342,7 @@ def _setup(tmp_path, monkeypatch, days=42):
     return sign_in()
 
 
+CHECK_OK = {"ok": True, "summary": "Sound as it is.", "issues": [], "weeks": []}
 OBJ = {"name": "Fall 30k", "distance_mi": 18.6, "gain_ft": 4000, "loss_ft": 4000, "longest_descent_ft": 1800,
        "high_point_ft": 7500}
 
@@ -659,24 +661,105 @@ def test_drafts_are_built_by_the_coach_with_the_engine_as_fallback(tmp_path, mon
     weeks = [{"start": w["start"], "focus": w["focus"], "miles": w["miles"], "gain_ft": w["gain_ft"],
               "loss_ft": w["loss_ft"], "workout": "tempo", "note": "Steady."} for w in draft["weeks"]]
     reply = {"approach": "Vert first, then miles, with a tempo run each week.", "weeks": weeks}
-    fake = FakeClient(reply, {"approach": "Off by a week.", "weeks": weeks[1:]})
+    off = {"approach": "Off by a week.", "weeks": weeks[1:]}
+    fake = FakeClient(reply, CHECK_OK, off, off)
     monkeypatch.setattr(api, "coach_client", lambda: fake)
     p = client.post("/api/plan/draft", json={"reason": "request"}).json()["draft"]
     assert p["builder"] == "coach" and p["approach"].startswith("Vert first")
     assert "Mode: plan builder." in fake.calls[0]["messages"][0]["content"]
     assert "engine_draft" in fake.calls[0]["messages"][0]["content"]
+    assert "readiness_now" in fake.calls[0]["messages"][0]["content"]
+    # The coach checks its plan a second time, as the engine held it.
+    assert "Mode: plan check." in fake.calls[1]["messages"][0]["content"]
+    assert "plan_to_check" in fake.calls[1]["messages"][0]["content"]
+    assert p["check"] == {"ok": True, "summary": "Sound as it is.", "issues": [], "revised": False}
     assert p["weeks"][1]["coach_note"] == "Steady."
-    # The same inputs reuse the reply; a plan that doesn't line up falls back to the engine's.
+    # The same inputs reuse the replies. A plan that doesn't line up is sent back once, then
+    # falls back to the engine's.
     assert client.post("/api/plan/draft", json={"reason": "request"}).json()["draft"]["builder"] == "coach"
-    assert len(fake.calls) == 1
+    assert len(fake.calls) == 2
     client.put("/api/coach/note", json={"note": "More vert than miles."})
     p = client.post("/api/plan/draft", json={"reason": "missed"}).json()["draft"]
-    assert p["builder"] == "engine" and len(fake.calls) == 2
+    assert p["builder"] == "engine" and len(fake.calls) == 4
+    assert "weeks must have exactly" in fake.calls[3]["messages"][0]["content"]
     # The setting turns it off.
     client.put("/api/settings/coach", json={"enabled": True, "ai_plans": False})
     assert client.get("/api/settings").json()["coach"]["ai_plans"] is False
     p = client.post("/api/plan/draft", json={"reason": "flag"}).json()["draft"]
-    assert p["builder"] == "engine" and len(fake.calls) == 2
+    assert p["builder"] == "engine" and len(fake.calls) == 4
+
+
+def test_the_coach_checks_its_plan_and_the_engine_holds_the_revision(tmp_path, monkeypatch):
+    client = _setup(tmp_path, monkeypatch)
+    day = (date.today() + timedelta(weeks=10)).isoformat()
+    draft = client.put("/api/plan/objective", json=OBJ | {"day": day}).json()["draft"]
+    weeks = [{"start": w["start"], "focus": w["focus"], "miles": w["miles"], "gain_ft": w["gain_ft"],
+              "loss_ft": w["loss_ft"], "workout": "none", "hill_session": "vert_climb", "note": "Climb."}
+             for w in draft["weeks"]]
+    revised = [w | {"hill_session": "downhill", "note": "Descend."} if w["focus"] == "build" else w for w in weeks]
+    revised[2] = revised[2] | {"gain_ft": weeks[1]["gain_ft"] * 3}  # past the limit: the engine holds it
+    check = {"ok": False, "summary": "It never trained the descents, so the build weeks now do.",
+             "issues": ["No downhill work for a race with long descents."], "weeks": revised}
+    fake = FakeClient({"approach": "Steady climbing.", "weeks": weeks}, check)
+    monkeypatch.setattr(api, "coach_client", lambda: fake)
+    p = client.post("/api/plan/draft", json={"reason": "request"}).json()["draft"]
+    assert p["builder"] == "coach" and p["check"]["revised"] and not p["check"]["ok"]
+    assert p["check"]["issues"] == ["No downhill work for a race with long descents."]
+    assert any(w["hill_session"] == "downhill" for w in p["weeks"])
+    assert p["weeks"][2]["gain_ft"] <= p["weeks"][1]["gain_ft"] * planner.BUILD_RATE + 1
+    # A revision that doesn't line up is sent back once; still off, the first plan stands.
+    client.put("/api/coach/note", json={"note": "Short on time."})
+    bad = check | {"weeks": revised[1:]}
+    fake.replies = [{"approach": "Steady climbing.", "weeks": weeks}, bad, bad]
+    p = client.post("/api/plan/draft", json={"reason": "request"}).json()["draft"]
+    assert p["builder"] == "coach" and p["check"] is None
+    assert all(w["hill_session"] == "vert_climb" for w in p["weeks"] if w["focus"] == "build")
+
+
+def test_the_plan_chat_shows_the_coachs_plan_not_the_engines_while_it_builds(tmp_path, monkeypatch):
+    client = _setup(tmp_path, monkeypatch)
+    day = (date.today() + timedelta(weeks=10)).isoformat()
+    draft = client.put("/api/plan/objective", json=OBJ | {"day": day}).json()["draft"]
+    client.put("/api/settings/coach", json={"enabled": True, "ai_plans": False})
+    draft = client.post("/api/plan/draft", json={"reason": "request"}).json()["draft"]
+    client.put("/api/settings/coach", json={"enabled": True, "ai_plans": True})
+    weeks = [{"start": w["start"], "focus": w["focus"], "miles": w["miles"], "gain_ft": w["gain_ft"],
+              "loss_ft": w["loss_ft"], "workout": "none", "hill_session": "power_hike", "note": "Hike."}
+             for w in draft["weeks"]]
+    monkeypatch.setattr(api, "AI_BUILD_INLINE", False)
+    import threading
+    gate = threading.Event()
+
+    class Slow(FakeClient):
+        def create(self, **kw):
+            gate.wait(10)
+            return super().create(**kw)
+
+    fake = Slow({"approach": "Hike the climbs.", "weeks": weeks}, CHECK_OK)
+    monkeypatch.setattr(api, "coach_client", lambda: fake)
+    client.post("/api/plan/talk/restart", json={"mode": "setup"})
+    client.post("/api/plan/talk", json={"answers": {"keep": "Keep it"}})
+    for answers in ({"goal": "Finish strong"}, {"days": ["Tue", "Thu", "Sat", "Sun"], "long_day": "Sat"},
+                    {"weekday": "1 h", "weekend": "4 h"}, {"terrain": "Rolling hills"},
+                    {"body": "Nothing to note", "feel": "Fresh"}):
+        r = client.post("/api/plan/talk", json={"answers": answers}).json()
+    # No engine summary and nothing to accept while the coach drafts.
+    last = r["messages"][-1]
+    assert r["building"] and "drafting your plan" in last["text"] and "Here's your draft" not in last["text"]
+    assert not last.get("actions")
+    p = client.get("/api/plan").json()["draft"]
+    assert client.post(f"/api/plan/{p['id']}/accept").status_code == 409
+    r = client.post("/api/plan/talk", json={"action": "accept"}).json()
+    assert r["step"] == "draft" and "still drafting" in r["messages"][-1]["text"]
+    gate.set()
+    for t in threading.enumerate():
+        if t.name.startswith("plan build"):
+            t.join(10)
+    r = client.get("/api/plan/talk").json()
+    last = r["messages"][-1]
+    assert last["text"].startswith("The AI coach's plan is ready. Here's your draft")
+    assert "Its second check: Sound as it is." in last["text"]
+    assert [a["id"] for a in last["actions"]] == ["accept"]
 
 
 def test_the_coach_builds_after_the_draft_is_saved_and_the_chat_says_when(tmp_path, monkeypatch):
@@ -693,7 +776,7 @@ def test_the_coach_builds_after_the_draft_is_saved_and_the_chat_says_when(tmp_pa
             gate.wait(10)
             return super().create(**kw)
 
-    fake = Slow({"approach": "Climb more.", "weeks": weeks})
+    fake = Slow({"approach": "Climb more.", "weeks": weeks}, CHECK_OK)
     monkeypatch.setattr(api, "coach_client", lambda: fake)
     monkeypatch.setattr(api, "AI_BUILD_INLINE", False)
     client.post("/api/plan/talk/restart", json={"mode": "setup"})
@@ -703,7 +786,7 @@ def test_the_coach_builds_after_the_draft_is_saved_and_the_chat_says_when(tmp_pa
                     {"body": "Nothing to note", "feel": "Fresh"}):
         r = client.post("/api/plan/talk", json={"answers": answers}).json()
     # The answer comes back at once with the engine's draft; the coach is still working.
-    assert r["step"] == "draft" and r["building"] and "now building its own version" in r["messages"][-1]["text"]
+    assert r["step"] == "draft" and r["building"] and "drafting your plan" in r["messages"][-1]["text"]
     p = client.get("/api/plan").json()["draft"]
     assert p["building"] and p["builder"] == "engine"
     gate.set()
@@ -713,7 +796,7 @@ def test_the_coach_builds_after_the_draft_is_saved_and_the_chat_says_when(tmp_pa
     p = client.get("/api/plan").json()["draft"]
     assert not p["building"] and p["builder"] == "coach" and p["approach"] == "Climb more."
     r = client.get("/api/plan/talk").json()
-    assert not r["building"] and r["messages"][-1]["text"].startswith("The AI coach's version is ready.")
+    assert not r["building"] and r["messages"][-1]["text"].startswith("The AI coach's plan is ready.")
     assert [a["id"] for a in r["messages"][-1]["actions"]] == ["accept"]
 
 
@@ -770,3 +853,45 @@ def test_a_slow_marathon_still_trains_with_one_long_run():
     assert dem["race_type"] == "road" and dem["time"]["mid_h"] >= planner.B2B_FROM_H
     assert not planner.b2b_sized(dem)
     assert planner.b2b_sized(dem | {"race_type": "mountain"})
+
+
+def test_every_session_says_what_it_does_for_you():
+    base = {"miles": 6.0, "gain_ft": 800.0, "loss_ft": 800.0, "minutes": 60.0, "focus": "build"}
+    seen = set()
+    for kind, extra in (("easy", {}), ("easy", {"type": "recovery"}), ("easy", {"type": "strides"}),
+                        ("long", {}), ("long", {"race": "road"}), ("long2", {}), ("track", {}), ("threshold", {}),
+                        ("tempo", {}), ("race_pace", {}), ("fartlek", {}), ("progression", {}), ("hill_repeats", {}),
+                        *(("hills", {"type": h}) for h in planner.HILL_SESSIONS), ("rest", {})):
+        t = planner.session_text(base | {"kind": kind} | extra, 150, "Fall 30k", 172)
+        assert t["benefit"] and not re.search(r"\d", t["benefit"]), (kind, extra)
+        seen.add(t["benefit"])
+    assert len(seen) == 19  # each kind says its own thing
+    downhill = planner.session_text(base | {"kind": "hills", "type": "downhill"}, 150, None, 172)
+    assert "quads for long descents" in downhill["benefit"] and not any("builds the quads" in s for s in downhill["steps"])
+    strength = planner.session_text(base | {"kind": "easy", "strength": True}, 150, None, 172)
+    assert strength["benefit"].endswith(planner.STRENGTH_BENEFIT)
+    assert planner.session_text(base | {"kind": "objective"}, 150, "Fall 30k", 172)["benefit"] is None
+
+
+def test_each_sync_reads_the_latest_training_against_the_plan(tmp_path, monkeypatch):
+    client = _setup(tmp_path, monkeypatch)
+    assert client.get("/api/coach/fit").status_code == 404  # no plan yet
+    day = (date.today() + timedelta(weeks=10)).isoformat()
+    p = client.put("/api/plan/objective", json=OBJ | {"day": day}).json()
+    client.post(f"/api/plan/{p['draft']['id']}/accept")
+    plan = client.get("/api/plan").json()
+    assert all(s.get("benefit") for s in plan["sessions"] if s["kind"] not in ("done", "objective"))
+    sched = client.get("/api/schedule").json()
+    assert any(it.get("benefit") for it in sched["items"] if it["source"] == "plan")
+    # Without the coach, the rules read the last few days against the plan.
+    r = client.get("/api/coach/fit").json()
+    assert r["source"] == "rules" and set(r["reply"]) == {"helps", "week", "next"}
+    assert r["reply"]["helps"] and r["reply"]["week"].startswith("This week")
+    fake = FakeClient({"call": "rest", "why": "Rest."},
+                      {"helps": "Your recent runs count toward the week.", "week": "On track.", "next": "Carry on."})
+    monkeypatch.setattr(api, "coach_client", lambda: fake)
+    lines = api.warm_coach([])
+    assert "Plan fit: coach" in lines
+    sent = fake.calls[-1]["messages"][0]["content"]
+    assert "Mode: plan fit." in sent and "recent_days" in sent and "this_week" in sent
+    assert client.get("/api/coach/fit").json()["source"] == "coach" and len(fake.calls) == 2  # cached

@@ -88,7 +88,7 @@ def start(c: dict, current: dict | None = None) -> dict:
         first = coach(f"You're set up for {line}. Keep it, or tell me what else you're training for. You can "
                       "also upload the route's GPX, or pick a goal with no race day.", "objective",
                       [{"key": "keep", "options": ["Keep it"], "value": None}, QUESTIONS["objective"]["groups"][0]])
-    return {"messages": [coach("Let's build your plan. Six quick questions, and I'll draft it from your "
+    return {"messages": [coach("Let's build your plan. A few quick questions, and I'll draft it from your "
                                "last four weeks of training."), first],
             "step": "objective", "mode": "setup", "answers": {}, "objective": {}, "defaults": days_defaults(c)}
 

@@ -74,7 +74,7 @@ export function DraftDetail({ p }: { p: PlanPage }) {
   const draft = p.draft;
   if (!obj || !draft) return null;
   return (
-    <section className="card" style={{ gap: 14 }}>
+    <section id="plan-draft" tabIndex={-1} className="card plan-draft" style={{ gap: 14, scrollMarginTop: 24 }}>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 12, flexWrap: "wrap" }}>
         <div>
           <h2 style={{ fontSize: 18, fontWeight: 600 }}>The draft for {obj.name}</h2>
@@ -90,18 +90,35 @@ export function DraftDetail({ p }: { p: PlanPage }) {
       </div>
       <BuiltBy plan={draft} />
       {draft.building ? null : <>
+      <div className="plan-draft-summary">
+        <div><span className="muted">Length</span><strong>{draft.weeks.length} weeks</strong></div>
+        <div><span className="muted">First week</span><strong>{draft.weeks[0] ? `${mi(draft.weeks[0].miles)} mi` : "–"}</strong><span>{draft.weeks[0] ? `${n0(draft.weeks[0].gain_ft)} ft up` : "No weeks drafted"}</span></div>
+        <div><span className="muted">{isEvent(obj) ? "Peak target" : "Weekly target"}</span><strong>{mi(draft.peak.miles)} mi</strong><span>{n0(draft.peak.gain_ft)} ft up</span></div>
+      </div>
+      {!draft.reachable && isEvent(obj) ? <div className="plan-draft-warning">
+        <strong>This date is ahead of your current training.</strong> The draft stays inside your load limits.
+        {draft.options.later ? ` More time would help: ${dayLabel(draft.options.later, { month: "long", day: "numeric", year: "numeric" })} fits those limits.` : ""}
+        {draft.options.smaller ? ` Or aim for about ${mi(draft.options.smaller.distance_mi)} mi and ${n0(Math.round(draft.options.smaller.gain_ft / 100) * 100)} ft up on this date.` : ""}
+        {" "}<Link href="/plan?step=objective">Adjust your goal</Link>
+      </div> : null}
       <div className="row">
         <div style={{ flex: "2 1 520px", minWidth: 0, display: "flex", flexDirection: "column", gap: 12 }}>
           <h3 className="label">The first weeks</h3>
-          <WeeksTable weeks={draft.weeks} current={draft.weeks[0].start} limit={6} draft />
+          <WeeksTable weeks={draft.weeks} current={draft.weeks[0]?.start ?? p.date} limit={6} draft />
           <h3 className="label">Coach&apos;s read</h3>
           <Suspense fallback={<CoachPlanPending />}><CoachPlan /></Suspense>
         </div>
         <div style={{ flex: "1 1 340px", minWidth: 0 }}>
-          {p.readiness && draft.projected ? <Readiness r={p.readiness} projected={draft.projected} note={p.fitness_only} /> : null}
+          {p.readiness && draft.projected ? <details className="plan-draft-readiness">
+            <summary>How this fits your current fitness</summary>
+            <Readiness r={p.readiness} projected={draft.projected} note={p.fitness_only} />
+          </details> : null}
         </div>
       </div>
-      <div className="muted">Nothing is on your calendar until you accept.</div>
+      <div className="plan-draft-decision">
+        <div><h3 className="label">Ready to train?</h3><p className="muted">Accept to put this draft on your calendar, or ask the coach for changes.</p></div>
+        <PlanActions draftId={draft.id} acceptOnly next="/plan" />
+      </div>
       </>}
     </section>
   );

@@ -36,7 +36,7 @@ function weekStart(iso: string): string {
 
 function Draft({ draft, hasAccepted }: { draft: Plan; hasAccepted: boolean }) {
   return (
-    <section className="card" style={{ outline: "2px solid var(--ink)" }}>
+    <section id="plan-draft" tabIndex={-1} className="card" style={{ outline: "2px solid var(--ink)", scrollMarginTop: 24 }}>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
         <h2 className="label">Drafted plan: {draft.reason_text.toLowerCase()}</h2>
         {draft.building ? null : <Pill tone={draft.reachable ? "good" : "bad"}>{draft.reachable ? "Reachable inside the limits" : "Out of reach by this date"}</Pill>}
@@ -78,7 +78,7 @@ function DraftBody({ draft, hasAccepted }: { draft: Plan; hasAccepted: boolean }
         <WeeksTable weeks={draft.weeks} current={draft.weeks[0].start} limit={8} draft />
       )}
       <div className="muted">Nothing changes until you accept. The coach&apos;s read of this draft is below.</div>
-      <PlanActions draftId={draft.id} />
+      <PlanActions draftId={draft.id} next="/plan" />
     </>
   );
 }
@@ -114,8 +114,10 @@ export default async function PlanPageView({ searchParams }: { searchParams: Pro
           </div>
           <div style={{ paddingBottom: 6 }}><Link href="/plan?step=objective">Skip to the form</Link></div>
         </header>
-        <section className="card"><PlanTalk initial={talk} /></section>
-        {talk.step === "draft" || p.draft ? <DraftDetail p={p} /> : null}
+        <div className={p.draft ? "plan-workspace" : undefined}>
+          <section className="card"><PlanTalk initial={talk} draftReady={!!p.draft && !p.draft.building} /></section>
+          {talk.step === "draft" || p.draft ? <DraftDetail p={p} /> : null}
+        </div>
         <Calendar initial={schedule} />
       </PlanDetailProvider>
     );
@@ -181,7 +183,7 @@ export default async function PlanPageView({ searchParams }: { searchParams: Pro
             <h2 className="label">Change the plan with the coach</h2>
             <Link href="/plan">Close</Link>
           </div>
-          <PlanTalk initial={talk} />
+          <PlanTalk initial={talk} draftReady={!!p.draft && !p.draft.building} />
         </section>
       ) : null}
       {edit === "days" ? (

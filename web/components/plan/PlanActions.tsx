@@ -5,8 +5,8 @@ import { useState } from "react";
 
 // Accept or decline a drafted plan, or ask the engine for a fresh one from today.
 // `acceptOnly`: setup's review step, where changing a step replaces declining.
-export default function PlanActions({ draftId, replan, reason, acceptOnly }: {
-  draftId?: number; replan?: boolean; reason?: string; acceptOnly?: boolean;
+export default function PlanActions({ draftId, replan, reason, acceptOnly, next }: {
+  draftId?: number; replan?: boolean; reason?: string; acceptOnly?: boolean; next?: string;
 }) {
   const router = useRouter();
   const [busy, setBusy] = useState<string | null>(null);
@@ -22,6 +22,7 @@ export default function PlanActions({ draftId, replan, reason, acceptOnly }: {
       const b = await res?.json().catch(() => ({}));
       return setError(typeof b?.detail === "string" ? b.detail : "Could not save. Is the engine running?");
     }
+    if (next) router.replace(next);
     router.refresh();
   }
 

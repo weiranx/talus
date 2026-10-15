@@ -1,3 +1,4 @@
+import Link from "next/link";
 import Pill from "@/components/Pill";
 import type { SignalStatus, Wellness } from "@/lib/types";
 
@@ -24,7 +25,10 @@ export default function Overnight({ w }: { w: Wellness }) {
   const empty = rows.every((r) => r.s.status === "no_data");
   return (
     <section className="card" style={{ gap: 12 }}>
-      <h2 className="label">Overnight</h2>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 8 }}>
+        <h2 className="label">Overnight</h2>
+        <Link href="/health" style={{ fontSize: 14 }}>History</Link>
+      </div>
       {empty && (
         <div className="muted">
           <div style={{ fontWeight: 600, color: "var(--ink)" }}>No overnight data from your watch yet</div>

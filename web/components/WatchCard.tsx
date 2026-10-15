@@ -49,6 +49,8 @@ export default function WatchCard({ watch }: { watch: Settings["sources"]["watch
     setLines([]);
     setAdded([]);
     let added = 0;
+    // Mornings the overnight files filled: a night's sleep and HRV files arrive separately.
+    const nights = new Set<string>();
     const out: { ok: boolean; text: string }[] = [];
     const say = (ok: boolean, text: string) => { out.push({ ok, text }); setLines([...out]); };
     const session = new WatchSession(setProgress);
@@ -77,10 +79,11 @@ export default function WatchCard({ watch }: { watch: Settings["sources"]["watch
           say(false, `${label(f)}: ${body?.error ?? body?.failed?.[0] ?? body?.detail ?? "import failed"}`);
         } else {
           added += body.new ?? 0;
+          for (const d of (body.wellness_dates ?? []) as string[]) nights.add(d);
           if (body.added?.length) setAdded((was) => [...body.added, ...was].sort((a, b) => (b.start_time ?? "").localeCompare(a.start_time ?? "")));
         }
       }
-      if (todo.length) say(true, `Pulled ${todo.length} ${todo.length === 1 ? "file" : "files"}: ${added} new ${added === 1 ? "activity" : "activities"}.`);
+      if (todo.length) say(true, `Pulled ${todo.length} ${todo.length === 1 ? "file" : "files"}: ${added} new ${added === 1 ? "activity" : "activities"}${nights.size ? `, ${nights.size} ${nights.size === 1 ? "night" : "nights"} of HRV, resting HR and sleep` : ""}.`);
       await done(added, failed ? `${failed} of ${todo.length} files failed.` : null);
     } catch (e) {
       const msg = (e as Error).message;

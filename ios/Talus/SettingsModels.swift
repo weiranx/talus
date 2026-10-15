@@ -72,6 +72,8 @@ struct LastImport: Codable, Hashable {
     let duplicates: Int
     let failed: [String]
     let wellnessDays: Int
+    /// The mornings a watch's overnight files filled (engines from before this send none).
+    var wellnessDates: [String]? = nil
     let noData: Int?
     let error: String?
     /// The activities this import added, newest first (engines from before this send none).

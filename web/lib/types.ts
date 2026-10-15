@@ -785,3 +785,24 @@ export interface HeatmapData {
   pending: number;
   activities: HeatActivity[];
 }
+
+export interface HealthNight {
+  day: string;
+  source: string | null;
+  hrv: number | null;
+  hrv_avg_7d: number | null;
+  hrv_baseline: number | null;
+  hrv_status: SignalStatus;
+  resting_hr: number | null;
+  resting_hr_baseline: number | null;
+  resting_hr_status: SignalStatus;
+  sleep_h: number | null;
+  sleep_status: SignalStatus;
+}
+
+export interface HealthHistory {
+  days: number;
+  need_h: number;
+  nights: HealthNight[];
+  average: { hrv: number | null; resting_hr: number | null; sleep_h: number | null };
+}

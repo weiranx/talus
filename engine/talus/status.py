@@ -99,15 +99,15 @@ def data(store: Store) -> dict:
     return {"activities": count, "newest_activity": newest, "newest_night": night}
 
 
-def coach(store: Store, cap: dict, coach_on: bool) -> dict:
+def coach(store: Store, cap: dict, coach_on: bool, key_available: bool | None = None) -> dict:
     """Whether the coach can write, its last call, and this month's spending against the cap."""
-    key_set = bool(os.environ.get("ANTHROPIC_API_KEY"))
+    key_set = bool(os.environ.get("ANTHROPIC_API_KEY")) if key_available is None else key_available
     last = store.db.execute("SELECT created_at, mode, model, source, fallback_reason FROM coach_log "
                             "ORDER BY id DESC LIMIT 1").fetchone()
     since = (datetime.now() - timedelta(days=1)).isoformat(timespec="seconds")
     errors = store.db.execute("SELECT COUNT(*), MAX(created_at) FROM coach_log WHERE created_at >= ? "
                               "AND fallback_reason LIKE 'api_error%'", (since,)).fetchone()
-    over = cap["limit"] is not None and cap["spent"] >= cap["limit"]
+    over = store.settings().get("ai_provider") != "chatgpt" and cap["limit"] is not None and cap["spent"] >= cap["limit"]
     last_failed = bool(last and (last["fallback_reason"] or "").startswith("api_error"))
     if not coach_on:
         state, why = "idle", "off"

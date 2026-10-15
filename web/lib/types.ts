@@ -381,6 +381,9 @@ export interface Settings {
     watch: { enabled: boolean; last_sync: string | null; last_attempt: { at: string; error: string | null; saved: number } | null };
   };
   coach: {
+    provider?: "anthropic" | "chatgpt";
+    chatgpt_model?: string;
+    chatgpt?: { available: boolean; connected: boolean; sharing: boolean; email: string | null; pending: boolean; error: string | null };
     enabled: boolean;
     key_set: boolean;
     brief_model: string;

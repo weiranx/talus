@@ -163,3 +163,22 @@ intervals.icu connects with OAuth when `INTERVALS_CLIENT_ID` and `INTERVALS_CLIE
 - **Duplicates:** an activity starting within 60 s of one already stored, with the same distance within 1%, is not downloaded; its Strava id is kept as an alias of the stored record (preferring one kept as an original FIT). Anything near enough for the engine's usual check (180 s, 15%) is skipped too, so nothing counts twice. New ones are scored like any file.
 - **Strava's own numbers** go to the `external_metrics` table, for display and for checking Talus's loads. The coach never sees them; `tests/test_strava_web.py` checks that. Both are subscriber features: Relative Effort is the list's `suffer_score`, null without a subscription, and Fitness & Freshness isn't mapped.
 - **Live check:** `STRAVA_LIVE_TESTS=1 STRAVA_SESSION_COOKIE='...' uv run pytest tests/test_strava_web_live.py` reads your real list (and with `STRAVA_LIVE_ACTIVITY_ID`, downloads one of your files).
+
+### ChatGPT as the AI coach provider (local)
+
+Set `TALUS_CHATGPT_LOCAL=1` in the local engine environment and restart it. Open Talus
+on `http://localhost:3000`, sign into Talus, then open **Settings → AI coach**. Choose
+**ChatGPT · Sign in with ChatGPT**, click **Continue with ChatGPT**, and approve ChatGPT
+plan usage in the browser. Return to Settings, choose an available model, and save.
+An eligible ChatGPT plan is required; no OpenAI API key is used. The connection is
+per Talus account, with tokens encrypted in `accounts.db`. **Disconnect** removes
+local credentials and cancels pending sign-in; manage the OpenAI-side grant and plan
+limits at [ChatGPT usage settings](https://chatgpt.com/settings/usage).
+
+The coach's existing checks and rule fallback apply to ChatGPT answers. ChatGPT
+requests use plan allowance rather than the Anthropic dollar cap. Race web lookup
+currently uses Claude-specific tools; with ChatGPT, Talus asks for race details instead.
+This flow requires the engine on the same computer as the browser because OpenAI
+returns to a temporary loopback listener. Hosted and iPhone-native authorization need
+a separate approved integration; do not enable the local flag on a remote server.
+See [OpenAI's integration guide](https://developers.openai.com/siwc/token-sharing-open-source/sign-in).

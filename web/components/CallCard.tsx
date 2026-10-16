@@ -2,37 +2,55 @@ import AiCost from "@/components/AiCost";
 import CoachFeedback from "@/components/CoachFeedback";
 import CoachText from "@/components/CoachText";
 import { Spinner } from "@/components/Loading";
-import Pill from "@/components/Pill";
-import type { AiCost as Cost, Call } from "@/lib/types";
+import { mi, n0 } from "@/lib/format";
+import type { AiCost as Cost, Call, PlannedToday } from "@/lib/types";
 
-const CALL_TONE = { go: "good", modify: "warn", rest: "bad" } as const;
-const CALL_TEXT = { go: "Go", modify: "Modify", rest: "Rest" } as const;
+const CALL_TEXT = { go: "Ready to train", modify: "Adjusted", rest: "Rest" } as const;
 
-export default function CallCard({ call, note, logId, feedback, planned, pending, cost }: {
-  call: Call; note: string; logId?: number | null; feedback?: number | null; planned?: boolean; pending?: boolean; cost?: Cost | null;
+export default function CallCard({ call, note, logId, feedback, planned, pending, cost, scheduled }: {
+  call: Call; note: string; logId?: number | null; feedback?: number | null; planned?: boolean; pending?: boolean; cost?: Cost | null; scheduled?: PlannedToday | null;
 }) {
+  const session = planned ? scheduled : null;
   return (
-    <section className="card dark call-card" style={{ padding: "22px 24px 18px" }}>
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-        <h2 className="label">Today&apos;s call</h2>
-        <Pill tone={CALL_TONE[call.call]}>{CALL_TEXT[call.call]}</Pill>
+    <section className="today-session" aria-labelledby="today-session-title">
+      <div className="today-session-top">
+        <span>Recommended session{planned ? " · From your plan" : ""}</span>
+        <span className={`today-call-state ${call.call}`}>{CALL_TEXT[call.call]}</span>
       </div>
-      {planned ? <div style={{ color: "var(--feature-muted)", fontSize: 13, marginBottom: -8 }}>From your plan</div> : null}
-      <div style={{ fontSize: 28, lineHeight: "33px", fontWeight: 700, letterSpacing: "-0.01em" }}>{call.session}</div>
-      <CoachText text={call.detail} style={{ color: "var(--feature-soft)" }} />
-      <dl className="call-notes">
-        {([["Why", call.why], ["Focus", call.focus], ["Ahead", call.ahead]] as const).map(([k, v]) => v ? (
-          <div key={k}>
-            <dt>{k}</dt>
-            <dd><CoachText className="small" text={v} /></dd>
+      <h2 id="today-session-title">{call.session}</h2>
+      <CoachText className="today-session-guidance" text={call.detail} />
+      {session && session.kind !== "rest" ? (
+        <dl className="today-session-stats">
+          {session.minutes != null && session.minutes > 0 ? <div><dt>Duration</dt><dd>{session.minutes} <span>min</span></dd></div> : null}
+          <div><dt>Distance</dt><dd>{mi(session.miles)} <span>mi</span></dd></div>
+          <div><dt>Ascent · {n0(session.loss_ft)} ft descent</dt><dd>{n0(session.gain_ft)} <span>ft ↑</span></dd></div>
+        </dl>
+      ) : null}
+      <div className="today-session-actions">
+        <details className="today-session-view">
+          <summary className="btn">View session <span aria-hidden>↗</span></summary>
+          <div className="today-session-expanded">
+            <h3>Session guidance</h3><CoachText text={call.detail} />
+            {call.focus ? <><h3>Focus</h3><CoachText text={call.focus} /></> : null}
+            {call.ahead ? <><h3>Ahead</h3><CoachText text={call.ahead} /></> : null}
+            {session?.benefit ? <><h3>Training benefit</h3><p>{session.benefit}</p></> : null}
           </div>
-        ) : null)}
-      </dl>
-      <div style={{ display: "flex", flexWrap: "wrap", justifyContent: "space-between", alignItems: "center", gap: 10 }}>
-        <div style={{ color: "var(--feature-muted)", fontSize: 12, maxWidth: 520, display: "flex", alignItems: "center", gap: 8 }} role={pending ? "status" : undefined}>
-          {pending ? <Spinner /> : null}<span>{note}<AiCost cost={cost} /></span>
+        </details>
+        <details className="today-session-why">
+          <summary>Why this session <span aria-hidden>›</span></summary>
+          <CoachText text={call.why} />
+        </details>
+      </div>
+      {scheduled && !planned && scheduled.kind !== "rest" ? (
+        <div className="today-session-change">
+          <span>Planned: <strong>{scheduled.title}</strong></span><span aria-hidden>→</span>
+          <span>Today: <strong>{call.session}</strong></span>
+          <p>{call.call === "rest" ? "Skip the planned session or move it to another day." : "Follow today's recommendation in place of the scheduled session."}</p>
         </div>
-        {logId ? <CoachFeedback logId={logId} initial={feedback ?? null} dark /> : null}
+      ) : null}
+      <div className="today-session-footer">
+        <span role={pending ? "status" : undefined}>{pending ? <Spinner /> : null} {note}<AiCost cost={cost} /></span>
+        {logId ? <CoachFeedback logId={logId} initial={feedback ?? null} /> : null}
       </div>
     </section>
   );

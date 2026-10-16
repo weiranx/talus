@@ -22,10 +22,10 @@ const ICONS: Record<string, ReactNode> = {
 
 const LINKS = [
   { href: "/", label: "Today" },
-  { href: "/load", label: "Load" },
   { href: "/plan", label: "Plan" },
-  { href: "/coach", label: "Coach" },
+  { href: "/load", label: "Load" },
   { href: "/activities", label: "Activities" },
+  { href: "/coach", label: "Coach" },
   { href: "/settings", label: "Settings" },
 ];
 
@@ -50,7 +50,7 @@ export default function Nav() {
       {links.map((l) => {
         const active = l.href === "/" ? path === "/" : path.startsWith(l.href);
         return (
-          <Link key={l.href} href={l.href} aria-current={active ? "page" : undefined}>
+          <Link key={l.href} href={l.href} className={l.href === "/settings" ? "nav-settings" : undefined} aria-current={active ? "page" : undefined}>
             {ICONS[l.href]}
             <span className="nav-label">{l.label}</span>
             <LinkPending />

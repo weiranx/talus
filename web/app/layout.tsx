@@ -5,6 +5,7 @@ import Nav from "@/components/Nav";
 import { STALE_RELOAD_SCRIPT } from "@/lib/stale";
 import { THEME_SCRIPT } from "@/lib/theme";
 import "./globals.css";
+import "./workspace.css";
 
 // Fonts ship with the app so builds never fetch from Google Fonts (a failed fetch broke CI).
 const sans = localFont({ src: "./fonts/figtree-latin-wght-normal.woff2", variable: "--font-sans", weight: "300 900" });
@@ -32,11 +33,11 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         <script dangerouslySetInnerHTML={{ __html: THEME_SCRIPT }} />
         <script dangerouslySetInnerHTML={{ __html: STALE_RELOAD_SCRIPT }} />
       </head>
-      <body>
+      <body className="talus-workspace">
         <div className="shell">
           <aside className="sidebar">
             <div className="brand">
-              <svg className="brand-mark" viewBox="0 0 24 24" fill="currentColor" aria-hidden><path d="M2 20 9.5 7l3.5 6 2.5-4L22 20z" /></svg>
+              <svg className="brand-mark" viewBox="0 0 28 28" fill="none" stroke="currentColor" strokeWidth="3.5" strokeLinecap="round" aria-hidden><path d="m5 11 9-7M4 22l19-15M15 24l9-7" /></svg>
               Talus
             </div>
             <Nav />

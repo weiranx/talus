@@ -6,201 +6,133 @@ import CoachCall from "@/components/CoachCall";
 import CheckIn from "@/components/CheckIn";
 import ComingUp from "@/components/ComingUp";
 import EngineDown from "@/components/EngineDown";
-import Explain from "@/components/Explain";
 import Overnight from "@/components/Overnight";
-import Pill, { statePill } from "@/components/Pill";
 import ReadinessScore from "@/components/ReadinessScore";
-import Sparkline from "@/components/Sparkline";
+import RefreshToday from "@/components/RefreshToday";
+import TodayLoad from "@/components/TodayLoad";
 import ZoneBar from "@/components/ZoneBar";
 import SetupList from "@/components/onboarding/SetupList";
 import { engine, engineFailed, EngineError } from "@/lib/api";
-import { dayLabel, LEDGER_LABEL, ledgerBadge, ledgerDecimals, ledgerNum, ledgerUnit, mi, n0, stateLabel, signedPct } from "@/lib/format";
-import { LEDGERS, type Onboarding, type Today } from "@/lib/types";
+import { dayLabel, duration, mi, n0, stateLabel } from "@/lib/format";
+import { weekDays } from "@/lib/today";
+import type { Onboarding, Today } from "@/lib/types";
 
 export const dynamic = "force-dynamic";
 
 export default async function TodayPage() {
-  // Both at once: setup status decides whether Today shows at all, and Today is the slow one.
   const [obRes, tRes] = await Promise.allSettled([engine<Onboarding>("/api/onboarding"), engine<Today>("/api/today")]);
-  if (obRes.status === "rejected") {
-    const e = obRes.reason;
-    return <EngineDown message={engineFailed(e)} />;
-  }
+  if (obRes.status === "rejected") return <EngineDown message={engineFailed(obRes.reason)} />;
   const ob = obRes.value;
-  // A new account goes through setup first; it resumes at the first unfinished step.
   if (ob.needed) redirect("/welcome");
   if (tRes.status === "rejected") {
-    const e = tRes.reason;
-    if (e instanceof EngineError && e.status === 409) return <SetupList ob={ob} empty />;
-    return <EngineDown message={engineFailed(e)} />;
+    if (tRes.reason instanceof EngineError && tRes.reason.status === 409) return <SetupList ob={ob} empty />;
+    return <EngineDown message={engineFailed(tRes.reason)} />;
   }
   const t = tRes.value;
+  const days = weekDays(t.week.start, t.date, t.week.activities.map((a) => a.day));
   const lw = t.week.last_week_to_date;
+  const upcoming = t.ahead?.days.flatMap((d) => d.runs.map((run, index) => ({ ...run, day: d.day, key: d.day + "-" + index }))).slice(0, 3) ?? [];
+  const sleep = t.wellness.sleep.last_night_h;
 
   return (
-    <>
-      <header className="page-head">
-        <div>
-          <div className="eyebrow">{dayLabel(t.date, { weekday: "long", month: "short", day: "numeric" })}</div>
-          <h1 className="title">Today</h1>
-        </div>
-        <div className="muted" style={{ paddingBottom: 6 }}>
-          {t.checkin ? "Check-in done." : "Check in to sharpen the legs reading."}
-        </div>
-      </header>
-
-      <SetupList ob={ob} />
-
-      <div className="row">
-        <div style={{ flex: "2 1 420px", minWidth: 0, display: "flex", flexDirection: "column", gap: 16 }}>
-        <Suspense fallback={<CallCard call={t.call} planned={t.call.planned} note="Rule-based call. The AI coach is writing today's brief." pending />}>
-          <CoachCall rules={t.call} />
+    <div className="today-workspace">
+      <div className="today-primary">
+        <header className="today-header">
+          <div>
+            <p className="today-date">{dayLabel(t.date, { weekday: "long", month: "long", day: "numeric" })}</p>
+            <h1>Today</h1>
+          </div>
+          <RefreshToday />
+        </header>
+        <SetupList ob={ob} />
+        <Suspense fallback={<CallCard call={t.call} planned={t.call.planned} scheduled={t.planned}
+          note="Rule-based call. The AI coach is writing today's brief." pending />}>
+          <CoachCall rules={t.call} scheduled={t.planned} />
         </Suspense>
-        {t.planned && !t.call.planned && t.planned.kind !== "rest" ? (
-          <section className="card" style={{ gap: 6 }}>
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 8, flexWrap: "wrap" }}>
-              <h2 className="label">Scheduled today{t.planned.source === "plan" ? ", from your plan" : ""}</h2>
-              <Link href="/plan">Calendar</Link>
-            </div>
-            <div style={{ fontWeight: 600 }}>{t.planned.title}</div>
-            <div className="muted">{t.planned.detail}</div>
-            <div>
-              {t.call.call === "rest"
-                ? "Today's call is rest, so skip it or move it to another day."
-                : "Today's call eases it: follow the call above, not the full run."}
-            </div>
-          </section>
-        ) : null}
-        {t.ahead ? <ComingUp ahead={t.ahead} /> : null}
-        {t.checkin ? null : <CheckIn initial={null} />}
-        </div>
-
-        <div style={{ flex: "1 1 300px", minWidth: 0, display: "flex", flexDirection: "column", gap: 16, alignSelf: "flex-start" }}>
-        <section className="card" style={{ gap: 14 }}>
-          <h2 className="label">Readiness</h2>
-          <ReadinessScore s={t.score} />
-          <div className="divider" />
-          {(["engine", "legs"] as const).map((k) => (
-            <div key={k} style={{ display: "flex", flexDirection: "column", gap: 14 }}>
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12 }}>
-                <div>
-                  <div style={{ fontSize: 17, fontWeight: 600 }}>{k === "engine" ? "Engine" : "Legs"}</div>
-                  <div className="muted">{t.readiness[k].detail}</div>
-                </div>
-                <Pill tone={statePill(t.readiness[k].state)}>{stateLabel(t.readiness[k].state)}</Pill>
-              </div>
+        <TodayLoad today={t} />
+        <section className="today-week" aria-labelledby="today-week-title">
+          <div className="today-section-head">
+            <h2 id="today-week-title">This week</h2>
+            <Link href="/activities">View activities <span aria-hidden>›</span></Link>
+          </div>
+          <dl className="today-week-totals">
+            <div><dt>Distance</dt><dd>{mi(t.week.distance_mi)} <span>mi</span></dd></div>
+            <div><dt>Ascent</dt><dd>{n0(t.week.gain_ft)} <span>ft</span></dd></div>
+            <div><dt>Descent</dt><dd>{n0(t.week.loss_ft)} <span>ft</span></dd></div>
+          </dl>
+          <ol className="today-week-days" aria-label="Activity this week">
+            {days.map((d) => (
+              <li key={d.day} data-completed={d.completed} data-future={d.future} aria-current={d.today ? "date" : undefined}>
+                <span aria-hidden>{dayLabel(d.day, { weekday: "narrow" })}</span>
+                <span className="today-day-mark" aria-hidden />
+                <span className="sr-only">{dayLabel(d.day, { weekday: "long", month: "short", day: "numeric" })}: {d.completed ? "activity recorded" : d.future ? "upcoming" : "no activity recorded"}{d.today ? ", today" : ""}</span>
+              </li>
+            ))}
+          </ol>
+          <details className="today-disclosure">
+            <summary>Week details</summary>
+            {lw && lw.activities > 0 ? <p className="today-caption">
+              By this day last week: {mi(lw.distance_mi)} mi, {n0(lw.gain_ft)} ft up, {n0(lw.loss_ft)} ft down
+              {" "}({weekDelta(t.week.distance_mi, lw.distance_mi, "mi")}, {weekDelta(t.week.gain_ft, lw.gain_ft, "ft up")}).
+            </p> : null}
+            {t.week.activities.length ? <ul className="today-activity-list">
+              {t.week.activities.map((a) => <li key={a.id}>
+                <Link href={`/activities/${a.id}`}>{a.name ?? "Activity"}</Link>
+                <span>{dayLabel(a.day)} · {mi(a.distance_mi)} mi · {n0(a.gain_ft)} ft ↑ · {n0(a.loss_ft)} ft ↓</span>
+              </li>)}
+            </ul> : <p className="today-caption">No activities yet this week.</p>}
+          </details>
+        </section>
+        <section className="today-intensity" aria-labelledby="today-intensity-title">
+          <div className="today-section-head">
+            <h2 id="today-intensity-title">Intensity, 28 days</h2>
+            <span className="today-caption">Target 80% below AeT</span>
+          </div>
+          <ZoneBar share={t.zones_28d?.share ?? { ...t.intensity_28d.share }} model={t.zone_model} belowAet={t.intensity_28d.share.z1} />
+        </section>
+      </div>
+      <aside className="today-rail" aria-label="Readiness and upcoming training">
+        <section className="today-readiness" aria-labelledby="today-readiness-title">
+          <h2 id="today-readiness-title">Your readiness</h2>
+          {(["engine", "legs"] as const).map((key) => (
+            <div className="today-readiness-row" key={key}>
+              <div><h3>{key === "engine" ? "Engine" : "Legs"}</h3><p>{t.readiness[key].detail}</p></div>
+              <span className={`today-readiness-state ${t.readiness[key].state}`}>{t.readiness[key].state === "fresh" ? "Ready" : stateLabel(t.readiness[key].state)}</span>
             </div>
           ))}
-        </section>
-        <Overnight w={t.wellness} />
-        </div>
-      </div>
-
-      <div className="row">
-        {LEDGERS.map((name) => {
-          const d = t.ledgers[name];
-          if (!d) return null;
-          const badge = ledgerBadge(d);
-          const limiter = t.readiness.legs.limiter === name && t.readiness.legs.state !== "fresh";
-          const nd = ledgerDecimals(name), unit = ledgerUnit(name);
-          return (
-            <section key={name} className={`card ledger-card${limiter ? " limiter" : ""}`} style={{ flex: "1 1 220px", gap: 10, ["--accent" as string]: `var(--${name})` }}>
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                  <span className="swatch" style={{ background: `var(--${name})` }} />
-                  <h2 style={{ fontSize: 17, fontWeight: 600 }}>{LEDGER_LABEL[name]}</h2>
-                </div>
-                <Pill tone={badge.tone}>{badge.text}</Pill>
-              </div>
-              <div>
-                {d.vs_normal == null ? (
-                  <div className="big">
-                    <Explain path={`ledger/${name}/vs_normal`}>{d.vs_normal_text.replace(/^./, (c) => c.toUpperCase())}</Explain>
-                  </div>
-                ) : (
-                  <div style={{ display: "flex", alignItems: "baseline", gap: 8, flexWrap: "wrap", marginBottom: 4 }}>
-                    <span className="mono" style={{ fontSize: 30, fontWeight: 600, letterSpacing: "-0.03em", lineHeight: 1.1 }}>
-                      <Explain path={`ledger/${name}/vs_normal`}>{signedPct(d.vs_normal)}</Explain>
-                    </span>
-                    <span className="muted">vs your normal</span>
-                  </div>
-                )}
-                <div className="muted">
-                  Last 7 days <span className="mono" style={{ color: "var(--ink)" }}><Explain path={`ledger/${name}/fatigue`}>{ledgerNum(d.fatigue, nd) + unit}</Explain></span> a day. Your normal{" "}
-                  <span className="mono" style={{ color: "var(--ink)" }}><Explain path={`ledger/${name}/fitness`}>{ledgerNum(d.fitness, nd) + unit}</Explain></span>.
-                </div>
-              </div>
-              <Sparkline data={d.spark} color={`var(--${name})`} label={LEDGER_LABEL[name]} decimals={nd} unit={unit} />
-            </section>
-          );
-        })}
-      </div>
-
-      <div className="row">
-        <section className="card" style={{ flex: "2 1 480px" }}>
-          <div style={{ display: "flex", flexWrap: "wrap", justifyContent: "space-between", alignItems: "baseline", gap: 8 }}>
-            <h2 className="label">This week, from {dayLabel(t.week.start, { month: "short", day: "numeric" })}</h2>
-            <div className="mono" style={{ fontSize: 13 }}>
-              {mi(t.week.distance_mi)} mi, {n0(t.week.gain_ft)} ft up, {n0(t.week.loss_ft)} ft down
-            </div>
+          <div className="today-sleep">
+            <svg width="21" height="21" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" aria-hidden>
+              <circle cx="12" cy="12" r="9" /><path d="M12 6v6l4 2" />
+            </svg>
+            <span>{sleep == null ? "Sleep data unavailable" : `Sleep · ${Math.floor(Math.round(sleep * 60) / 60)} h ${Math.round(sleep * 60) % 60} min`}</span>
           </div>
-          {lw && lw.activities ? (
-            <div className="muted">
-              By this day last week:{" "}
-              <span className="mono">{mi(lw.distance_mi)} mi, {n0(lw.gain_ft)} ft up, {n0(lw.loss_ft)} ft down</span>
-              {" "}({weekDelta(t.week.distance_mi, lw.distance_mi, "mi")}, {weekDelta(t.week.gain_ft, lw.gain_ft, "ft up")})
-            </div>
-          ) : null}
-          {t.week.activities.length === 0 ? (
-            <div className="muted">No activities yet this week.</div>
-          ) : (
-            <div className="table-wrap">
-              <table className="linked" style={{ minWidth: 440 }}>
-                <thead>
-                  <tr>
-                    <th scope="col">Day</th>
-                    <th scope="col">Activity</th>
-                    <th scope="col" className="num">Miles</th>
-                    <th scope="col" className="num">Gain, ft</th>
-                    <th scope="col" className="num">Descent, ft</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {t.week.activities.map((a) => (
-                    <tr key={a.id}>
-                      <td>{dayLabel(a.day)}</td>
-                      <td><Link href={`/activities/${a.id}`}>{a.name ?? "Activity"}</Link></td>
-                      <td className="num">{mi(a.distance_mi)}</td>
-                      <td className="num">{n0(a.gain_ft)}</td>
-                      <td className="num">{n0(a.loss_ft)}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          )}
+          <details className="today-disclosure">
+            <summary>Readiness &amp; overnight details</summary>
+            <ReadinessScore s={t.score} />
+            <Overnight w={t.wellness} />
+          </details>
         </section>
-
-        <div style={{ flex: "1 1 300px", minWidth: 0, display: "flex", flexDirection: "column", gap: 16 }}>
-          <section className="card">
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 8 }}>
-              <h2 className="label">Intensity, 28 days</h2>
-              <div className="muted" style={{ fontSize: 12 }}>Target 80% below AeT</div>
-            </div>
-            <ZoneBar share={t.zones_28d?.share ?? { ...t.intensity_28d.share }} model={t.zone_model}
-              belowAet={t.intensity_28d.share.z1} />
-          </section>
-          {t.checkin ? <CheckIn initial={t.checkin} /> : null}
-        </div>
-      </div>
-    </>
+        <CheckIn initial={t.checkin} compact />
+        <section className="today-upcoming" aria-labelledby="today-upcoming-title">
+          <h2 id="today-upcoming-title">Coming up</h2>
+          {upcoming.length ? <ul className="today-agenda">
+            {upcoming.map((run) => <li key={run.key}>
+              <div className="today-agenda-date"><span>{dayLabel(run.day)}</span><strong>{dayLabel(run.day, { day: "numeric" })}</strong></div>
+              <div><Link href="/plan">{run.title}</Link><p>
+                {run.minutes > 0 ? `${duration(run.minutes * 60)} · ` : ""}{mi(run.miles)} mi · {n0(run.gain_ft)} ft ↑ · {n0(run.loss_ft)} ft ↓
+              </p></div>
+            </li>)}
+          </ul> : <p className="today-caption">Nothing scheduled yet. Plan your next session when you&apos;re ready.</p>}
+          <Link className="today-plan-link" href="/plan">Open plan <span aria-hidden>›</span></Link>
+          {t.ahead ? <details className="today-disclosure"><summary>Objective &amp; weekly targets</summary><ComingUp ahead={t.ahead} /></details> : null}
+        </section>
+      </aside>
+    </div>
   );
 }
 
-/** "4.2 mi more" or "1,200 ft up less": this week so far against the same days last week. */
 function weekDelta(now: number, then: number, unit: string): string {
   const d = now - then;
-  const fmt = unit === "mi" ? mi : n0;
   if (Math.abs(d) < (unit === "mi" ? 0.05 : 0.5)) return `same ${unit}`;
-  return `${fmt(Math.abs(d))} ${unit} ${d > 0 ? "more" : "less"}`;
+  return `${(unit === "mi" ? mi : n0)(Math.abs(d))} ${unit} ${d > 0 ? "more" : "less"}`;
 }

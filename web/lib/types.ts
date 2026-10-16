@@ -119,6 +119,18 @@ export interface Today {
   thresholds: Thresholds;
 }
 
+export interface RouteMatches {
+  status: "ready" | "empty" | "rest" | "done";
+  message: string;
+  pending: number;
+  target: { call: "go" | "modify" | "rest"; text: string } | null;
+  routes: {
+    activity_id: number; name: string; last_done: string;
+    distance_mi: number; gain_ft: number; loss_ft: number; minutes: number;
+    time_basis: "easy_pace" | "previous_activity"; reasons: string[];
+  }[];
+}
+
 export interface LoadData {
   date: string;
   ledgers: Record<Ledger, { today: LedgerDay | null; series: LedgerDay[] }>;

@@ -11,8 +11,8 @@ type Fields = { name: string; day: string; distance_mi: string; gain_ft: string;
 const num = (v: string) => (v.trim() === "" ? null : Number(v.replace(/,/g, "")));
 const str = (v: number | null | undefined, nd = 0) => (v == null ? "" : nd ? v.toFixed(nd) : String(Math.round(v)));
 
-// Add or edit the objective: a race or mountain day with a date (a GPX route fills the numbers in;
-// the track itself is not kept), or a goal with no race day, set by weekly targets or a year's totals.
+// Add or edit the objective: a race or mountain day with a date (a GPX route fills the numbers in
+// and its elevation profile sets the finish estimate; the track itself is not kept), or a goal with no race day, set by weekly targets or a year's totals.
 // `next`: where to go after saving (the setup's next step); `submit`: the button's words.
 export default function ObjectiveForm({ current, startNew, next, submit }: {
   current: Objective | null; startNew?: boolean; next?: string; submit?: string;
@@ -26,6 +26,8 @@ export default function ObjectiveForm({ current, startNew, next, submit }: {
     high_point_ft: editing ? str(current.high_point_ft) : "", longest_climb_ft: editing ? str(current.longest_climb_ft) : "",
   });
   const [source, setSource] = useState<"manual" | "gpx">(editing ? current.source : "manual");
+  // The uploaded route's profile, sent with the save; null keeps the one already saved.
+  const [profile, setProfile] = useState<unknown>(null);
   const [goal, setGoal] = useState<Goal>(editing ? current.goal ?? "race" : "race");
   const event = goal === "race" || goal === "trip";
   const year = goal === "target";
@@ -56,7 +58,9 @@ export default function ObjectiveForm({ current, startNew, next, submit }: {
       loss_ft: str(body.loss_ft), longest_descent_ft: str(body.longest_descent_ft), high_point_ft: str(body.high_point_ft),
       longest_climb_ft: str(body.longest_climb_ft) });
     setSource("gpx");
-    setMessage({ ok: true, text: "Route read. Check the numbers, then save." });
+    setProfile(body.profile ?? null);
+    const stations = body.profile?.stations?.length ?? 0;
+    setMessage({ ok: true, text: `Route read${stations ? `, with ${stations} aid station${stations === 1 ? "" : "s"} or waypoints for the splits` : ""}. Check the numbers, then save.` });
   }
 
   async function save() {
@@ -68,6 +72,7 @@ export default function ObjectiveForm({ current, startNew, next, submit }: {
         loss_ft: event ? num(f.loss_ft) ?? num(f.gain_ft) ?? 0 : year ? num(f.gain_ft) ?? 0 : num(f.loss_ft) ?? num(f.gain_ft) ?? 0,
         longest_descent_ft: event ? num(f.longest_descent_ft) : null, high_point_ft: event ? num(f.high_point_ft) : null,
         longest_climb_ft: event ? num(f.longest_climb_ft) : null, source: event ? source : "manual", goal,
+        profile: event && source === "gpx" ? profile : null,
         new: !editing || goal !== (current?.goal ?? "race") }),
     }).catch(() => null);
     setBusy(false);

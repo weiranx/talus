@@ -40,6 +40,7 @@ from .config import data_dir, load_env
 from .models import Thresholds
 from .parse import parse
 from .readiness import daily_call, readiness
+from . import predict
 from .route import route_numbers
 from .score import MAX_DT_S, MOVING_MPS, _hiking, score
 from .store import Store
@@ -1202,6 +1203,7 @@ def _draft_extras(store: Store, obj: planner.Objective, acts: list[dict], histor
     body["now"] = (_readiness_json(planner.readiness_now(obj, acts, _descent_fitness(history), day))
                    if planner.is_event(obj) else None)
     body["changes"] = planner.diff(store.plan("accepted"), body)
+    body["finish_estimate"] = _finish_brief(store, obj, acts, day)
     return body
 
 
@@ -1379,6 +1381,7 @@ def get_plan() -> dict:
         "objective": obj.json() | {"days_to_go": (obj.day - day).days, "event": planner.is_event(obj),
                                    "goal_text": planner.GOAL_KINDS.get(obj.goal, obj.goal)},
         "readiness": readiness,
+        "prediction": _prediction(store, obj, day, readiness["capacity"]["time_on_feet"]) if readiness else None,
         "accepted": _plan_json(accepted), "draft": _plan_json(draft),
         "sessions": _with_own_runs(store, _sessions(store, accepted, acts, day, th.aet if th else 150), acts),
         "review": _last_week_review(store, accepted, acts, day) if accepted else None,
@@ -1465,6 +1468,9 @@ class ObjectiveIn(BaseModel):
     # Left out (as iOS does), an edit keeps the current goal and a new objective is a race.
     goal: str | None = Field(default=None, pattern="^(race|trip|base|maintain|comeback|faster|target|rolling)$")
     new: bool = False  # true replaces the objective; false edits the active one
+    # The route's profile from /api/plan/route, for the finish-time estimate. Left out, an edit
+    # keeps the one saved while the source stays gpx.
+    profile: dict | None = None
 
 
 @app.put("/api/plan/objective")
@@ -1483,7 +1489,7 @@ def put_objective(body: ObjectiveIn) -> dict:
         raise HTTPException(422, "That's more than 300 mi or 80,000 ft; only a yearly target goes past that.")
     if body.goal == "target" and not (body.distance_mi or body.gain_ft):
         raise HTTPException(422, "A yearly target needs miles, feet of climbing, or both.")
-    fields = body.model_dump(exclude={"new"})
+    fields = body.model_dump(exclude={"new", "profile"})
     fields["name"] = fields["name"].strip()
     if current is None or body.new:
         obj = planner.Objective(**fields)
@@ -1493,6 +1499,10 @@ def put_objective(body: ObjectiveIn) -> dict:
         obj = planner.Objective(**fields, id=current.id)
         store.update_objective(obj)
         reason = "objective"
+    if obj.source != "gpx" or not planner.is_event(obj):
+        store.save_objective_route(obj.id, None)
+    elif body.profile is not None or store.objective_route(obj.id) is None:
+        store.save_objective_route(obj.id, _route_profile(store, obj, body.profile))
     try:
         _build_draft(store, obj, reason)
     except HTTPException as e:
@@ -1509,14 +1519,37 @@ def delete_objective() -> dict:
 
 @app.post("/api/plan/route")
 async def parse_route(request: Request) -> dict:
-    """A GPX route's numbers, to fill in the objective form. The track itself is not kept."""
+    """A GPX route's numbers, to fill in the objective form, and its profile (altitude along the
+    route and its named waypoints, no coordinates) to send back with it. The track itself is not kept."""
     data = await request.body()
     if len(data) > 20_000_000:
         raise HTTPException(413, "That file is over 20 MB.")
     try:
-        return route_numbers(data)
+        out = route_numbers(data)
     except Exception as e:
         raise HTTPException(422, str(e) if isinstance(e, ValueError) else "Could not read that GPX file.")
+    try:  # kept for a client that sends the numbers back without the profile (the iPhone app)
+        _write_json(_route_upload_path(get_store()), out["profile"])
+    except OSError:
+        pass
+    return out
+
+
+def _route_upload_path(store: Store):
+    (store.dir / "cache").mkdir(exist_ok=True)
+    return store.dir / "cache" / "route-upload.json"
+
+
+def _route_profile(store: Store, obj: planner.Objective, sent: dict | None) -> dict | None:
+    """The profile for a GPX objective saved without one: the last route this account uploaded,
+    when its distance is the objective's."""
+    if sent is not None:
+        return predict.valid_profile(sent)
+    try:
+        last = predict.valid_profile(json.loads(_route_upload_path(store).read_text()))
+    except (OSError, ValueError):
+        return None
+    return last if last and predict.matches(last, obj.distance_mi) else None
 
 
 class ConstraintsIn(BaseModel):
@@ -1697,6 +1730,7 @@ def _talk_objective(store: Store, st: dict, body: TalkIn, day: date) -> list[dic
                                          "high_point_ft") if isinstance(body.route.get(k), (int, float))}
         o["source"] = "gpx"
         o.pop("keep", None)
+        st["route_profile"] = predict.valid_profile(body.route.get("profile"))
         if body.route.get("name") and not o.get("name"):
             o["name"] = str(body.route["name"])[:80]
     if o.get("looked_up") == "block" and o.get("confirmed") and not body.text:
@@ -1860,6 +1894,8 @@ def _talk_finish(store: Store, st: dict, day: date) -> list[dict]:
         obj = planner.Objective(**fields)
         obj.id = store.save_objective(obj)
         reason = "new"
+        if obj.source == "gpx" and planner.is_event(obj):
+            store.save_objective_route(obj.id, _route_profile(store, obj, st.get("route_profile")))
     try:
         plan = _build_draft(store, obj, reason)
     except HTTPException as e:
@@ -2065,6 +2101,53 @@ def _plan_for_coach(store: Store) -> dict | None:
     return store.plan("draft") or store.plan("accepted")
 
 
+def _prediction(store: Store, obj: planner.Objective, day: date, longest_h: float | None) -> dict:
+    """The objective's finish-time estimate from the athlete's runs (their kind for its goal) in
+    the last 90 days. Runs whose files haven't been read yet are counted as pending, and the
+    background read-ahead is started so the next look has them."""
+    analyses, pending = [], 0
+    for r in store.scored_activities(predict.history_since(day)):
+        if not predict.counts(r["sport"], obj.goal):
+            continue
+        try:
+            read = _terrain_path(store, r).exists()
+        except OSError:
+            continue
+        if not read:
+            pending += 1
+        elif t := _terrain_of(store, r):
+            analyses.append(t)
+    if pending:
+        warm_details(store)
+    est = predict.predict(obj, predict.paces(analyses), store.objective_route(obj.id), longest_h)
+    return {"ready": est is not None, "runs": len(analyses), "needs": predict.MIN_ANALYSES, "pending": pending,
+            "days": predict.HISTORY_DAYS, **(est or {})}
+
+
+def _finish_brief(store: Store, obj: planner.Objective, acts: list[dict], day: date) -> dict | None:
+    """The finish estimate as the coach reads it, to the quarter hour, or None."""
+    if not planner.is_event(obj):
+        return None
+    est = _prediction(store, obj, day, planner.capacity(acts, 0.0, day)["time_on_feet"])
+    if not est["ready"]:
+        return None
+    q = lambda h: round(h * 4) / 4  # noqa: E731
+    return {"low_h": q(est["low_h"]), "mid_h": q(est["mid_h"]), "high_h": q(est["high_h"]), "moving_time_only": True,
+            "from": "the route's grade profile" if est["from"] == "profile" else "the route's totals",
+            "confidence": est["confidence"], "runs": est["runs"]}
+
+
+def _with_finish(store: Store, p: dict | None) -> dict | None:
+    """A plan with the active objective's finish estimate as it stands now, for chat. The plan
+    read keeps the one its version was drafted with, so the background read of new runs doesn't
+    ask the coach again."""
+    obj = store.objective()
+    if p is None or obj is None:
+        return p
+    est = _finish_brief(store, obj, _activities(store, date.today() - timedelta(days=planner.CAPACITY_DAYS)), date.today())
+    return p | {"finish_estimate": est}
+
+
 @app.get("/api/coach/plan")
 def coach_plan(refresh: bool = False) -> dict:
     store = get_store()
@@ -2225,7 +2308,7 @@ def post_chat(body: ChatIn) -> dict:
     now = None
     if obj is not None and planner.is_event(obj):
         now = _readiness_json(planner.readiness_now(obj, acts, _descent_fitness(_plan_history(store, day)), day))
-    plan_ctx = accepted if accepted is not None and obj is not None else None
+    plan_ctx = _with_finish(store, accepted) if accepted is not None and obj is not None else None
     sessions = _with_own_runs(store, _sessions(store, plan_ctx, acts, day, t["thresholds"]["aet"] if t else 150), acts)
     packet = coach.chat_packet(question, history, t, plan_ctx, now if plan_ctx else None, sessions,
                                [a for a in acts if a["day"] >= (day - timedelta(days=13)).isoformat()], day, acts)

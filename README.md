@@ -24,6 +24,7 @@ Single-user prototype. Milestones 1 to 5 are here: sync from intervals.icu, file
 | `engine/talus/readiness_score.py` | The 0 to 100 readiness score on Today, and what moved it |
 | `engine/talus/api.py` | HTTP API the web app reads (`talus serve`) |
 | `engine/talus/settings.py` | Coach settings and model prices for the Settings screen |
+| `engine/talus/predict.py` | Finish-time estimate for an objective: the route priced grade by grade at your own pace, with splits |
 | `engine/talus/explain.py` | Tap-a-number explanations: the inputs, formula and arithmetic behind each number |
 | `engine/talus/zones.py` | 3- and 5-zone heart rate models for display |
 | `engine/talus/demo.py` | Ten weeks of sample training for trying the app |
@@ -131,6 +132,21 @@ Put an Anthropic API key in `.env` as `ANTHROPIC_API_KEY` to turn it on. Without
 ### Where a number comes from
 
 Numbers with a dotted underline open their working when tapped: on Today, each ledger's "vs your normal", last 7 days and normal; on an activity, effort miles, each load and each "x a usual day". The panel shows the inputs, the formula and the arithmetic, all from the engine (`/api/explain/...`, `talus/explain.py`), in miles and feet.
+
+### Finish estimate
+
+The Plan page shows how long a race or mountain objective should take you, in moving time, next to readiness (`talus/predict.py`, `prediction` in `/api/plan`).
+
+- **Your paces:** every run's terrain analysis gives its minutes per mile on flat ground (under 3% either way) and on each climb and descent band (3 to 8%, 8 to 15%, 15 to 25%, over 25%), as you ran and hiked it. Runs from the last 90 days are pooled: total time over total distance per band. A race reads runs (and files that name no sport); a mountain objective reads hikes too.
+- **Grades you haven't run 3 times:** gentle grades and descents are your flat pace times the grade's cost (`terrain.grade_cost`); steeper climbs are hiked at your climbing rate (ft/h) on the nearest climb band you have, since a steep climb goes at about the same vertical rate whatever the grade.
+- **The route:** a GPX objective keeps its elevation profile every 100 m and its named waypoints as miles along it (`objective_route` table, no coordinates). Each 100 m is priced at the pace for its grade (over 200 m). A client that sends the route's numbers back without its profile (the iPhone app) gets the last route the account uploaded, when its distance matches. Without a GPX the totals stand in: gain and loss on climbs and descents of 10% (steeper when that would put over 80% of the route on them), the rest flat, and no splits.
+- **Long days:** the same slowing as the plan's own time estimate, applied as you go: 2% for every hour past three, at most 20%.
+- **Range:** the middle half of your runs' paces on each grade (at least 4% either way; 8% for a worked-out pace).
+- **Splits:** at the route's waypoints (a race GPX marks its aid stations this way), or every 1, 2, 5, 10 or 20 mi: each leg's mi, ft up, ft down, time and the clock.
+- **Confidence:** solid with a GPX, 8 or more runs, at least 80% of the time on grades you've run 3 times, and no more than 1.5 times your longest day of the last 8 weeks; rough when under half the time is on your own grades, or when a route without a GPX runs well past your longest day.
+- **The coach** reads it as `objective.finish_estimate`, to the quarter hour: in the plan read as it stood when that plan version was drafted (so newly read runs don't ask the coach again), and in chat as it stands now. It quotes it and never works out its own.
+- Stops, weather, snow, route-finding and technical ground are outside it.
+- The terrain analysis is version 2 (it adds the flat share), so the read-ahead reads every activity's file once more after upgrading.
 
 ### Thresholds from your own runs
 

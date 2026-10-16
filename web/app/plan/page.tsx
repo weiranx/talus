@@ -11,6 +11,7 @@ import DeletePlan from "@/components/plan/DeletePlan";
 import ObjectiveForm from "@/components/plan/ObjectiveForm";
 import PlanActions from "@/components/plan/PlanActions";
 import PlanFit from "@/components/plan/PlanFit";
+import Prediction from "@/components/plan/Prediction";
 import Review from "@/components/plan/Review";
 import PlanTalk from "@/components/plan/PlanTalk";
 import Setup, { DraftDetail, type Step } from "@/components/plan/Setup";
@@ -226,8 +227,9 @@ export default async function PlanPageView({ searchParams }: { searchParams: Pro
           </div>
           <RoadChart weeks={p.accepted.weeks} current={weekStart(p.date)} actuals={p.actuals} />
         </section>
-        <div style={{ flex: "2 1 320px", minWidth: 0, display: "flex", flexDirection: "column" }}>
+        <div style={{ flex: "2 1 320px", minWidth: 0, display: "flex", flexDirection: "column", gap: 16 }}>
           {p.readiness && p.accepted.projected ? <ReadinessCompact r={p.readiness} projected={p.accepted.projected} note={p.fitness_only} /> : null}
+          {p.prediction ? <Prediction p={p.prediction} /> : null}
         </div>
       </div>
 

@@ -21,7 +21,7 @@ from . import elevation
 from .models import Streams
 from .units import ft, mi
 
-VERSION = 1
+VERSION = 2  # 2: the flat (under 3%) share, for finish-time estimates
 MAX_DT_S = 10.0  # as score.py: a longer gap is a pause
 MOVING_MPS = 0.3
 MIN_BAND_S = 180.0  # under 3 minutes on a grade is too little to rate
@@ -33,6 +33,7 @@ CLIMB_BANDS = [("c3", "3 to 8%", 3, 8), ("c8", "8 to 15%", 8, 15), ("c15", "15 t
 DESCENT_BANDS = [("d3", "3 to 8%", -8, -3), ("d8", "8 to 15%", -15, -8), ("d15", "15 to 25%", -25, -15),
                  ("d25", "Over 25%", -1000, -25)]
 BANDS = CLIMB_BANDS + DESCENT_BANDS
+FLAT_PCT = 3.0  # between the gentlest climb and descent bands
 
 DURABILITY_MIN_S = 60 * 60  # an hour of moving time
 DURABILITY_MIN_M = 5000.0  # about 3 mi
@@ -73,6 +74,7 @@ def analyze(s: Streams, hiking: np.ndarray) -> dict | None:
     hr = s.heart_rate
     return {"version": VERSION,
             "bands": _bands(grade, gain, loss, dd, dt, moving, hiking, hr),
+            "flat": _flat(grade, dd, dt, moving, hiking, hr),
             "durability": _durability(grade, gain, dd, dt, moving, hr)}
 
 
@@ -113,6 +115,17 @@ def _bands(grade, gain, loss, dd, dt, moving, hiking, hr) -> list[dict]:
                 "pace_min_mi": _pace(t, float(dd[part].sum())), "avg_hr": _avg_hr(hr, dt, part)}
         out.append(row)
     return out
+
+
+def _flat(grade, dd, dt, moving, hiking, hr) -> dict | None:
+    """The moving time on grades under 3% either way: the pace every band is set against."""
+    sel = moving & (grade >= -FLAT_PCT) & (grade < FLAT_PCT)
+    seconds = float(dt[sel].sum())
+    if seconds < MIN_BAND_S:
+        return None
+    return {"time_s": round(seconds), "distance_mi": round(mi(float(dd[sel].sum())), 2),
+            "pace_min_mi": _pace(seconds, float(dd[sel].sum())),
+            "hike_share": round(float(dt[sel & hiking].sum()) / seconds, 2), "avg_hr": _avg_hr(hr, dt, sel)}
 
 
 def _durability(grade, gain, dd, dt, moving, hr) -> dict | None:

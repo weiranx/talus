@@ -80,11 +80,17 @@ def _stations(root, lat: np.ndarray, lon: np.ndarray, dist: np.ndarray) -> list[
         label = (el.text or "").strip()[:60] if el is not None else ""
         if not label:
             continue
-        dy = (lat - float(w.get("lat"))) * 111_320.0
-        dx = (lon - float(w.get("lon"))) * 111_320.0 * coslat
-        near = np.hypot(dx, dy)
+        # Nearest point on each segment, not just each vertex: a sparse route can pass right by a
+        # waypoint halfway between two points far apart.
+        y = (lat - float(w.get("lat"))) * 111_320.0
+        x = (lon - float(w.get("lon"))) * 111_320.0 * coslat
+        sx, sy = np.diff(x), np.diff(y)
+        seg2 = sx * sx + sy * sy
+        with np.errstate(divide="ignore", invalid="ignore"):
+            t = np.clip(np.where(seg2 > 0, -(x[:-1] * sx + y[:-1] * sy) / seg2, 0.0), 0.0, 1.0)
+        near = np.hypot(x[:-1] + t * sx, y[:-1] + t * sy)
         i = int(np.nanargmin(near))
-        at = mi(float(dist[i]))
+        at = mi(float(dist[i] + t[i] * (dist[i + 1] - dist[i])))
         if near[i] > STATION_NEAR_M or at < END_MI or at > total - END_MI:
             continue
         out.append({"name": label, "mi": round(at, 2)})

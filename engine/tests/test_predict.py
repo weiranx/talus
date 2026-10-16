@@ -162,3 +162,27 @@ def test_which_runs_count_and_what_the_coach_reads(tmp_path, monkeypatch):
     assert est["moving_time_only"] and est["low_h"] <= est["mid_h"] <= est["high_h"]
     assert all(v * 4 == round(v * 4) for v in (est["low_h"], est["mid_h"], est["high_h"]))  # quarter hours
     assert coach._objective(p, date.today())["finish_estimate"] == est
+
+
+def test_a_waypoint_between_two_far_route_points_is_on_the_route():
+    # Two route points 2 mi apart, an aid station halfway: over 250 m from both points, on the line.
+    gpx = ('<gpx xmlns="http://www.topografix.com/GPX/1/1"><wpt lat="37.0144748" lon="-118.0"><name>Halfway AS</name></wpt>'
+           '<rte><rtept lat="37.0" lon="-118.0"><ele>1500</ele></rtept>'
+           '<rtept lat="37.0289496" lon="-118.0"><ele>1700</ele></rtept></rte></gpx>').encode()
+    st = route_numbers(gpx)["profile"]["stations"]
+    assert [s["name"] for s in st] == ["Halfway AS"] and abs(st[0]["mi"] - 1.0) < 0.02
+
+
+def test_a_gpx_objective_saved_without_its_profile_takes_the_last_upload(tmp_path, monkeypatch):
+    """The iPhone app sends the route's numbers back without its profile."""
+    client = _setup(tmp_path, monkeypatch)
+    for a in client.get("/api/activities?limit=200").json():
+        client.get(f"/api/activities/{a['id']}")
+    gpx = _route_gpx(waypoints=(("Saddle AS", 5.0),))
+    r = client.post("/api/plan/route", content=gpx, headers={"content-type": "application/gpx+xml"}).json()
+    body = OBJ | {k: r[k] for k in ("distance_mi", "gain_ft", "loss_ft")} | {"day": DAY.isoformat(), "source": "gpx"}
+    p = client.put("/api/plan/objective", json=body).json()["prediction"]
+    assert p["from"] == "profile" and [s["name"] for s in p["splits"]] == ["Saddle AS", "Finish"]
+    # Not when the distance isn't that route's: a hand-typed objective marked gpx keeps the totals.
+    other = client.put("/api/plan/objective", json=body | {"distance_mi": 31, "new": True}).json()["prediction"]
+    assert other["from"] == "totals"

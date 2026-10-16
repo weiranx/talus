@@ -1501,8 +1501,8 @@ def put_objective(body: ObjectiveIn) -> dict:
         reason = "objective"
     if obj.source != "gpx" or not planner.is_event(obj):
         store.save_objective_route(obj.id, None)
-    elif body.profile is not None:
-        store.save_objective_route(obj.id, predict.valid_profile(body.profile))
+    elif body.profile is not None or store.objective_route(obj.id) is None:
+        store.save_objective_route(obj.id, _route_profile(store, obj, body.profile))
     try:
         _build_draft(store, obj, reason)
     except HTTPException as e:
@@ -1525,9 +1525,31 @@ async def parse_route(request: Request) -> dict:
     if len(data) > 20_000_000:
         raise HTTPException(413, "That file is over 20 MB.")
     try:
-        return route_numbers(data)
+        out = route_numbers(data)
     except Exception as e:
         raise HTTPException(422, str(e) if isinstance(e, ValueError) else "Could not read that GPX file.")
+    try:  # kept for a client that sends the numbers back without the profile (the iPhone app)
+        _write_json(_route_upload_path(get_store()), out["profile"])
+    except OSError:
+        pass
+    return out
+
+
+def _route_upload_path(store: Store):
+    (store.dir / "cache").mkdir(exist_ok=True)
+    return store.dir / "cache" / "route-upload.json"
+
+
+def _route_profile(store: Store, obj: planner.Objective, sent: dict | None) -> dict | None:
+    """The profile for a GPX objective saved without one: the last route this account uploaded,
+    when its distance is the objective's."""
+    if sent is not None:
+        return predict.valid_profile(sent)
+    try:
+        last = predict.valid_profile(json.loads(_route_upload_path(store).read_text()))
+    except (OSError, ValueError):
+        return None
+    return last if last and predict.matches(last, obj.distance_mi) else None
 
 
 class ConstraintsIn(BaseModel):
@@ -1872,8 +1894,8 @@ def _talk_finish(store: Store, st: dict, day: date) -> list[dict]:
         obj = planner.Objective(**fields)
         obj.id = store.save_objective(obj)
         reason = "new"
-        if obj.source == "gpx" and planner.is_event(obj) and st.get("route_profile"):
-            store.save_objective_route(obj.id, st["route_profile"])
+        if obj.source == "gpx" and planner.is_event(obj):
+            store.save_objective_route(obj.id, _route_profile(store, obj, st.get("route_profile")))
     try:
         plan = _build_draft(store, obj, reason)
     except HTTPException as e:

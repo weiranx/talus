@@ -181,7 +181,7 @@ def predict(obj, p: dict | None, profile: dict | None, longest_h: float | None =
     profile when there is one. Times are hours of moving time; splits carry minutes."""
     if p is None:
         return None
-    use_profile = profile is not None and _matches(profile, obj.distance_mi)
+    use_profile = profile is not None and matches(profile, obj.distance_mi)
     if use_profile:
         steps, at_mi, up_m, down_m = _profile_steps(profile)
     else:
@@ -250,7 +250,7 @@ def predict(obj, p: dict | None, profile: dict | None, longest_h: float | None =
             "fade": {"from_h": FADE_FROM_H, "per_h": FADE_PER_H, "max": FADE_MAX}}
 
 
-def _matches(profile: dict, distance_mi: float) -> bool:
+def matches(profile: dict, distance_mi: float) -> bool:
     d = profile.get("dist_m") or []
     return len(d) >= 2 and distance_mi > 0 and abs(mi(float(d[-1])) / distance_mi - 1) <= 0.05
 

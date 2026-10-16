@@ -115,6 +115,12 @@ CREATE TABLE IF NOT EXISTS objective (
     active INTEGER NOT NULL,
     goal TEXT NOT NULL DEFAULT 'race'
 );
+-- A GPX objective's elevation profile and waypoints (route.profile), for the finish-time
+-- estimate. No coordinates.
+CREATE TABLE IF NOT EXISTS objective_route (
+    objective_id INTEGER PRIMARY KEY REFERENCES objective(id),
+    profile TEXT NOT NULL
+);
 CREATE TABLE IF NOT EXISTS plan (
     id INTEGER PRIMARY KEY,
     objective_id INTEGER NOT NULL REFERENCES objective(id),
@@ -625,6 +631,19 @@ class Store:
             " longest_descent_ft = ?, high_point_ft = ?, source = ?, goal = ? WHERE id = ? AND active = 1",
             (obj.name, obj.day.isoformat(), obj.distance_mi, obj.gain_ft, obj.loss_ft, obj.longest_climb_ft,
              obj.longest_descent_ft, obj.high_point_ft, obj.source, obj.goal, obj.id))
+
+    def objective_route(self, objective_id: int | None) -> dict | None:
+        r = self.db.execute("SELECT profile FROM objective_route WHERE objective_id = ?", (objective_id,)).fetchone()
+        return None if r is None else json.loads(r["profile"])
+
+    @_writes
+    def save_objective_route(self, objective_id: int, profile: dict | None) -> None:
+        """Keep the route's profile with its objective, or forget it (None)."""
+        if profile is None:
+            self.db.execute("DELETE FROM objective_route WHERE objective_id = ?", (objective_id,))
+        else:
+            self.db.execute("INSERT OR REPLACE INTO objective_route (objective_id, profile) VALUES (?, ?)",
+                            (objective_id, json.dumps(profile, separators=(",", ":"))))
 
     @_writes
     def clear_objective(self) -> None:

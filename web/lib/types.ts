@@ -603,8 +603,35 @@ export interface PlanPage {
   this_week?: WeekProgress;
   actuals?: Record<string, WeekActual>;
   plan_type?: PlanType;
+  // The finish-time estimate for a race or mountain objective; null for a block.
+  prediction?: Prediction | null;
   // The workouts the plan takes turns with: the athlete's picks, or the plan type's until they pick.
   workout_picks?: { workouts: Exclude<Workout, "none">[]; hill_sessions: HillSession[]; picked: boolean };
+}
+
+// The objective's finish-time estimate: the route priced grade by grade at your own pace over the
+// last 90 days, slowing on a long day. Moving time; stops aren't in it.
+export interface PredictionBand {
+  key: string; label: string;
+  // yours: from your own runs on that grade; flat_cost and climb_rate: worked out from the ones you have.
+  source: "yours" | "flat_cost" | "climb_rate";
+  runs: number; hike_share: number | null; pace_min_mi: number; vert_ft_h: number | null;
+  distance_mi: number; minutes: number; share: number;
+}
+export interface PredictionSplit {
+  name: string | null; from_mi: number; to_mi: number; distance_mi: number; gain_ft: number; loss_ft: number;
+  minutes: number; clock_min: number; low_clock_min: number; high_clock_min: number;
+}
+export interface Prediction {
+  // False until there are `needs` runs with elevation; `pending` are runs whose files are still being read.
+  ready: boolean; runs: number; needs: number; pending: number; days: number;
+  low_h?: number; mid_h?: number; high_h?: number;
+  from?: "profile" | "totals";
+  confidence?: "good" | "fair" | "rough";
+  notes?: string[];
+  bands?: PredictionBand[];
+  splits?: PredictionSplit[];
+  fade?: { from_h: number; per_h: number; max: number };
 }
 
 // One week of the plan, day by day, from /api/plan/week.

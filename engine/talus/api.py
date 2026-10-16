@@ -31,7 +31,7 @@ from fastapi.responses import JSONResponse, RedirectResponse, StreamingResponse
 from pydantic import BaseModel, ConfigDict, Field
 
 from . import MODEL_VERSION, admin, chatgpt, cli, coach, explain, google_auth, interview, intervals_auth, ledger, naming, readiness_score, status, wellness, zones
-from . import heatmap, terrain
+from . import heatmap, routes, terrain
 from . import plan as planner
 from . import schedule
 from . import settings as app_settings
@@ -469,6 +469,26 @@ def heatmap_routes() -> dict:
                             "kind": heatmap.kind(a["sport"]), "line": lines.get(a["id"]),
                             "pending": a["id"] in pending}
                            for a in _activities(store)]}
+
+
+@app.get("/api/routes/today")
+def routes_today(call: Literal["go", "modify", "rest"] | None = None) -> dict:
+    """Route matches follow the displayed coach call; a caller can only ease the rules.
+
+    Track extraction reuses the heatmap's per-account background cache, so a cold
+    history doesn't make Today wait for every original activity file to be parsed.
+    """
+    t = today()
+    store = get_store()
+    if routes.target(t, call) is None:
+        return routes.recommend([], {}, t, call) | {"pending": 0}
+    acts = _activities(store)
+    rows = store.scored_activities()
+    tracks = heatmap.Tracks(store.dir)
+    lines, missing = tracks.lines(rows)
+    missing = [r for r in missing if routes.on_foot(r["sport"]) and r["start_time"][:10] < t["date"]]
+    tracks.build(missing, lambda row: _streams(store, row))
+    return routes.recommend(acts, lines, t, call) | {"pending": len(missing)}
 
 
 # Recently read activity files. Reading a FIT file takes about a second, and an activity page

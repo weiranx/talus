@@ -20,6 +20,7 @@ Single-user prototype. Milestones 1 to 5 are here: sync from intervals.icu, file
 | `engine/talus/score.py` | Scores one activity: vert, segments, zones, loads |
 | `engine/talus/ledger.py` | Cardio, climb and descent ledgers: daily load, fitness (42-day), fatigue (7-day), form and flags |
 | `engine/talus/readiness.py` | Engine and legs readiness, and the rule-based call for the day |
+| `engine/talus/routes.py` | Matches recorded GPS routes to today's session and recovery limits |
 | `engine/talus/readiness_score.py` | The 0 to 100 readiness score on Today, and what moved it |
 | `engine/talus/api.py` | HTTP API the web app reads (`talus serve`) |
 | `engine/talus/settings.py` | Coach settings and model prices for the Settings screen |
@@ -67,6 +68,12 @@ TALUS_DATA_DIR=./demo-data uv run talus serve
 ```
 
 The map uses free OpenFreeMap tiles; set `NEXT_PUBLIC_MAP_STYLE` to switch providers. If tiles cannot load, the track still draws on a blank background.
+
+### Routes for today
+
+The web app's Today screen suggests up to three distinct routes from your past outdoor runs (or hikes for a scheduled hike). It matches distance, climbing, descent and duration to the day's session, follows a more cautious coach call, and filters out routes that exceed recovery limits. Rest days show no recommendations; an already completed run does not prompt extra unscheduled training.
+
+Open a suggestion to see the recorded activity and map. Times use your recent easy pace when at least three easy activities are available, otherwise the recorded moving time, labeled accordingly. Activities without GPS or elevation do not qualify. Route extraction runs in the background and matches refresh as tracks become available. No extra AI call is needed.
 
 ### Accounts
 

@@ -1,4 +1,6 @@
 import Link from "next/link";
+import type { ReactNode } from "react";
+import "./settings.css";
 import AccountCard from "@/components/AccountCard";
 import AppearanceCard from "@/components/AppearanceCard";
 import CoachSettings from "@/components/CoachSettings";
@@ -29,45 +31,106 @@ export default async function SettingsPage() {
   }
 
   return (
-    <>
-      <header className="page-head">
-        <h1 className="title">Settings</h1>
-        <div className="actions" style={{ paddingBottom: 6 }}>
-          <Link href="/status">Status</Link>
-          <Link href="/welcome">Setup guide</Link>
+    <div className="settings-page">
+      <header className="page-head settings-header">
+        <div>
+          <h1 className="title">Settings</h1>
+          <p className="settings-intro">Your training inputs, connected sources, and personal preferences.</p>
+        </div>
+        <div className="actions settings-help">
+          <Link href="/status">System status</Link>
+          <Link href="/welcome">Setup guide <span aria-hidden>↗</span></Link>
         </div>
       </header>
-      <ThresholdsCard current={s.thresholds} inferred={s.inferred} />
-      {s.thresholds ? <ZonesCard zones={s.thresholds.zones} /> : null}
-      <div className="row">
-        <div style={{ flex: "1 1 380px", minWidth: 0, display: "flex", flexDirection: "column", gap: 16 }}>
-          <h2 className="label" style={{ margin: "4px 0 -8px" }}>Data sources</h2>
-          <SyncCard sources={s.sources} />
-          <SourceCard source={s.source} />
-          {s.sources.garmin.available ? <GarminCard garmin={s.sources.garmin} /> : null}
-          {s.sources.coros.available ? <CorosCard coros={s.sources.coros} /> : null}
-          {s.sources.strava_web?.available ? <StravaCard strava={s.sources.strava_web} /> : null}
-          <WatchCard watch={s.sources.watch} />
-          <UploadCard upload={s.sources.upload} />
-          <ReadinessSettings readiness={s.readiness} />
-          <section className="card">
-            <h2 className="label">Units</h2>
-            <dl className="kv">
-              <dt>Distance</dt>
-              <dd>Miles</dd>
-              <dt>Vert</dt>
-              <dd>Feet, gain and loss</dd>
-            </dl>
-            <div className="muted">Kilometers and meters are not available yet.</div>
-          </section>
-          <AppearanceCard />
-        </div>
-        <div style={{ flex: "1 1 380px", minWidth: 0, display: "flex", flexDirection: "column", gap: 16 }}>
-          <CoachSettings coach={s.coach} />
-          <NamesCard />
-          <AccountCard account={account} />
+      <div className="settings-layout">
+        <nav className="settings-nav" aria-label="Settings sections">
+          <p className="settings-eyebrow">On this page</p>
+          <a href="#sources">Data sources</a>
+          <a href="#training">Training & coach</a>
+          <a href="#account">Account & display</a>
+          <p className="settings-nav-note">Save changes beside each setting.</p>
+        </nav>
+        <div className="settings-content">
+          <SettingsSection id="sources" title="Data sources" description="Sync your activities and manage connections in one place.">
+            <div className="settings-group">
+              <SyncCard sources={s.sources} />
+              <ConnectionRow title="intervals.icu" status={s.source.key_set ? "Connected" : "Not connected"}>
+                <SourceCard source={s.source} />
+              </ConnectionRow>
+              {s.sources.garmin.available ? (
+                <ConnectionRow title="Garmin Connect" status={s.sources.garmin.mfa_pending ? "Verification needed" : s.sources.garmin.connected ? "Connected" : "Not connected"}>
+                  <GarminCard garmin={s.sources.garmin} />
+                </ConnectionRow>
+              ) : null}
+              {s.sources.coros.available ? (
+                <ConnectionRow title="COROS" status={s.sources.coros.connected ? "Connected" : "Not connected"}>
+                  <CorosCard coros={s.sources.coros} />
+                </ConnectionRow>
+              ) : null}
+              {s.sources.strava_web?.available ? (
+                <ConnectionRow title="Strava" status={s.sources.strava_web.enabled ? "On" : "Off"}>
+                  <StravaCard strava={s.sources.strava_web} />
+                </ConnectionRow>
+              ) : null}
+              <ConnectionRow title="Garmin watch" status={s.sources.watch.last_attempt?.error ? "Needs attention" : s.sources.watch.enabled ? "On" : "Off"}>
+                <WatchCard watch={s.sources.watch} />
+              </ConnectionRow>
+              <ConnectionRow title="Import files" status="FIT, GPX, TCX & Health">
+                <UploadCard upload={s.sources.upload} />
+              </ConnectionRow>
+            </div>
+          </SettingsSection>
+          <SettingsSection id="training" title="Training & coach" description="The inputs behind your training decisions, and how your coach uses them.">
+            <div className="settings-group">
+              <ThresholdsCard current={s.thresholds} inferred={s.inferred} />
+              {s.thresholds ? <ZonesCard zones={s.thresholds.zones} /> : null}
+              <ReadinessSettings readiness={s.readiness} />
+              <CoachSettings coach={s.coach} />
+              <NamesCard />
+            </div>
+          </SettingsSection>
+          <SettingsSection id="account" title="Account & display" description="Your appearance, units, sign-in, and personal data.">
+            <div className="settings-group">
+              <AppearanceCard />
+              <section className="card">
+                <h3 className="label">Units</h3>
+                <p>Miles for distance · Feet for elevation gain and loss</p>
+                <p className="muted">Kilometers and meters are not available yet.</p>
+              </section>
+              <AccountCard account={account} />
+            </div>
+          </SettingsSection>
         </div>
       </div>
-    </>
+    </div>
+  );
+}
+
+function SettingsSection({ id, title, description, children }: {
+  id: string; title: string; description: string; children: ReactNode;
+}) {
+  return (
+    <section id={id} className="settings-section" aria-labelledby={`${id}-heading`} tabIndex={-1}>
+      <header className="settings-section-head">
+        <div>
+          <h2 id={`${id}-heading`}>{title}</h2>
+          <p>{description}</p>
+        </div>
+      </header>
+      {children}
+    </section>
+  );
+}
+
+function ConnectionRow({ title, status, children }: { title: string; status: string; children: ReactNode }) {
+  return (
+    <details className="settings-connection">
+      <summary>
+        <span className="settings-connection-title">{title}</span>
+        <span className="settings-connection-status">{status}</span>
+        <span className="settings-connection-chevron" aria-hidden>›</span>
+      </summary>
+      {children}
+    </details>
   );
 }

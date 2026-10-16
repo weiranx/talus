@@ -1,0 +1,52 @@
+.settings-page { display: flex; flex-direction: column; gap: 32px; min-width: 0; }
+.settings-header { align-items: center; gap: 20px; padding-bottom: 26px; border-bottom: 1px solid var(--line); }
+.settings-eyebrow { margin: 0 0 10px; color: var(--muted); font-size: 11px; font-weight: 650; letter-spacing: .1em; text-transform: uppercase; }
+.settings-intro { margin: 10px 0 0; color: var(--muted); font-size: 15px; line-height: 1.5; }
+.settings-help { gap: 18px; font-size: 13px; }
+.settings-help a { color: var(--workspace-accent); text-underline-offset: 4px; }
+.settings-layout { display: grid; grid-template-columns: 190px minmax(0, 1fr); gap: 32px; align-items: start; }
+.settings-nav { position: sticky; top: 28px; display: flex; flex-direction: column; gap: 4px; }
+.settings-nav .settings-eyebrow { padding: 0 12px; }
+.settings-nav a { display: flex; align-items: center; gap: 12px; min-height: 44px; padding: 10px 12px; border-radius: 10px; color: var(--ink); text-decoration: none; font-size: 13px; font-weight: 550; }
+.settings-nav a:hover, .settings-nav a:focus-visible { background: var(--workspace-selected); }
+.settings-nav-note { padding: 16px 12px 0; margin: 12px 0 0; border-top: 1px solid var(--line); color: var(--muted); font-size: 12px; line-height: 1.6; }
+.settings-content { display: flex; flex-direction: column; gap: 32px; min-width: 0; }
+.settings-section { display: flex; flex-direction: column; gap: 16px; min-width: 0; scroll-margin-top: 28px; }
+.settings-section:focus { outline: none; }
+.settings-section:focus-visible { outline: 2px solid var(--workspace-accent); outline-offset: 6px; }
+.settings-section-head { display: flex; gap: 12px; align-items: baseline; padding-bottom: 4px; }
+.settings-section-head h2 { margin: 0; font-size: 22px; font-weight: 650; letter-spacing: -.035em; line-height: 1.25; }
+.settings-section-head p { margin: 7px 0 0; color: var(--muted); font-size: 13px; line-height: 1.6; }
+.settings-group { background: var(--surface); border: 1px solid var(--line); border-radius: 14px; min-width: 0; }
+.settings-page .settings-group .card { background: transparent; border: 0; box-shadow: none; border-radius: 0; }
+.settings-group > .card + .card, .settings-connection { border-top: 1px solid var(--line); }
+.settings-connection summary { display: flex; align-items: center; gap: 12px; padding: 16px 22px; min-height: 58px; cursor: pointer; list-style: none; }
+.settings-connection summary::-webkit-details-marker { display: none; }
+.settings-connection summary:hover { background: var(--hover-bg); }
+.settings-connection-title { font-size: 14px; font-weight: 600; }
+.settings-connection-status { margin-left: auto; color: var(--muted); font-size: 12px; text-align: right; }
+.settings-connection-chevron { color: var(--muted); font-size: 22px; line-height: 1; }
+.settings-connection[open] > summary .settings-connection-chevron { transform: rotate(90deg); }
+.settings-connection[open] > summary { background: var(--hover-bg); }
+.settings-page .card > .label { color: var(--workspace-accent); }
+.settings-page .card p { margin-top: 0; margin-bottom: 0; }
+@media (max-width: 1200px) {
+  .settings-layout { grid-template-columns: 165px minmax(0, 1fr); gap: 24px; }
+  .settings-nav a { gap: 8px; padding-inline: 8px; }
+}
+@media (max-width: 900px) {
+  .settings-page { gap: 24px; }
+  .settings-layout { grid-template-columns: minmax(0, 1fr); gap: 24px; }
+  .settings-nav { position: static; flex-direction: row; flex-wrap: wrap; gap: 6px; }
+  .settings-nav .settings-eyebrow, .settings-nav-note, .settings-nav a span { display: none; }
+  .settings-nav a { border: 1px solid var(--line); background: var(--surface); padding: 8px 12px; }
+}
+@media (max-width: 480px) {
+  .settings-header { padding-bottom: 20px; gap: 14px; }
+  .settings-intro { font-size: 14px; }
+  .settings-section-head h2 { font-size: 20px; }
+  .settings-page .card { padding: 18px 16px; }
+  .settings-connection summary { padding: 14px 16px; }
+  .settings-connection-title { flex: 1; }
+  .settings-connection-status { max-width: 45%; }
+}

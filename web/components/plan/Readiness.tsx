@@ -1,62 +1,51 @@
 import Pill from "@/components/Pill";
-import { dimValue, hours, STATUS_TONE } from "@/lib/plan";
+import { hours, STATUS_TONE } from "@/lib/plan";
+import { benchmark, BENCHMARK_STATUS, readinessValue } from "@/lib/readiness";
 import type { PlanPage, ReadinessEval } from "@/lib/types";
+import styles from "./readiness.module.css";
 
-const UNIT: Record<string, string> = {
-  big_day: "effort mi, one day", time_on_feet: "hours, one day", climbing_volume: "ft; you: ft a week",
-  descent_durability: "ft, one descent", descent_volume: "ft; you: ft a week", altitude: "ft; you: hours up high",
-};
-
-// Objective readiness: what the route demands against what training has proven, by dimension.
-export default function Readiness({ r, projected, note }: {
-  r: NonNullable<PlanPage["readiness"]>; projected: ReadinessEval | null; note: string;
+export default function Readiness({ r, projected, note, projectionCurrent = true }: {
+  r: NonNullable<PlanPage["readiness"]>; projected: ReadinessEval | null; note: string; projectionCurrent?: boolean;
 }) {
   const proj = new Map(projected?.dims.map((d) => [d.key, d]) ?? []);
-  const limiter = r.dims.find((d) => d.key === r.limiter);
+  const missing = r.dims.some((d) => d.status === "unknown");
+  const pairs = r.dims.some((d) => d.capacity_label.includes("back-to-back"));
   const t = r.demand.time;
   return (
     <section className="card">
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8 }}>
-        <h2 className="label">Objective readiness</h2>
-        <Pill tone={STATUS_TONE[r.verdict]}>{r.verdict === "ready" ? "Ready" : r.verdict === "close" ? "Close" : "Gaps to close"}</Pill>
+      <div className={styles.heading}>
+        <h2 className="label">Training benchmarks</h2>
+        <Pill tone={missing && r.verdict === "ready" ? "neutral" : STATUS_TONE[r.verdict]}>
+          {r.verdict === "ready" ? missing ? "Some benchmarks not assessed" : "Current benchmarks met" : "Current training gaps"}
+        </Pill>
       </div>
-      <div className="table-wrap">
-        <table style={{ minWidth: 340 }}>
-          <thead>
-            <tr>
-              <th scope="col">Dimension</th>
-              <th scope="col" className="num">Needs</th>
-              <th scope="col" className="num">You</th>
-              <th scope="col">Now</th>
-              {projected ? <th scope="col">On the plan</th> : null}
-            </tr>
-          </thead>
-          <tbody>
-            {r.dims.map((d) => (
-              <tr key={d.key} title={`${d.demand_label} against ${d.capacity_label.toLowerCase()}${d.rule ? `. Ready at ${Math.round(d.rule * 100)}%.` : "."}`}>
-                <td style={{ whiteSpace: "normal" }}>{d.name}<div className="muted" style={{ fontSize: 12 }}>{UNIT[d.key]}</div></td>
-                <td className="num">{dimValue(d, d.demand)}</td>
-                <td className="num">{dimValue(d, d.capacity)}</td>
-                <td><Pill tone={STATUS_TONE[d.status]}>{d.status_text}</Pill></td>
-                {projected ? (
-                  <td>{proj.get(d.key) ? <Pill tone={STATUS_TONE[proj.get(d.key)!.status]}>{proj.get(d.key)!.status_text}</Pill> : null}</td>
-                ) : null}
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
-      {limiter ? (
-        <div style={{ fontSize: 14 }}>
-          <strong>Limiter: {limiter.name.toLowerCase()}.</strong>{" "}
-          {limiter.capacity_label} is {Math.round((limiter.ratio ?? 0) * 100)}% of what the route asks; ready is {Math.round((limiter.rule ?? 0) * 100)}%.
-        </div>
-      ) : null}
-      <div className="muted">
-        Estimated time {hours(t.low_h)} to {hours(t.high_h)}, from {t.pace_learned ? `your own ${r.pace.min_per_effort_mi.toFixed(1)} min per effort mile over the last 8 weeks` : "a typical pace until Talus has 3 longer days to learn yours"}, slowing on long days.
-        Weekly gain and loss are compared with your weekly training.
-      </div>
-      <div className="muted">{note}</div>
+      <p className="muted">Benchmarks are the model’s training targets, not proof you can complete the objective. They can be lower than the full race demand.</p>
+      {pairs ? <p className="muted">Big-day size and time on feet use the larger of a single outing or 85% of a qualifying back-to-back pair’s combined total. A pair is not one continuous day.</p> : null}
+      {r.dims.map((d) => {
+        const p = proj.get(d.key);
+        const target = benchmark(d);
+        return <div key={d.key} className={styles.row}>
+          <h3 className={styles.name}>{d.name}</h3>
+          <p className={styles.basis}>{d.capacity_label}</p>
+          <dl className={styles.values}>
+            <div><dt>Race demand</dt><dd>{readinessValue(d, d.demand, true)}</dd></div>
+            <div><dt>Training benchmark</dt><dd>{target == null ? d.rule == null ? "No benchmark" : "Not available" : readinessValue(d, target)}
+              {target != null ? <span className={styles.detail}>{Math.round(d.rule! * 100)}% of race demand</span> : null}
+            </dd></div>
+            <div><dt>Recent training</dt><dd>{readinessValue(d, d.capacity)}
+              <Pill tone={STATUS_TONE[d.status]}>{BENCHMARK_STATUS[d.status]}</Pill>
+            </dd></div>
+            {projected ? <div><dt>{projectionCurrent ? "Planned training" : "Original plan"}</dt><dd>{p ? readinessValue(p, p.capacity) : "Not available"}
+              {p ? <Pill tone={projectionCurrent ? STATUS_TONE[p.status] : "neutral"}>{projectionCurrent ? BENCHMARK_STATUS[p.status] : "Needs updated draft"}</Pill> : null}
+            </dd></div> : null}
+          </dl>
+        </div>;
+      })}
+      {projected ? <p className="muted">{projectionCurrent
+        ? "Planned training uses the weeks before taper and assumes you complete and recover from those sessions. Recent outings can fall outside that future window, so a planned value can be lower than today’s."
+        : "Calendar adjustments changed the training behind this projection. Rebuild a draft to update it."}</p> : null}
+      <p className="muted">Estimated moving time {hours(t.low_h)} to {hours(t.high_h)}, from {t.pace_learned ? `your own ${r.pace.min_per_effort_mi.toFixed(1)} min per effort mile over the last 8 weeks` : "a typical pace until Talus has 3 longer days to learn yours"}, slowing on long days. Stops are not included.</p>
+      <p className="muted">{note}</p>
     </section>
   );
 }

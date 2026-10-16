@@ -1132,6 +1132,7 @@ def _planned_today(store: Store, day: date, aet: float, items: list[dict], acts:
 # place when the coach is done. Tests run it inline.
 AI_BUILD_INLINE = False
 BUILD_STALE_S = 1800  # a build this old was lost (the engine restarted); the engine's draft stands
+BUILD_PROCESS_STARTED = datetime.now().replace(microsecond=0)
 
 
 def _build_draft(store: Store, obj: planner.Objective, reason: str) -> dict:
@@ -1231,7 +1232,10 @@ def _building(p: dict) -> bool:
     if not started:
         return False
     try:
-        return (datetime.now() - datetime.fromisoformat(started)).total_seconds() < BUILD_STALE_S
+        started_at = datetime.fromisoformat(started)
+        # Background threads do not survive a server restart. Reveal the saved engine
+        # draft immediately instead of locking the conversation for another 30 minutes.
+        return BUILD_PROCESS_STARTED <= started_at and (datetime.now() - started_at).total_seconds() < BUILD_STALE_S
     except (TypeError, ValueError):
         return False
 

@@ -804,6 +804,33 @@ def test_the_coach_builds_after_the_draft_is_saved_and_the_chat_says_when(tmp_pa
     assert [a["id"] for a in r["messages"][-1]["actions"]] == ["accept"]
 
 
+def test_restart_reveals_saved_draft_and_unlocks_conversation(tmp_path, monkeypatch):
+    client = _setup(tmp_path, monkeypatch)
+    day = (date.today() + timedelta(weeks=10)).isoformat()
+    p = client.put("/api/plan/objective", json=OBJ | {"day": day}).json()["draft"]
+    store = api.get_store()
+    draft = store.plan("draft")
+    started = datetime.now().replace(microsecond=0) - timedelta(minutes=2)
+    store.replace_draft(p["id"], draft | {"building": started.isoformat()})
+    st = api._talk_state(store, "setup")
+    st.update(step="draft", building=p["id"])
+    store.save_settings({api.TALK_KEY: st})
+
+    # A live job still blocks acceptance, even if it has already run for two minutes.
+    monkeypatch.setattr(api, "BUILD_PROCESS_STARTED", started - timedelta(seconds=1))
+    assert client.get("/api/plan/talk").json()["building"]
+    assert client.post(f"/api/plan/{p['id']}/accept").status_code == 409
+
+    # A restarted process has no worker for that draft: both views recover immediately.
+    monkeypatch.setattr(api, "BUILD_PROCESS_STARTED", started + timedelta(seconds=42))
+    talk = client.get("/api/plan/talk").json()
+    assert not talk["building"]
+    assert "engine's draft" in talk["messages"][-1]["text"]
+    assert talk["messages"][-1]["actions"][0]["id"] == "accept"
+    assert not client.get("/api/plan").json()["draft"]["building"]
+    assert client.post(f"/api/plan/{p['id']}/accept").status_code == 200
+
+
 def test_weeks_rotate_mountain_sessions_and_days_get_detailed_workouts():
     acts = _acts()
     obj = _obj(weeks=20, distance_mi=100, gain_ft=22000, loss_ft=22000)

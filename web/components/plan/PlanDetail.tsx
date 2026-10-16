@@ -29,7 +29,7 @@ export type DayDetail = {
   activities?: { id: number; name: string | null; distance_mi: number; gain_ft: number; loss_ft: number }[];
 };
 
-type Ctx = { openWeek: (start: string, draft?: boolean) => void; openDay: (d: DayDetail) => void; version: number };
+type Ctx = { openWeek: (start: string, draft?: boolean) => void; openDay: (d: DayDetail) => void; version: number; invalidate: () => void };
 const PlanDetailContext = createContext<Ctx | null>(null);
 
 /** Open a week or a day of the plan in the detail sheet; null outside the plan page. */
@@ -76,7 +76,7 @@ export default function PlanDetailProvider({ children, today }: { children: Reac
   }, [router]);
 
   return (
-    <PlanDetailContext.Provider value={{ openWeek, openDay, version }}>
+    <PlanDetailContext.Provider value={{ openWeek, openDay, version, invalidate: changed }}>
       {children}
       <dialog ref={ref} className="sheet" aria-label={view?.day ? "Workout" : "Week"} onClose={() => setView(null)}
         onClick={(e) => { if (e.target === ref.current) setView(null); }}>

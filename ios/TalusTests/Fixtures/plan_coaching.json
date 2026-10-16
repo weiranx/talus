@@ -1,0 +1,484 @@
+{
+  "date": "2026-10-16",
+  "sessions": [
+    {
+      "day": "2026-10-16",
+      "kind": "rest",
+      "miles": 0.0,
+      "gain_ft": 0.0,
+      "loss_ft": 0.0,
+      "minutes": 0.0,
+      "capped": false,
+      "focus": "peak",
+      "race": "mountain"
+    },
+    {
+      "day": "2026-10-17",
+      "kind": "long",
+      "miles": 9.907346593141547,
+      "gain_ft": 1768.7007873945006,
+      "loss_ft": 1767.2244094417508,
+      "minutes": 73.56030879200011,
+      "capped": false,
+      "longest_descent_ft": 1530.0,
+      "type": "long",
+      "focus": "peak",
+      "race": "mountain"
+    },
+    {
+      "day": "2026-10-18",
+      "kind": "easy",
+      "miles": 3.632693750818567,
+      "gain_ft": 648.5236220446502,
+      "loss_ft": 647.9822834619753,
+      "minutes": 26.972113223733373,
+      "capped": false,
+      "type": "recovery",
+      "strength": true,
+      "focus": "peak",
+      "race": "mountain"
+    },
+    {
+      "day": "2026-10-19",
+      "kind": "rest",
+      "miles": 0.0,
+      "gain_ft": 0.0,
+      "loss_ft": 0.0,
+      "minutes": 0.0,
+      "capped": false,
+      "focus": "peak",
+      "race": "mountain"
+    },
+    {
+      "day": "2026-10-20",
+      "kind": "hills",
+      "miles": 3.577754257170979,
+      "gain_ft": 1030.9509240407847,
+      "loss_ft": 1030.0903640040228,
+      "minutes": 30.6861770800961,
+      "capped": false,
+      "type": "muscular_endurance",
+      "focus": "peak",
+      "race": "mountain"
+    },
+    {
+      "day": "2026-10-21",
+      "kind": "easy",
+      "miles": 3.577754257170979,
+      "gain_ft": 515.4754620203923,
+      "loss_ft": 515.0451820020114,
+      "minutes": 25.269073213083175,
+      "capped": false,
+      "type": "strides",
+      "strength": true,
+      "focus": "peak",
+      "race": "mountain"
+    },
+    {
+      "day": "2026-10-22",
+      "kind": "easy",
+      "miles": 3.577754257170979,
+      "gain_ft": 515.4754620203923,
+      "loss_ft": 515.0451820020114,
+      "minutes": 25.269073213083175,
+      "capped": false,
+      "strength": true,
+      "type": "easy",
+      "focus": "peak",
+      "race": "mountain"
+    },
+    {
+      "day": "2026-10-23",
+      "kind": "rest",
+      "miles": 0.0,
+      "gain_ft": 0.0,
+      "loss_ft": 0.0,
+      "minutes": 0.0,
+      "capped": false,
+      "focus": "peak",
+      "race": "mountain"
+    },
+    {
+      "day": "2026-10-24",
+      "kind": "long",
+      "miles": 11.709013932559566,
+      "gain_ft": 2577.3773101019615,
+      "loss_ft": 2575.225910010057,
+      "minutes": 92.05560083129451,
+      "capped": false,
+      "longest_descent_ft": 1530.0,
+      "type": "long",
+      "focus": "peak",
+      "race": "mountain"
+    },
+    {
+      "day": "2026-10-25",
+      "kind": "easy",
+      "miles": 3.577754257170979,
+      "gain_ft": 515.4754620203923,
+      "loss_ft": 515.0451820020114,
+      "minutes": 25.269073213083175,
+      "capped": false,
+      "type": "recovery",
+      "focus": "peak",
+      "race": "mountain"
+    },
+    {
+      "day": "2026-10-26",
+      "kind": "rest",
+      "miles": 0.0,
+      "gain_ft": 0.0,
+      "loss_ft": 0.0,
+      "minutes": 0.0,
+      "capped": false,
+      "focus": "recovery",
+      "race": "mountain"
+    },
+    {
+      "day": "2026-10-27",
+      "kind": "hills",
+      "miles": 2.8644000000000003,
+      "gain_ft": 825.3937007841004,
+      "loss_ft": 824.7047244061504,
+      "minutes": 24.567781717274805,
+      "capped": false,
+      "type": "vert_climb",
+      "focus": "recovery",
+      "race": "mountain"
+    },
+    {
+      "day": "2026-10-28",
+      "kind": "easy",
+      "miles": 2.8644000000000003,
+      "gain_ft": 412.6968503920502,
+      "loss_ft": 412.3523622030752,
+      "minutes": 20.230772744237814,
+      "capped": false,
+      "type": "recovery",
+      "strength": true,
+      "focus": "recovery",
+      "race": "mountain"
+    },
+    {
+      "day": "2026-10-29",
+      "kind": "easy",
+      "miles": 2.8644000000000003,
+      "gain_ft": 412.6968503920502,
+      "loss_ft": 412.3523622030752,
+      "minutes": 20.230772744237814,
+      "capped": false,
+      "type": "recovery",
+      "strength": true,
+      "focus": "recovery",
+      "race": "mountain"
+    }
+  ],
+  "availability": {},
+  "fixed_days": [],
+  "outcomes": [
+    {
+      "day": "2026-10-07",
+      "intent": "partial",
+      "effort": 8,
+      "reason": "too_hard",
+      "plan_id": 2,
+      "planned": {
+        "kind": "easy",
+        "miles": 3.760569138936708,
+        "gain_ft": 589.5669291315002,
+        "loss_ft": 589.0748031472502,
+        "minutes": 27.062085692359826,
+        "day": "2026-10-07",
+        "benefit": "Keeps your legs quick and your form efficient without adding fatigue. The strength work protects your knees and hips on the descents and keeps your stride strong late.",
+        "source": "planned_reference"
+      },
+      "activity_ids": [
+        25
+      ],
+      "actual": {
+        "miles": 4.972653406858456,
+        "gain_ft": 1179.1338582630003,
+        "loss_ft": 1178.1496062945005,
+        "minutes": 39.983333333333334
+      }
+    }
+  ],
+  "recent_sessions": [
+    {
+      "day": "2026-10-03",
+      "planned": {
+        "kind": "long",
+        "miles": 12.307317181974678,
+        "gain_ft": 2918.356299200926,
+        "loss_ft": 2915.9202755788892,
+        "minutes": 98.95875,
+        "day": "2026-10-03",
+        "benefit": "Builds the endurance and time on feet your objective needs, trains your legs for hours of climbing and descending, and teaches your gut to take food on the move.",
+        "source": "planned_reference"
+      },
+      "completed": true,
+      "outcome": null,
+      "actual": {
+        "miles": 4.972653406858456,
+        "gain_ft": 1179.1338582630003,
+        "loss_ft": 1178.1496062945005,
+        "minutes": 39.983333333333334
+      }
+    },
+    {
+      "day": "2026-10-04",
+      "planned": {
+        "kind": "easy",
+        "miles": 2.7349593737721505,
+        "gain_ft": 648.5236220446502,
+        "loss_ft": 647.9822834619753,
+        "minutes": 21.99083333333333,
+        "day": "2026-10-04",
+        "benefit": "Gets blood moving through tired legs after the long day and adds easy aerobic time without adding fatigue. The strength work protects your knees and hips on the descents and keeps your stride strong late.",
+        "source": "planned_reference"
+      },
+      "completed": true,
+      "outcome": null,
+      "actual": {
+        "miles": 4.972653406858456,
+        "gain_ft": 1179.1338582630003,
+        "loss_ft": 1178.1496062945005,
+        "minutes": 39.983333333333334
+      }
+    },
+    {
+      "day": "2026-10-06",
+      "planned": {
+        "kind": "hills",
+        "miles": 3.760569138936708,
+        "gain_ft": 1179.1338582630003,
+        "loss_ft": 1178.1496062945005,
+        "minutes": 33.25781279669838,
+        "day": "2026-10-06",
+        "benefit": "Builds the quads for long descents, the eccentric strength that keeps them working late in a race when the downhills usually wreck them.",
+        "source": "planned_reference"
+      },
+      "completed": true,
+      "outcome": null,
+      "actual": {
+        "miles": 4.972653406858456,
+        "gain_ft": 1179.1338582630003,
+        "loss_ft": 1178.1496062945005,
+        "minutes": 39.983333333333334
+      }
+    },
+    {
+      "day": "2026-10-07",
+      "planned": {
+        "kind": "easy",
+        "miles": 3.760569138936708,
+        "gain_ft": 589.5669291315002,
+        "loss_ft": 589.0748031472502,
+        "minutes": 27.062085692359826,
+        "day": "2026-10-07",
+        "benefit": "Keeps your legs quick and your form efficient without adding fatigue. The strength work protects your knees and hips on the descents and keeps your stride strong late.",
+        "source": "planned_reference"
+      },
+      "completed": true,
+      "outcome": {
+        "day": "2026-10-07",
+        "intent": "partial",
+        "effort": 8,
+        "reason": "too_hard",
+        "plan_id": 2,
+        "planned": {
+          "kind": "easy",
+          "miles": 3.760569138936708,
+          "gain_ft": 589.5669291315002,
+          "loss_ft": 589.0748031472502,
+          "minutes": 27.062085692359826,
+          "day": "2026-10-07",
+          "benefit": "Keeps your legs quick and your form efficient without adding fatigue. The strength work protects your knees and hips on the descents and keeps your stride strong late.",
+          "source": "planned_reference"
+        },
+        "activity_ids": [
+          25
+        ],
+        "actual": {
+          "miles": 4.972653406858456,
+          "gain_ft": 1179.1338582630003,
+          "loss_ft": 1178.1496062945005,
+          "minutes": 39.983333333333334
+        }
+      },
+      "actual": {
+        "miles": 4.972653406858456,
+        "gain_ft": 1179.1338582630003,
+        "loss_ft": 1178.1496062945005,
+        "minutes": 39.983333333333334
+      }
+    },
+    {
+      "day": "2026-10-08",
+      "planned": {
+        "kind": "easy",
+        "miles": 3.760569138936708,
+        "gain_ft": 589.5669291315002,
+        "loss_ft": 589.0748031472502,
+        "minutes": 27.062085692359826,
+        "day": "2026-10-08",
+        "benefit": "Builds the aerobic base that every long day rests on, more capillaries and better fat burning, with little fatigue. The strength work protects your knees and hips on the descents and keeps your stride strong late.",
+        "source": "planned_reference"
+      },
+      "completed": false,
+      "outcome": null,
+      "actual": {
+        "miles": 0,
+        "gain_ft": 0,
+        "loss_ft": 0,
+        "minutes": 0.0
+      }
+    },
+    {
+      "day": "2026-10-10",
+      "planned": {
+        "kind": "long",
+        "miles": 12.307317181974682,
+        "gain_ft": 2947.834645657501,
+        "loss_ft": 2945.3740157362513,
+        "minutes": 99.26853635521694,
+        "day": "2026-10-10",
+        "benefit": "Builds the endurance and time on feet your objective needs, trains your legs for hours of climbing and descending, and teaches your gut to take food on the move.",
+        "source": "planned_reference"
+      },
+      "completed": true,
+      "outcome": null,
+      "actual": {
+        "miles": 4.972653406858456,
+        "gain_ft": 1179.1338582630003,
+        "loss_ft": 1178.1496062945005,
+        "minutes": 39.983333333333334
+      }
+    },
+    {
+      "day": "2026-10-11",
+      "planned": {
+        "kind": "easy",
+        "miles": 3.760569138936708,
+        "gain_ft": 589.5669291315002,
+        "loss_ft": 589.0748031472502,
+        "minutes": 27.062085692359826,
+        "day": "2026-10-11",
+        "benefit": "Gets blood moving through tired legs after the long day and adds easy aerobic time without adding fatigue.",
+        "source": "planned_reference"
+      },
+      "completed": true,
+      "outcome": null,
+      "actual": {
+        "miles": 4.972653406858456,
+        "gain_ft": 1179.1338582630003,
+        "loss_ft": 1178.1496062945005,
+        "minutes": 39.983333333333334
+      }
+    },
+    {
+      "day": "2026-10-13",
+      "planned": {
+        "kind": "hills",
+        "miles": 4.092000000000001,
+        "gain_ft": 1179.1338582630003,
+        "loss_ft": 1178.1496062945005,
+        "minutes": 35.096831024678295,
+        "day": "2026-10-13",
+        "benefit": "Builds climbing endurance and your aerobic base on the uphill, and gets your legs used to long sustained grades.",
+        "source": "planned_reference"
+      },
+      "completed": true,
+      "outcome": null,
+      "actual": {
+        "miles": 4.972653406858456,
+        "gain_ft": 1179.1338582630003,
+        "loss_ft": 1178.1496062945005,
+        "minutes": 39.983333333333334
+      }
+    },
+    {
+      "day": "2026-10-14",
+      "planned": {
+        "kind": "easy",
+        "miles": 4.092000000000001,
+        "gain_ft": 589.5669291315002,
+        "loss_ft": 589.0748031472502,
+        "minutes": 28.901103920339743,
+        "day": "2026-10-14",
+        "benefit": "Keeps your legs quick and your form efficient without adding fatigue. The strength work protects your knees and hips on the descents and keeps your stride strong late.",
+        "source": "planned_reference"
+      },
+      "completed": true,
+      "outcome": null,
+      "actual": {
+        "miles": 4.972653406858456,
+        "gain_ft": 1179.1338582630003,
+        "loss_ft": 1178.1496062945005,
+        "minutes": 39.983333333333334
+      }
+    },
+    {
+      "day": "2026-10-15",
+      "planned": {
+        "kind": "easy",
+        "miles": 4.092000000000001,
+        "gain_ft": 589.5669291315002,
+        "loss_ft": 589.0748031472502,
+        "minutes": 28.901103920339743,
+        "day": "2026-10-15",
+        "benefit": "Builds the aerobic base that every long day rests on, more capillaries and better fat burning, with little fatigue. The strength work protects your knees and hips on the descents and keeps your stride strong late.",
+        "source": "planned_reference"
+      },
+      "completed": false,
+      "outcome": null,
+      "actual": {
+        "miles": 0,
+        "gain_ft": 0,
+        "loss_ft": 0,
+        "minutes": 0.0
+      }
+    }
+  ],
+  "evidence": {
+    "label": "Supported by recent history",
+    "activity_days": 30,
+    "last_activity": "2026-10-14",
+    "missing": [],
+    "assumptions": [
+      "The original projection predates calendar adjustments. Rebuild a draft to update the goal projection.",
+      "The projection assumes the planned build, long days and recovery weeks are completed.",
+      "Training limits and readiness rules are starting heuristics, not a validated probability of finishing.",
+      "Freshness and workout feedback describe evidence quality; missing inputs do not count as zero fitness."
+    ],
+    "milestone": {
+      "day": "2026-10-17",
+      "kind": "long",
+      "text": "Complete this key session, record whether it achieved its purpose, then check in on recovery the following day."
+    }
+  },
+  "suggestions": [],
+  "undo_id": null,
+  "reasons": [
+    {
+      "key": "busy",
+      "label": "Less time / busy"
+    },
+    {
+      "key": "too_hard",
+      "label": "Workout was too hard"
+    },
+    {
+      "key": "sore",
+      "label": "Legs still sore"
+    },
+    {
+      "key": "terrain",
+      "label": "Terrain unavailable"
+    },
+    {
+      "key": "availability",
+      "label": "Update availability"
+    }
+  ]
+}

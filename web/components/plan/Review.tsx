@@ -51,6 +51,11 @@ export default async function Review({ fallback, compact }: { fallback: WeekRevi
       </div>
       {compact ? null : <Numbers r={review} />}
       {review.flags.length ? <div className="muted">Flags: {review.flags.map((f) => `${f.ledger} ${f.text.toLowerCase()}`).join("; ")}.</div> : null}
+      {review.outcomes ? <div className="muted">
+        Workout purpose, as reported: {review.outcomes.met} met · {review.outcomes.partial} partial · {review.outcomes.missed} missed.
+        {review.outcomes.effort_average == null ? " Effort unavailable." : ` Average reported effort ${review.outcomes.effort_average}/10.`}
+        {" "}Unreported sessions remain unknown.
+      </div> : null}
       {r ? (
         <>
           <CoachText text={r.reply.week} />

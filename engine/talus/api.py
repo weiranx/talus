@@ -34,6 +34,7 @@ from . import MODEL_VERSION, admin, chatgpt, cli, coach, explain, google_auth, i
 from . import heatmap, routes, terrain
 from . import plan as planner
 from . import schedule
+from . import plan_coaching
 from . import settings as app_settings
 from .accounts import SESSION_DAYS, Account, AccountError, Accounts
 from .config import data_dir, load_env
@@ -1028,7 +1029,9 @@ def _descent_fitness(history: list[ledger.LedgerDay]) -> float:
 
 
 def _constraints(store: Store) -> planner.Constraints:
-    return planner.Constraints.from_json(store.settings().get("plan_constraints"))
+    c = planner.Constraints.from_json(store.settings().get("plan_constraints"))
+    c.date_limits = store.settings().get("plan_availability", {})
+    return c
 
 
 def _readiness_json(r: dict) -> dict:
@@ -1041,6 +1044,7 @@ def _accepted(store: Store, acts: list[dict] | None = None, day: date | None = N
     p = store.plan("accepted")
     if p is None:
         return None
+    p["constraints"] = p["constraints"] | {"date_limits": store.settings().get("plan_availability", {})}
     day = day or date.today()
     acts = _activities(store, day - timedelta(days=day.weekday() + 7)) if acts is None else acts
     own = schedule.own_by_day(store.planned_runs(day - timedelta(days=day.weekday() + 7),
@@ -1181,7 +1185,8 @@ def _athlete_context(store: Store, acts: list[dict], day: date) -> dict:
                 last.append({"week_start": w["start"], "focus": w["focus"],
                              "target": {"distance_mi": round(w["miles"], 1), "gain_ft": round(w["gain_ft"])},
                              "done": {"distance_mi": round(a["miles"], 1), "gain_ft": round(a["gain_ft"])}})
-    return coach.athlete_context(t, acts, day, checkins, ahead, last)
+    return coach.athlete_context(t, acts, day, checkins, ahead, last) | {
+        "workout_outcomes": plan_coaching.outcomes_summary(store.workout_outcomes(day - timedelta(days=28), day))}
 
 
 def _plan_answers(store: Store) -> dict | None:
@@ -1310,6 +1315,7 @@ def _last_week_review(store: Store, accepted: dict | None, acts: list[dict], day
     if accepted is None:
         review["replan"] = []
     review["replan_text"] = [planner.REPLAN_TEXT[r] for r in review["replan"]]
+    review["outcomes"] = plan_coaching.outcomes_summary(store.workout_outcomes(start, start + timedelta(days=6)))
     return review
 
 
@@ -1321,7 +1327,8 @@ def _plan_json(p: dict | None) -> dict | None:
                                   "back_to_back", "race_type", "goal", "target", "plan_type",
                                   "builder", "approach", "build_cost", "held_weeks", "check",
                                   "options", "now", "changes")} | {"reason_text": planner.REPLAN_TEXT.get(p["reason"], p["reason"]),
-                                                                   "building": _building(p)}
+                                                                   "building": _building(p),
+             "projection_current": not p.get("session_overrides") and not any(w.get("adapted") for w in p["weeks"])}
 
 
 def _with_own_runs(store: Store, sessions: list[dict], acts: list[dict]) -> list[dict]:
@@ -1394,6 +1401,253 @@ def get_plan() -> dict:
     }
 
 
+class DateAvailabilityIn(BaseModel):
+    minutes: int = Field(ge=0, le=1440)
+    terrain: Literal["any", "flat", "hills"] = "any"
+    locked: bool = False
+
+
+class RevisionIn(BaseModel):
+    reason: Literal["busy", "too_hard", "sore", "terrain", "availability"]
+    day: date
+    # A patch: null removes a date's exception and restores the recurring calendar.
+    availability: dict[date, DateAvailabilityIn | None] = Field(default_factory=dict, max_length=60)
+
+
+class OutcomeIn(BaseModel):
+    day: date
+    intent: Literal["met", "partial", "missed"]
+    effort: int | None = Field(default=None, ge=1, le=10)
+    reason: Literal["busy", "too_hard", "sore", "terrain", "other"] | None = None
+
+
+def _revision_state(store: Store, day: date) -> str:
+    """Relevant inputs only, including the day, so a stale preview/undo cannot overwrite work."""
+    state = {"day": day.isoformat(), "plan": store.plan("accepted"), "acts": _activities(store),
+             "runs": [r.json() for r in store.planned_runs()],
+             "availability": store.settings().get("plan_availability", {}),
+             "checkins": {d.isoformat(): v for d, v in store.checkins(day - timedelta(days=14), day).items()},
+             "outcomes": store.workout_outcomes(day - timedelta(days=56), day)}
+    return hashlib.sha256(json.dumps(state, sort_keys=True, default=str).encode()).hexdigest()
+
+
+def _coaching_json(store: Store, day: date, p: dict, acts: list[dict]) -> dict:
+    own = schedule.own_by_day(store.planned_runs(day, day + timedelta(days=13)))
+    ss = planner.upcoming_sessions(p, acts, day, 14, own)
+    outcomes = store.workout_outcomes(day - timedelta(days=56), day)
+    suggestions = []
+    recent = [o for o in outcomes if o["day"] >= (day - timedelta(days=7)).isoformat()]
+    for o in recent:
+        if o.get("reason") in ("sore", "too_hard"):
+            suggestions.append({"reason": o["reason"], "text": f"Your {o['day']} workout feedback suggests reviewing the next sessions."})
+    recent_sessions = []
+    first = max(date.fromisoformat(p["built_on"]), day - timedelta(days=13))
+    for k in range(max(0, (day - first).days + 1)):
+        d = first + timedelta(days=k)
+        planned = _intended_session(store, p, d)
+        if planned and planned["kind"] not in ("rest", "done", "objective"):
+            did = [a for a in acts if a["day"] == d.isoformat() and planner.is_foot(a["sport"])]
+            saved = next((o for o in outcomes if o["day"] == d.isoformat()), None)
+            recent_sessions.append({"day": d.isoformat(), "planned": saved["planned"] if saved else planned,
+                "completed": bool(did), "outcome": saved,
+                "actual": {"miles": sum(a["distance_mi"] for a in did), "gain_ft": sum(a["gain_ft"] for a in did),
+                           "loss_ft": sum(a["loss_ft"] for a in did), "minutes": sum(a["moving_time_s"] for a in did) / 60}})
+    return {"date": day.isoformat(), "sessions": ss, "availability": p["constraints"].get("date_limits", {}),
+            "fixed_days": sorted(own), "outcomes": outcomes,
+            "recent_sessions": recent_sessions,
+            "evidence": plan_coaching.evidence(p, acts, day, outcomes, ss), "suggestions": suggestions,
+            "undo_id": store.latest_plan_revision(p["id"]),
+            "reasons": [{"key": k, "label": v} for k, v in plan_coaching.REASONS.items()]}
+
+
+@app.get("/api/plan/coaching")
+def get_plan_coaching() -> dict:
+    store, day = get_store(), date.today()
+    acts = _activities(store)
+    p = _accepted(store, acts, day)
+    if p is None:
+        raise HTTPException(404, "Accept a plan first.")
+    return _coaching_json(store, day, p, acts)
+
+
+@app.post("/api/plan/revisions")
+def preview_plan_revision(body: RevisionIn) -> dict:
+    store, day = get_store(), date.today()
+    if not day <= body.day <= day + timedelta(days=13):
+        raise HTTPException(422, "Choose a date in the next two weeks.")
+    if any(not day <= d <= day + timedelta(days=366) for d in body.availability):
+        raise HTTPException(422, "Availability dates must be within the coming year.")
+    with store._write():
+        before = store.plan("accepted")
+        if before is None:
+            raise HTTPException(409, "Accept a plan first.")
+        acts = _activities(store)
+        p = _accepted(store, acts, day)
+        limits = dict(store.settings().get("plan_availability", {}))
+        for d, value in body.availability.items():
+            if value is None:
+                limits.pop(d.isoformat(), None)
+            else:
+                limits[d.isoformat()] = value.model_dump()
+        if body.reason in ("busy", "terrain") and body.day.isoformat() not in body.availability:
+            existing = limits.get(body.day.isoformat(), {})
+            limits[body.day.isoformat()] = {"minutes": 0 if body.reason == "busy" else _constraints(store).cap(body.day),
+                                           "terrain": "flat" if body.reason == "terrain" else existing.get("terrain", "any"),
+                                           "locked": existing.get("locked", False)}
+        own = schedule.own_by_day(store.planned_runs(day, day + timedelta(days=13)))
+        for run in store.planned_runs(day, day + timedelta(days=366)):
+            limit = limits.get(run.day.isoformat())
+            if limit is None:
+                continue
+            minutes = run.minutes if run.minutes is not None else planner._effort(run.json()) * p["pace"]["min_per_effort_mi"]
+            if minutes > limit["minutes"] or (limit["terrain"] == "flat" and (run.gain_ft or run.loss_ft)):
+                raise HTTPException(422, f"Your own session on {run.day} exceeds this availability. Edit it before changing that date.")
+        checkin = store.checkin(day)
+        try:
+            revised = plan_coaching.revise(p, acts, day, own, body.reason, body.day, limits,
+                                           bool(checkin and checkin.get("pain", 0) > 3))
+        except ValueError as e:
+            raise HTTPException(422, str(e))
+        # Validate the shifted dates against the same load ledgers used by the plan builder.
+        history = [d for d in _plan_history(store, day) if d.day < day]
+        def flags(plan):
+            ss = planner.upcoming_sessions(plan, acts, day, 14, own)
+            rates = p["rates"]
+            loads = []
+            for s in ss:
+                real = [a for a in acts if a["day"] == s["day"]]
+                training = s if s["kind"] not in ("done", "objective") else dict.fromkeys(("minutes", "gain_ft", "loss_ft"), 0.0)
+                loads.append((date.fromisoformat(s["day"]), {
+                    "cardio": sum(a["cardio_load"] for a in real) + training["minutes"] / 60 * rates["cardio_per_hour"] * (planner.WORKOUT_CARDIO if s["kind"] in planner.WORKOUTS else 1),
+                    "distance": sum(a["distance_mi"] for a in real) + (s["miles"] if s["kind"] not in ("done", "objective") else 0.0),
+                    "climb": sum(a["climb_load"] for a in real) + training["gain_ft"] * rates["climb_per_ft"],
+                    "descent": sum(a["descent_load"] for a in real) + training["loss_ft"] * rates["descent_per_ft"]}))
+            _, bad = planner._Projector(history).trial(loads)
+            return set(bad)
+        if flags(revised["after_plan"]) - flags(p):
+            raise HTTPException(422, "Moving this session raises a new load flag. Try a shorter session or another date.")
+        # Store the unadapted plan: runtime adaptation continues to reflect actual training.
+        after = before | {"session_overrides": revised["after_plan"]["session_overrides"],
+                          "weeks": revised["after_plan"]["weeks"], "revision_weeks": revised["after_plan"]["revision_weeks"],
+                          "constraints": before["constraints"] | {"date_limits": limits}}
+        preview = {"before_plan": before, "after_plan": after, "before_availability": store.settings().get("plan_availability", {}),
+                   "after_availability": limits, "state": _revision_state(store, day), "day": day.isoformat(),
+                   "reason": body.reason, "changes": revised["changes"], "weeks": revised["weeks"], "impact": revised["impact"]}
+        revision_id = store.save_plan_revision(before["id"], preview)
+    return {"id": revision_id, **{k: preview[k] for k in ("reason", "changes", "weeks", "impact")}, "availability": limits}
+
+
+@app.post("/api/plan/revisions/{revision_id}/accept")
+def accept_plan_revision(revision_id: int) -> dict:
+    store, day = get_store(), date.today()
+    with store._write():
+        row = store.plan_revision(revision_id)
+        if row is None:
+            raise HTTPException(404, "No such change preview.")
+        body = row["body"]
+        if row["status"] != "preview" or body["state"] != _revision_state(store, day):
+            raise HTTPException(409, "Your training or calendar changed. Create a fresh preview before accepting.")
+        if not store.replace_accepted(row["plan_id"], body["after_plan"]):
+            raise HTTPException(409, "The accepted plan changed. Create a fresh preview.")
+        store.save_settings({"plan_availability": body["after_availability"]})
+        _capture_intents(store, day)
+        body["undo_state"] = _revision_state(store, day)
+        store.update_plan_revision(revision_id, "accepted", body)
+    return {"ok": True, "undo_id": revision_id}
+
+
+@app.post("/api/plan/revisions/{revision_id}/undo")
+def undo_plan_revision(revision_id: int) -> dict:
+    store, day = get_store(), date.today()
+    with store._write():
+        row = store.plan_revision(revision_id)
+        if row is None:
+            raise HTTPException(404, "No such accepted change.")
+        body = row["body"]
+        if row["status"] != "accepted" or body.get("undo_state") != _revision_state(store, day):
+            raise HTTPException(409, "Training or calendar changes followed this revision. Review a new change to preserve them.")
+        if not store.replace_accepted(row["plan_id"], body["before_plan"]):
+            raise HTTPException(409, "The accepted plan changed.")
+        store.save_settings({"plan_availability": body["before_availability"]})
+        store.update_plan_revision(revision_id, "undone", body)
+    return {"ok": True}
+
+
+@app.put("/api/plan/outcomes")
+def put_workout_outcome(body: OutcomeIn) -> dict:
+    store, today = get_store(), date.today()
+    if not today - timedelta(days=56) <= body.day <= today:
+        raise HTTPException(422, "Record feedback for today or a day in the last eight weeks.")
+    if body.intent == "missed" and body.effort is not None:
+        raise HTTPException(422, "A missed session has no effort rating.")
+    p = store.plan("accepted")
+    if p is None or planner.plan_for_day(p, body.day) is None:
+        raise HTTPException(409, "That date has no accepted plan.")
+    acts = _activities(store)
+    old = next((o for o in store.workout_outcomes(body.day, body.day)), None)
+    same = [a for a in acts if a["day"] == body.day.isoformat() and planner.is_foot(a["sport"])]
+    planned = _intended_session(store, p, body.day)
+    if planned is None:
+        raise HTTPException(409, "That date has no planned session reference.")
+    if body.intent != "missed" and not same:
+        raise HTTPException(409, "Sync the completed activity first, or record the session as missed.")
+    if body.intent == "missed" and same:
+        raise HTTPException(422, "An activity exists on this date. Record whether it met the session's purpose.")
+    result = body.model_dump(mode="json") | {"plan_id": p["id"],
+        "planned": old["planned"] if old and old["plan_id"] == p["id"] else planned,
+        "activity_ids": [a["id"] for a in same],
+        "actual": {"miles": sum(a["distance_mi"] for a in same), "gain_ft": sum(a["gain_ft"] for a in same),
+                   "loss_ft": sum(a["loss_ft"] for a in same), "minutes": sum(a["moving_time_s"] for a in same) / 60}}
+    if result["planned"]["kind"] == "rest":
+        raise HTTPException(422, "This was a rest day. Choose a planned training session.")
+    store.save_workout_outcome(body.day, p["id"], result)
+    return result
+
+
+def session_snapshot(s: dict) -> dict:
+    return plan_coaching.session(s) | {"benefit": planner.session_benefit(s)}
+
+
+def _intended_session(store: Store, p: dict, day: date) -> dict | None:
+    saved = p.get("intended_sessions", {}).get(day.isoformat())
+    if saved:
+        return saved
+    # Older plans have no dated snapshots. Use the week's full planned shape, explicitly
+    # marked as a reference, rather than reassigning its key workout after each missed day.
+    start = max(date.fromisoformat(p["built_on"]), day - timedelta(days=day.weekday()))
+    if day < start:
+        return None
+    own = schedule.own_by_day(store.planned_runs(start, start + timedelta(days=6)))
+    ss = planner.upcoming_sessions(p, [], start, (day - start).days + 1, own)
+    s = next((s for s in ss if s["day"] == day.isoformat()), None)
+    return None if s is None else session_snapshot(s) | {"source": "planned_reference"}
+
+
+def _capture_intents(store: Store, day: date) -> None:
+    """Snapshot future intent at an explicit calendar/plan mutation; completed dates stay fixed."""
+    p = store.plan("accepted")
+    if p is None:
+        return
+    acts = _activities(store)
+    live = _accepted(store, acts, day)
+    days = max(0, min(367, (date.fromisoformat(p["objective"]["day"]) - day).days + 1))
+    own = schedule.own_by_day(store.planned_runs(day, day + timedelta(days=days)))
+    intended = dict(p.get("intended_sessions", {}))
+    for s in planner.upcoming_sessions(live, acts, day, days, own):
+        if s["kind"] != "done":
+            intended[s["day"]] = session_snapshot(s) | {"source": "dated_snapshot"}
+    store.replace_accepted(p["id"], p | {"intended_sessions": intended})
+
+
+def _decide_draft(store: Store, plan_id: int, accept: bool) -> bool:
+    with store._write():
+        if not store.decide_draft(plan_id, accept):
+            return False
+        if accept:
+            _capture_intents(store, date.today())
+    return True
+
+
 @app.get("/api/plan/week")
 def get_plan_week(start: date, draft: bool = False) -> dict:
     """One week of the plan, day by day, each with its session's detail: what was done on the
@@ -1445,7 +1699,7 @@ def _roll(store: Store, obj: planner.Objective, day: date) -> bool:
     except HTTPException:
         return False
     draft = store.plan("draft")
-    return draft is not None and store.decide_draft(draft["id"], True)
+    return draft is not None and _decide_draft(store, draft["id"], True)
 
 
 def _this_week(store: Store, accepted: dict | None, acts: list[dict], day: date) -> dict:
@@ -1967,6 +2221,7 @@ def _rest_days(store: Store, edits: list[dict], day: date) -> str | None:
     for d in days:
         if d not in have:
             store.save_planned_run(schedule.PlannedRun(date.fromisoformat(d), "rest", 0.0, notes="Asked for in the plan chat"))
+    _capture_intents(store, day)
     names = [f"{planner.DAY_NAMES[date.fromisoformat(d).weekday()]}, {date.fromisoformat(d):%b} {date.fromisoformat(d).day}"
              for d in days]
     return (f"Done: {interview._join_words(names)} {'is a rest day' if len(names) == 1 else 'are rest days'}. The rest "
@@ -2046,7 +2301,7 @@ def post_talk(body: TalkIn) -> dict:
             store.save_settings({TALK_KEY: st})
             return _talk_json(store, st)
         else:
-            store.decide_draft(draft["id"], body.action == "accept")
+            _decide_draft(store, draft["id"], body.action == "accept")
             reply = [interview.coach("Done. Your plan is on the calendar, and you can change it here any time."
                                      if body.action == "accept" else "Kept your current plan.")]
         st["step"] = "done"
@@ -2092,13 +2347,13 @@ def decide_plan(plan_id: int, decision: str) -> dict:
     draft = get_store().plan("draft")
     if decision == "accept" and draft is not None and draft["id"] == plan_id and _building(draft):
         raise HTTPException(409, "The AI coach is still drafting this plan. Accept it once it's ready.")
-    if not get_store().decide_draft(plan_id, decision == "accept"):
+    if not _decide_draft(get_store(), plan_id, decision == "accept"):
         raise HTTPException(404, "No draft plan with that id.")
     return get_plan()
 
 
 def _plan_for_coach(store: Store) -> dict | None:
-    return store.plan("draft") or store.plan("accepted")
+    return store.plan("draft") or _accepted(store)
 
 
 def _prediction(store: Store, obj: planner.Objective, day: date, longest_h: float | None) -> dict:
@@ -2154,7 +2409,13 @@ def coach_plan(refresh: bool = False) -> dict:
     p = _plan_for_coach(store)
     if p is None:
         raise HTTPException(404, "No plan yet.")
-    packet = coach.plan_packet(p, p["now"], date.fromisoformat(p["built_on"]),
+    day = date.today()
+    now = p["now"]
+    if p["status"] == "accepted" and planner.is_event(p["objective"]):
+        obj = planner.Objective(**(p["objective"] | {"day": date.fromisoformat(p["objective"]["day"])}))
+        now = planner.readiness_now(obj, _activities(store),
+                                   _descent_fitness(_plan_history(store, day)), day)
+    packet = coach.plan_packet(p, now, day,
                                planner.REPLAN_TEXT.get(p["reason"], p["reason"]), p.get("changes") or [])
     _noted(store, packet)
     if answers := store.settings().get("plan_context"):
@@ -2249,21 +2510,30 @@ def _run(body: PlannedRunIn, run_id: int | None = None) -> schedule.PlannedRun:
 @app.post("/api/schedule")
 def add_planned_run(body: PlannedRunIn) -> dict:
     store = get_store()
-    return {"id": store.save_planned_run(_run(body))}
+    with store._write():
+        run_id = store.save_planned_run(_run(body))
+        _capture_intents(store, date.today())
+    return {"id": run_id}
 
 
 @app.put("/api/schedule/{run_id}")
 def change_planned_run(run_id: int, body: PlannedRunIn) -> dict:
     """Edit a scheduled run; changing its day moves it."""
-    if get_store().save_planned_run(_run(body, run_id)) is None:
-        raise HTTPException(404, "No such scheduled run.")
+    store = get_store()
+    with store._write():
+        if store.save_planned_run(_run(body, run_id)) is None:
+            raise HTTPException(404, "No such scheduled run.")
+        _capture_intents(store, date.today())
     return {"id": run_id}
 
 
 @app.delete("/api/schedule/{run_id}")
 def delete_planned_run(run_id: int) -> dict:
-    if not get_store().delete_planned_run(run_id):
-        raise HTTPException(404, "No such scheduled run.")
+    store = get_store()
+    with store._write():
+        if not store.delete_planned_run(run_id):
+            raise HTTPException(404, "No such scheduled run.")
+        _capture_intents(store, date.today())
     return {"ok": True}
 
 
@@ -2479,6 +2749,8 @@ def confirm_action(action_id: int, background: BackgroundTasks) -> dict:
             result = "Thresholds updated and every activity rescored."
         else:
             raise ValueError("Unknown action.")
+        if a["kind"] in ("schedule_run", "move_run", "delete_run"):
+            _capture_intents(store, date.today())
     except Exception as e:  # a card never stays stuck on "running"
         msg = e.detail if isinstance(e, HTTPException) else str(e) if isinstance(e, ValueError) else "That didn't work. Try again."
         store.finish_action(action_id, "failed", msg)

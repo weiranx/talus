@@ -181,6 +181,7 @@ struct PlanOptions: Codable, Hashable {
 }
 
 struct Plan: Codable, Hashable {
+    let projectionCurrent: Bool?
     let id: Int
     let status: String
     let reasonText: String
@@ -248,6 +249,7 @@ struct ReviewFlag: Codable, Hashable {
 }
 
 struct WeekReview: Codable, Hashable {
+    let outcomes: CoachingOutcomeSummary?
     struct Actual: Codable, Hashable { let belowAetPct: Double? }
     let start: String
     let end: String

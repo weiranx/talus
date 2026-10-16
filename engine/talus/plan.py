@@ -334,6 +334,8 @@ class Constraints:
     hill_sessions: list | None = None
     strides: bool = True
     strength: bool = True
+    # ISO dates override the recurring calendar. Zero minutes means unavailable.
+    date_limits: dict = field(default_factory=dict)
 
     @classmethod
     def from_json(cls, d: dict | None) -> Constraints:
@@ -351,7 +353,12 @@ class Constraints:
         return c
 
     def cap(self, day: date) -> int:
+        if day.isoformat() in self.date_limits:
+            return int(self.date_limits[day.isoformat()]["minutes"])
         return self.weekend_min if day.weekday() >= 5 else self.weekday_min
+
+    def available(self, day: date) -> bool:
+        return self.cap(day) > 0 and (day.isoformat() in self.date_limits or day.weekday() in self.days)
 
 
 def is_foot(sport: str | None) -> bool:
@@ -629,8 +636,11 @@ def sessions_for_week(target: dict, week_start: date, first_day: date, c: Constr
     miles) the long run takes a third of the week and never runs past that. Days before `first_day` and days the athlete can't train are rest. Returns the days and a
     note for each day a time limit cut."""
     days = [week_start + timedelta(days=i) for i in range(7)]
-    avail = [d for d in days if d.weekday() in c.days and d >= first_day]
+    avail = [d for d in days if c.available(d) and d >= first_day]
     long_day = next((d for d in avail if d.weekday() == c.long_day), None)
+    usual_long = week_start + timedelta(days=c.long_day) if c.long_day >= 0 else None
+    if long_day is None and usual_long and usual_long.isoformat() in c.date_limits and avail:
+        long_day = max(avail, key=lambda d: (c.cap(d), -abs((d - usual_long).days)))
     second = _second_day(long_day, avail) if b2b else None
     if len(avail) == 7:  # keep one rest day, the day after the long one (or the pair)
         pair = [d for d in (long_day, second) if d]
@@ -638,8 +648,9 @@ def sessions_for_week(target: dict, week_start: date, first_day: date, c: Constr
         avail.remove(after if after in avail else next(d for d in avail if d not in pair))
     pair = [d for d in (long_day, second) if d]
     others = [d for d in avail if d not in pair]
-    hills = (max(others, key=lambda d: abs((d - long_day).days) if long_day else 0)
-             if len(others) >= 2 and hill_day else None)
+    hill_options = [d for d in others if c.date_limits.get(d.isoformat(), {}).get("terrain") != "flat"]
+    hills = (max(hill_options, key=lambda d: abs((d - long_day).days) if long_day else 0)
+             if len(others) >= 2 and hill_day and hill_options else None)
     speed = _workout_day(workout, others, hills, pair)
     weights: dict[date, dict[str, float]] = {}
     share = PAIR_SHARE if second else LONG_SHARE | ({"miles": ROAD_LONG_SHARE} if road_long else {})
@@ -656,6 +667,9 @@ def sessions_for_week(target: dict, week_start: date, first_day: date, c: Constr
         weights[d] = {"miles": (1 - long_share["miles"]) / len(others),
                       "gain_ft": (1 - long_share["gain_ft"]) * vert[d] / (sum(vert.values()) or 1),
                       "loss_ft": (1 - long_share["loss_ft"]) * vert[d] / (sum(vert.values()) or 1)}
+    for d in weights:
+        if c.date_limits.get(d.isoformat(), {}).get("terrain") == "flat":
+            weights[d]["gain_ft"] = weights[d]["loss_ft"] = 0.0
     # Fill days in proportion to their weights; a day over its time limit is held there and
     # what it couldn't take moves to the days that still have room.
     # A road long run grows past its race distance's size only as its share of a bigger week.
@@ -695,7 +709,7 @@ def sessions_for_week(target: dict, week_start: date, first_day: date, c: Constr
         out.append({"day": d.isoformat(), "kind": kind, **alloc[d],
                     "minutes": effort_miles(alloc[d]["miles"], alloc[d]["gain_ft"]) * pace_min,
                     "capped": d in capped})
-    short = any(v > 0.5 for v in left.values()) and not open_days
+    short = any(target[k] - sum(a[k] for a in alloc.values()) > 0.5 for k in DIMS)
     by_cap: dict[int, list[str]] = {}
     for d in sorted(capped):
         by_cap.setdefault(c.cap(d), []).append(DAY_NAMES[d.weekday()])
@@ -1032,7 +1046,10 @@ def _around_own(c: Constraints, mine: dict[str, dict], week: dict) -> Constraint
         long_day = -1
     elif long_day in taken:
         long_day = min(free, key=lambda d: (d < 5, abs(d - c.long_day), -d), default=-1)
-    return replace(c, days=free, long_day=long_day)
+    limits = {d: dict(v) for d, v in c.date_limits.items()}
+    for d in mine:
+        limits[d] = {**limits.get(d, {}), "minutes": 0}
+    return replace(c, days=free, long_day=long_day, date_limits=limits)
 
 
 def _own_kind(kind: str, week: dict) -> str:
@@ -1056,7 +1073,7 @@ def upcoming_sessions(plan: dict, acts: list[dict], today: date, days: int = 7,
 
     A missed run isn't piled onto the days left: each session ahead stays within MAKEUP of the
     same kind of session in the week's full plan, and the week comes in under target instead."""
-    own = own or {}
+    own = {**plan.get("session_overrides", {}), **(own or {})}
     c = Constraints.from_json(plan["constraints"])
     obj = plan["objective"]
     obj_day = date.fromisoformat(obj["day"])
@@ -1107,8 +1124,11 @@ def upcoming_sessions(plan: dict, acts: list[dict], today: date, days: int = 7,
             for s in ss:
                 r = mine.get(s["day"])
                 if r is not None:
-                    s.update(kind=_own_kind(r["kind"], w), miles=r["miles"], gain_ft=r["gain_ft"], loss_ft=r["loss_ft"],
+                    s.update(kind=r["kind"] if r.get("revision") else _own_kind(r["kind"], w), miles=r["miles"], gain_ft=r["gain_ft"], loss_ft=r["loss_ft"],
                              minutes=r.get("minutes") or effort_miles(r["miles"], r["gain_ft"]) * pace_min, own=True)
+                    if r.get("revision"):
+                        s.update(revision=True, change_reason=r.get("change_reason"))
+                        s.update({k: r[k] for k in ("type", "strength", "night", "race", "longest_descent_ft") if k in r})
                 elif s["kind"] != "rest" and s["miles"] < MIN_SESSION_MI and s["gain_ft"] < MIN_SESSION_FT:
                     # What's done and your own runs all but cover the week: a scrap of a run isn't worth it.
                     s.update(kind="rest", miles=0.0, gain_ft=0.0, loss_ft=0.0, minutes=0.0)
@@ -1121,6 +1141,9 @@ def upcoming_sessions(plan: dict, acts: list[dict], today: date, days: int = 7,
                     elif w.get("long") and w["long"].get("longest_descent_ft"):
                         s["longest_descent_ft"] = min(s["loss_ft"], w["long"]["longest_descent_ft"])
             type_week(ss, w, c)
+            for s in ss:
+                if s.get("revision"):
+                    s["own"] = False
             weeks[w["start"]] = {s["day"]: s for s in ss}
         s = dict(weeks[w["start"]][day.isoformat()])
         if day == obj_day and event:
@@ -1208,6 +1231,8 @@ def adapt(plan: dict, acts: list[dict], today: date, own: dict[str, dict] | None
     for i, w in enumerate(weeks[:-1]):
         start = date.fromisoformat(w["start"])
         nxt = weeks[i + 1]
+        if nxt["start"] in plan.get("revision_weeks", []):
+            continue
         if start < monday - timedelta(weeks=1) or (w["start"] not in edited and start != monday):
             continue
         if nxt["focus"] == "race" or date.fromisoformat(nxt["start"]) < monday:

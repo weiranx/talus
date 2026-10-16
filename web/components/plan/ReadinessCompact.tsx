@@ -9,8 +9,8 @@ const UNIT: Record<string, string> = {
 
 // Readiness in one glance: the verdict, the limiter in a sentence, and one line per dimension
 // with where you are now and where the plan takes you.
-export default function ReadinessCompact({ r, projected, note }: {
-  r: NonNullable<PlanPage["readiness"]>; projected: ReadinessEval | null; note: string;
+export default function ReadinessCompact({ r, projected, note, projectionCurrent = true }: {
+  r: NonNullable<PlanPage["readiness"]>; projected: ReadinessEval | null; note: string; projectionCurrent?: boolean;
 }) {
   const proj = new Map(projected?.dims.map((d) => [d.key, d]) ?? []);
   const limiter = r.dims.find((d) => d.key === r.limiter);
@@ -19,7 +19,7 @@ export default function ReadinessCompact({ r, projected, note }: {
     <section className="card" style={{ gap: 10 }}>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8 }}>
         <h2 className="label">Ready on the day?</h2>
-        <Pill tone={STATUS_TONE[verdict]}>{verdict === "ready" ? "On track" : verdict === "close" ? "Close" : "Gaps left"}</Pill>
+        <Pill tone={projectionCurrent ? STATUS_TONE[verdict] : "warn"}>{!projectionCurrent ? "Needs an updated draft" : verdict === "ready" ? "Conditional on the plan" : verdict === "close" ? "Close" : "Gaps left"}</Pill>
       </div>
       {limiter ? (
         <div style={{ fontSize: 14 }}>
@@ -29,7 +29,7 @@ export default function ReadinessCompact({ r, projected, note }: {
       ) : null}
       <div style={{ display: "flex", flexDirection: "column" }}>
         <div style={{ display: "grid", gridTemplateColumns: "1fr auto auto", gap: 8, fontSize: 12 }} className="muted">
-          <span /><span style={{ width: 72 }}>Now</span><span style={{ width: 72 }}>On the plan</span>
+          <span /><span style={{ width: 72 }}>Now</span><span style={{ width: 72 }}>{projectionCurrent ? "If completed" : "Original plan"}</span>
         </div>
         {r.dims.map((d) => {
           const p = proj.get(d.key);
@@ -38,7 +38,8 @@ export default function ReadinessCompact({ r, projected, note }: {
               <div style={{ minWidth: 0 }}>
                 <div style={{ fontSize: 14 }}>{d.name}</div>
                 <div className="muted mono" style={{ fontSize: 12 }}>
-                  {d.demand == null ? `${dimValue(d, d.capacity)} ${UNIT[d.key]}` : `${dimValue(d, d.capacity)} of ${dimValue(d, d.demand)} ${UNIT[d.key]}`}
+                  {d.key === "altitude" ? `${d.capacity.toFixed(1)} h above 8,000 ft${d.demand == null ? "" : ` · objective ${Math.round(d.demand).toLocaleString()} ft`}` :
+                    d.demand == null ? `${dimValue(d, d.capacity)} ${UNIT[d.key]}` : `${dimValue(d, d.capacity)} of ${dimValue(d, d.demand)} ${UNIT[d.key]}`}
                 </div>
               </div>
               <span style={{ width: 72 }}><Pill tone={STATUS_TONE[d.status]}>{d.status_text}</Pill></span>
@@ -48,6 +49,7 @@ export default function ReadinessCompact({ r, projected, note }: {
         })}
       </div>
       <div className="muted" style={{ fontSize: 12 }}>
+        {projectionCurrent ? "Projection assumes you complete and recover from the planned training. " : "Calendar adjustments changed the training behind this projection. Rebuild a draft to update it. "}
         Estimated time {hours(r.demand.time.low_h)} to {hours(r.demand.time.high_h)}. {note}
       </div>
     </section>

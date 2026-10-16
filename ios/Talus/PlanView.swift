@@ -57,8 +57,9 @@ private struct PlanScreen: View {
                     NextRunCard(sessions: p.sessions, today: p.date)
                     if let w = p.thisWeek { ThisWeekCard(w: w) }
                     CalendarCard(initial: b.schedule, compact: true, onChange: reload)
+                    PlanCoachingCard(onChange: reload, calendar: b.schedule)
                     RoadCard(obj: obj, plan: accepted, current: PlanScreen.weekStart(p.date), actuals: p.actuals ?? [:])
-                    if let r = p.readiness, let pr = accepted.projected { ReadinessPlanCard(r: r, projected: pr, note: p.fitnessOnly) }
+                    if let r = p.readiness, let pr = accepted.projected { ReadinessPlanCard(r: r, projected: pr, note: p.fitnessOnly, projectionCurrent: accepted.projectionCurrent ?? true) }
                     Card {
                         SectionLabel("Coach")
                         CoachPlanSection()
@@ -795,6 +796,7 @@ private struct ReadinessPlanCard: View {
     let r: PlanReadiness
     let projected: ReadinessEval?
     let note: String
+    var projectionCurrent = true
 
     var body: some View {
         let proj = Dictionary(uniqueKeysWithValues: (projected?.dims ?? []).map { ($0.key, $0) })
@@ -803,7 +805,7 @@ private struct ReadinessPlanCard: View {
             HStack {
                 SectionLabel("Ready on the day?")
                 Spacer()
-                Pill(text: verdict == "ready" ? "On track" : verdict == "close" ? "Close" : "Gaps left", tone: PlanText.status(verdict))
+                Pill(text: !projectionCurrent ? "Update projection" : verdict == "ready" ? "Conditional on plan" : verdict == "close" ? "Close" : "Gaps left", tone: projectionCurrent ? PlanText.status(verdict) : .warn)
             }
             if let lim = r.dims.first(where: { $0.key == r.limiter }) {
                 (Text("Furthest behind now: \(lim.name.lowercased()). ").bold()
@@ -813,7 +815,7 @@ private struct ReadinessPlanCard: View {
             HStack {
                 Spacer()
                 Text("Now").frame(width: 76, alignment: .leading)
-                Text("On the plan").frame(width: 76, alignment: .leading)
+                Text(projectionCurrent ? "If completed" : "Original plan").frame(width: 76, alignment: .leading)
             }
             .font(.caption2).foregroundStyle(.secondary)
             ForEach(r.dims, id: \.key) { d in
@@ -821,7 +823,7 @@ private struct ReadinessPlanCard: View {
                 HStack(alignment: .center) {
                     VStack(alignment: .leading, spacing: 2) {
                         Text(d.name).font(.subheadline)
-                        Text(d.demand == nil ? "\(PlanText.dimValue(d, d.capacity)) \(PlanText.dimUnit[d.key] ?? "")"
+                        Text(d.key == "altitude" ? "\(String(format: "%.1f", d.capacity)) h above 8,000 ft\(d.demand.map { " · objective \(Fmt.n0($0)) ft" } ?? "")" : d.demand == nil ? "\(PlanText.dimValue(d, d.capacity)) \(PlanText.dimUnit[d.key] ?? "")"
                              : "\(PlanText.dimValue(d, d.capacity)) of \(PlanText.dimValue(d, d.demand)) \(PlanText.dimUnit[d.key] ?? "")")
                             .font(.caption.monospacedDigit()).foregroundStyle(.secondary)
                     }
@@ -834,6 +836,8 @@ private struct ReadinessPlanCard: View {
                 }
             }
             Text("Estimated time \(PlanText.hours(r.demand.time.lowH)) to \(PlanText.hours(r.demand.time.highH)). \(note)")
+                .font(.caption).foregroundStyle(.secondary)
+            Text(projectionCurrent ? "Projection assumes you complete and recover from the planned training." : "Calendar adjustments changed this projection's training. Rebuild a draft to update it.")
                 .font(.caption).foregroundStyle(.secondary)
         }
     }
@@ -880,6 +884,10 @@ private struct ReviewSection: View {
             if !review.flags.isEmpty {
                 Text("Flags: \(review.flags.map { "\($0.ledger) \($0.text.lowercased())" }.joined(separator: "; ")).")
                     .font(.subheadline).foregroundStyle(.secondary)
+            }
+            if let o = review.outcomes {
+                Text("Workout purpose, as reported: \(o.met) met · \(o.partial) partial · \(o.missed) missed. Unreported sessions remain unknown.")
+                    .font(.caption).foregroundStyle(.secondary)
             }
             if let r {
                 CoachText(text: r.reply.week)

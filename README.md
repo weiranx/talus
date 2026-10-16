@@ -205,3 +205,17 @@ This flow requires the engine on the same computer as the browser because OpenAI
 returns to a temporary loopback listener. Hosted and iPhone-native authorization need
 a separate approved integration; do not enable the local flag on a remote server.
 See [OpenAI's integration guide](https://developers.openai.com/siwc/token-sharing-open-source/sign-in).
+
+### Coach plan tools
+
+After accepting a plan, **Coach plan tools** on Plan (web and iPhone) provides:
+
+- **Revise this week:** choose a date and why training changed. Schedule and terrain changes can move a key session within its week when time, terrain and recovery spacing fit. Difficult workouts and sore legs replace upcoming work with shorter easy sessions; a high-pain check-in requires rest. Remaining weekly volume never increases, and the engine checks the proposed dates against its load ledgers.
+- **Review and undo:** compare each changed session and the remaining weekly totals before accepting. Acceptance holds the exact reviewed sessions and full-week targets. A changed calendar, check-in, activity or feedback invalidates a pending preview. Undo restores the prior plan and availability while no intervening changes have occurred; otherwise, create a new preview to preserve the newer work.
+- **Availability:** set minutes, terrain access and fixed sessions by date or a range of up to 60 days, within the coming year. Zero minutes represents travel or a day off. Remove an exception to restore the recurring calendar. Your own scheduled sessions remain protected; edit them first if they conflict with new availability.
+- **Workout purpose:** review intended versus completed training and report whether the session met its purpose, optional effort from 1 to 10, and what affected it. New plan/calendar mutations save dated intent snapshots. Older plans explicitly use a weekly reference. Feedback feeds weekly reviews and future coach drafts; unreported intent and effort stay unknown.
+- **Plan evidence:** see history coverage, freshness, missing evidence, assumptions and the next key-session/recovery milestone. Readiness is conditional on completing and recovering from the plan. Calendar revisions mark the original projection as needing an updated draft.
+
+The shared API is `GET /api/plan/coaching`, `POST /api/plan/revisions`,
+`POST /api/plan/revisions/{id}/accept` or `/undo`, and `PUT /api/plan/outcomes`.
+Revisions and workout outcomes are stored in each account's own SQLite database.

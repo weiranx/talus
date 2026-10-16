@@ -480,6 +480,7 @@ export type Workout = "none" | "track" | "tempo" | "hill_repeats" | "race_pace" 
 export type HillSession = "vert_climb" | "power_hike" | "downhill" | "muscular_endurance" | "hill_sprints";
 
 export interface Constraints {
+  date_limits?: Record<string, import("./plan-coaching").DateAvailability>;
   days: number[]; weekday_min: number; weekend_min: number; long_day: number; notes: string;
   back_to_back?: boolean; workout?: Workout;
   // The workouts picked, taking turns through the build. null: not picked, so the plan type's defaults.
@@ -529,6 +530,7 @@ export interface WeekBrief { focus: Focus; miles: number; gain_ft: number; loss_
 export interface Vol3 { miles: number; gain_ft: number; loss_ft: number }
 
 export interface Plan {
+  projection_current?: boolean;
   id: number;
   status: "draft" | "accepted";
   reason: string;
@@ -590,6 +592,7 @@ export interface PlanSession {
 }
 
 export interface WeekReview {
+  outcomes?: { reported: number; met: number; partial: number; missed: number; effort_average: number | null; sessions: import("./plan-coaching").WorkoutOutcome[] };
   start: string;
   end: string;
   actual: { activities: number; miles: number; gain_ft: number; loss_ft: number; hours: number; below_aet_pct: number | null; longest_day_effort_mi: number };

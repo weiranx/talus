@@ -143,6 +143,19 @@ CREATE TABLE IF NOT EXISTS planned_run (
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS plan_revision (
+    id INTEGER PRIMARY KEY,
+    plan_id INTEGER NOT NULL,
+    status TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    body TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS workout_outcome (
+    day TEXT PRIMARY KEY,
+    plan_id INTEGER NOT NULL,
+    body TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
 CREATE TABLE IF NOT EXISTS chat (
     id INTEGER PRIMARY KEY,
     created_at TEXT NOT NULL,
@@ -691,6 +704,40 @@ class Store:
         rows = self.db.execute("SELECT pain FROM daily_health WHERE day BETWEEN ? AND ? AND pain IS NOT NULL",
                                (since.isoformat(), until.isoformat())).fetchall()
         return [r["pain"] for r in rows]
+
+    def plan_revision(self, revision_id: int) -> dict | None:
+        r = self.db.execute("SELECT * FROM plan_revision WHERE id = ?", (revision_id,)).fetchone()
+        return None if r is None else dict(r) | {"body": json.loads(r["body"])}
+
+    @_writes
+    def save_plan_revision(self, plan_id: int, body: dict) -> int:
+        cur = self.db.execute("INSERT INTO plan_revision (plan_id, status, created_at, body) VALUES (?, 'preview', ?, ?)",
+                              (plan_id, datetime.now().isoformat(timespec="seconds"), json.dumps(body)))
+        return cur.lastrowid
+
+    def latest_plan_revision(self, plan_id: int) -> int | None:
+        r = self.db.execute("SELECT id FROM plan_revision WHERE plan_id = ? AND status = 'accepted' ORDER BY id DESC LIMIT 1",
+                            (plan_id,)).fetchone()
+        return r["id"] if r else None
+
+    @_writes
+    def replace_accepted(self, plan_id: int, body: dict) -> bool:
+        return self.db.execute("UPDATE plan SET body = ? WHERE id = ? AND status = 'accepted'",
+                               (json.dumps(body), plan_id)).rowcount == 1
+
+    @_writes
+    def update_plan_revision(self, revision_id: int, status: str, body: dict) -> None:
+        self.db.execute("UPDATE plan_revision SET status = ?, body = ? WHERE id = ?",
+                        (status, json.dumps(body), revision_id))
+
+    def workout_outcomes(self, since: date, until: date) -> list[dict]:
+        return [json.loads(r["body"]) for r in self.db.execute(
+            "SELECT body FROM workout_outcome WHERE day BETWEEN ? AND ? ORDER BY day", (since.isoformat(), until.isoformat()))]
+
+    @_writes
+    def save_workout_outcome(self, day: date, plan_id: int, body: dict) -> None:
+        self.db.execute("INSERT OR REPLACE INTO workout_outcome VALUES (?, ?, ?, ?)",
+                        (day.isoformat(), plan_id, json.dumps(body), datetime.now().isoformat(timespec="seconds")))
 
     # Coach chat
     def chat(self, limit: int = 50) -> list[dict]:

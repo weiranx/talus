@@ -1,0 +1,101 @@
+{
+  "id": 3,
+  "reason": "availability",
+  "changes": [
+    {
+      "day": "2026-10-17",
+      "before": {
+        "kind": "long",
+        "miles": 9.907346593141547,
+        "gain_ft": 1768.7007873945006,
+        "loss_ft": 1767.2244094417508,
+        "minutes": 73.56030879200011,
+        "day": "2026-10-17"
+      },
+      "after": {
+        "kind": "rest",
+        "miles": 0.0,
+        "gain_ft": 0.0,
+        "loss_ft": 0.0,
+        "minutes": 0.0,
+        "day": "2026-10-17"
+      },
+      "why": "Make room for the key workout on 2026-10-18."
+    },
+    {
+      "day": "2026-10-18",
+      "before": {
+        "kind": "easy",
+        "miles": 3.632693750818567,
+        "gain_ft": 648.5236220446502,
+        "loss_ft": 647.9822834619753,
+        "minutes": 26.972113223733373,
+        "day": "2026-10-18"
+      },
+      "after": {
+        "kind": "long",
+        "miles": 9.907346593141547,
+        "gain_ft": 1768.7007873945006,
+        "loss_ft": 1767.2244094417508,
+        "minutes": 73.56030879200011,
+        "day": "2026-10-18"
+      },
+      "why": "Move the key workout from 2026-10-17 with recovery space."
+    }
+  ],
+  "weeks": [
+    {
+      "start": "2026-10-12",
+      "before": {
+        "miles": 13.54,
+        "gain_ft": 2417.22,
+        "loss_ft": 2415.21,
+        "minutes": 100.53
+      },
+      "after": {
+        "miles": 9.91,
+        "gain_ft": 1768.7,
+        "loss_ft": 1767.22,
+        "minutes": 73.56
+      }
+    },
+    {
+      "start": "2026-10-19",
+      "before": {
+        "miles": 26.02,
+        "gain_ft": 5154.75,
+        "loss_ft": 5150.45,
+        "minutes": 198.55
+      },
+      "after": {
+        "miles": 26.02,
+        "gain_ft": 5154.75,
+        "loss_ft": 5150.45,
+        "minutes": 198.55
+      }
+    },
+    {
+      "start": "2026-10-26",
+      "before": {
+        "miles": 8.59,
+        "gain_ft": 1650.79,
+        "loss_ft": 1649.41,
+        "minutes": 65.03
+      },
+      "after": {
+        "miles": 8.59,
+        "gain_ft": 1650.79,
+        "loss_ft": 1649.41,
+        "minutes": 65.03
+      }
+    }
+  ],
+  "impact": "The weekly totals shown cover the remaining sessions. Reduced work is left out; later progress depends on completing and recovering from the revised sessions. Mountain-specific or long-day practice changed; check that milestone before relying on the original readiness projection.",
+  "availability": {
+    "2026-10-17": {
+      "minutes": 30,
+      "terrain": "flat",
+      "locked": false
+    }
+  }
+}

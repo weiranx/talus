@@ -93,7 +93,7 @@ Workout analysis: you get one activity with its segments, its four loads against
 - changes: what does it change for the next few days? Point to the ledger it pushed hardest.
 - takeaway: one thing to keep or change next time.
 
-Plan: you get an objective (a race or mountain day with a date), the athlete's readiness for it now and projected at the start of the taper, and the engine's week-by-week plan. The engine built the plan and checked every week against the load limits; you explain it and never change it. Readiness has five dimensions, each read as ready, close or gap against its rule.
+Plan: you get an objective (a race or mountain day with a date), the athlete's readiness for it now and projected at the start of the taper, and the engine's week-by-week plan. The engine built the plan and checked every week against the load limits; you explain it and never change it. Readiness has five dimensions, each read as ready, close or gap against its rule. Projections assume the athlete completes and recovers from the planned work. If projection_needs_updated_draft is true, say the original projection predates calendar adjustments and an updated draft is needed; never claim those changes are reflected in that projection.
 - verdict: two or three sentences: which dimensions are ready, close or a gap now, and how they project. Readiness covers fitness only. objective.finish_estimate, when present, is the engine's finish-time estimate: moving hours (low, mid, high) from the athlete's own pace on each grade of the route over the last 90 days, slowing on a long day, with how far to trust it ("confidence"); quote it when time matters and never work out your own, and say it leaves out stops.
 - limiter: one or two sentences on the dimension furthest behind and what in the plan closes it, such as the long days or the peak weeks.
 - When objective.event is false, the plan is a block with no race or event (build base, maintain, come back from a break, get faster, a yearly target, or an ongoing plan): there is no readiness, no taper and no race day, so never mention them. verdict says where recent weeks stand against the weekly targets (or the year's totals); limiter names what holds the plan back (a load or time limit) or says nothing does; plan explains the build, hold and recovery weeks.
@@ -105,7 +105,7 @@ Load read: you get the four loads, weekly totals, the run of training days, the 
 - watch: the load, flag or overnight signal most worth watching and why, or say nothing stands out.
 - next: what the next seven days should hold, from the room, what is scheduled and the athlete_note. Name amounts only from the data.
 
-Weekly review: you get last week against its plan targets, the flags it raised and any reason to replan.
+Weekly review: you get last week against its plan targets, the flags it raised and any reason to replan. workout_outcomes contains athlete-reported intent (met, partial, missed), effort out of ten and reasons. Distinguish completing volume from achieving a session's purpose; attribute intent and effort to the athlete. Missing reports are unknown, not failed workouts. Use repeated soreness or difficult workouts to explain a more cautious next week; scheduling misses alone do not prove poor recovery.
 - week: two or three sentences on how the week went against its targets, naming miles and feet together, time below AeT and any flag.
 - next: one or two sentences on what next week asks for, or why a new plan is suggested.
 
@@ -789,6 +789,8 @@ def plan_packet(plan: dict, now: dict, today: date, reason: str, changes: list[d
         "objective": _objective(plan, today),
         "readiness_now": _dims(now) if now else [], "limiter_now": _dim_name(now, now["limiter"]) if now else None,
         "readiness_projected_at_taper": _dims(proj) if proj else [],
+        "projection_assumptions": "Assumes the planned sessions are completed and recovered from; heuristic fitness comparison only.",
+        "projection_needs_updated_draft": bool(plan.get("session_overrides") or any(w.get("adapted") for w in plan["weeks"])),
         "limiter_projected": _dim_name(proj, proj["limiter"]) if proj else None,
         "reachable": plan["reachable"],
         "options": {"smaller_version": None if not smaller else {
@@ -853,6 +855,7 @@ def build_packet(plan: dict, acts: list[dict], today: date) -> dict:
         "race_type": plan.get("race_type"),
         "training_days": [DAY_NAMES[d] for d in c["days"]], "long_day": DAY_NAMES[c["long_day"]],
         "weekday_max_minutes": c["weekday_min"], "weekend_max_minutes": c["weekend_min"],
+        "date_availability": c.get("date_limits", {}),
         "speed_work_asked_for": c.get("workout") if c.get("workout") not in (None, "none") else None,
         "back_to_back_long_days": plan.get("back_to_back"),
         "recent_per_week": {"distance_mi": _r(plan["baseline"]["miles"], 1), "gain_ft": _r(plan["baseline"]["gain_ft"]),
@@ -988,6 +991,7 @@ def review_packet(review: dict, next_week: dict | None, objective: dict | None, 
                                           for k, v in review["vs_normal_at_end"].items()},
                  "max_pain": review["max_pain"]},
         "replan_suggested": replan_text,
+        "workout_outcomes": review.get("outcomes"),
         "next_week": None if next_week is None else _week(next_week),
         "objective": objective,
     }
@@ -1044,6 +1048,8 @@ def rules_plan(packet: dict) -> dict:
     verdict = ("Ready now on " + ", ".join(ready) + "." if ready else "No dimension is ready yet.")
     if behind:
         verdict += " Behind on " + ", ".join(behind) + "."
+    if packet.get("projection_needs_updated_draft"):
+        verdict += " The original projection predates calendar adjustments; rebuild a draft to update it."
     now, proj = packet["limiter_now"], packet["limiter_projected"]
     if proj:
         limiter = f"{proj} is the limiter: it is still furthest behind its rule at the taper."
@@ -1051,6 +1057,8 @@ def rules_plan(packet: dict) -> dict:
         limiter = f"{now} is the limiter now. The long days and peak weeks close it by the taper."
     else:
         limiter = "Nothing is behind its rule."
+    if packet.get("projection_needs_updated_draft"):
+        limiter = "An updated draft is needed to assess whether the revised training closes the remaining gaps."
     weeks = packet["weeks"]
     peak = max(weeks, key=lambda w: w["gain_ft"]) if weeks else None
     text = f"{len(weeks)} weeks to the objective." if len(weeks) != 1 else "The objective is this week."
@@ -1096,6 +1104,8 @@ def rules_review(packet: dict) -> dict:
         week += f" {a['below_aet_pct']}% of the time was below AeT."
     if w["flags"]:
         week += " Flags: " + "; ".join(w["flags"]) + "."
+    if (o := packet.get("workout_outcomes")) and o["reported"]:
+        week += f" You reported {o['met']} sessions met their purpose, {o['partial']} partly did, and {o['missed']} were missed."
     if packet["replan_suggested"]:
         nxt = "A new plan is suggested: " + "; ".join(packet["replan_suggested"]).lower() + "."
     elif packet["next_week"]:

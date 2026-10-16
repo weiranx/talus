@@ -20,6 +20,7 @@ import PlanDetailProvider from "@/components/plan/PlanDetail";
 import ReadinessCompact from "@/components/plan/ReadinessCompact";
 import RoadChart from "@/components/plan/RoadChart";
 import ThisWeek from "@/components/plan/ThisWeek";
+import PlanCoaching from "@/components/plan/PlanCoaching";
 import WeeksTable from "@/components/plan/WeeksTable";
 import { engine, engineFailed } from "@/lib/api";
 import { dayLabel, mi, n0 } from "@/lib/format";
@@ -211,6 +212,7 @@ export default async function PlanPageView({ searchParams }: { searchParams: Pro
       </div>
 
       <Calendar initial={schedule} compact />
+      <PlanCoaching />
 
       <div className="row">
         <section className="card" style={{ flex: "3 1 420px", minWidth: 0 }}>
@@ -228,7 +230,7 @@ export default async function PlanPageView({ searchParams }: { searchParams: Pro
           <RoadChart weeks={p.accepted.weeks} current={weekStart(p.date)} actuals={p.actuals} />
         </section>
         <div style={{ flex: "2 1 320px", minWidth: 0, display: "flex", flexDirection: "column", gap: 16 }}>
-          {p.readiness && p.accepted.projected ? <ReadinessCompact r={p.readiness} projected={p.accepted.projected} note={p.fitness_only} /> : null}
+          {p.readiness && p.accepted.projected ? <ReadinessCompact r={p.readiness} projected={p.accepted.projected} note={p.fitness_only} projectionCurrent={p.accepted.projection_current} /> : null}
           {p.prediction ? <Prediction p={p.prediction} /> : null}
         </div>
       </div>

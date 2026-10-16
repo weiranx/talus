@@ -115,8 +115,7 @@ export default function Calendar({ initial, compact }: { initial: Schedule; comp
       return setError(typeof b?.detail === "string" ? b.detail : "Check the date and numbers.");
     }
     setForm(null);
-    await load(start);
-    router.refresh();
+    if (detail) detail.invalidate(); else { await load(start); router.refresh(); }
   }
 
   async function remove() {
@@ -127,7 +126,7 @@ export default function Calendar({ initial, compact }: { initial: Schedule; comp
     if (!res?.ok) return setError("Could not delete.");
     setForm(null);
     await load(start);
-    router.refresh();
+    if (detail) detail.invalidate(); else router.refresh();
   }
 
   const set = (k: keyof Form) => (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) =>

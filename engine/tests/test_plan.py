@@ -656,12 +656,20 @@ def test_the_coach_builds_the_weeks_and_the_engine_holds_them_to_its_limits():
                       [proposal[0] | {"miles": "lots"}] + proposal[1:])
 
 
-def test_drafts_are_built_by_the_coach_with_the_engine_as_fallback(tmp_path, monkeypatch):
+@pytest.mark.parametrize("terrain_ready", [False, True], ids=["pending-terrain", "ready-terrain"])
+def test_drafts_are_built_by_the_coach_with_the_engine_as_fallback(tmp_path, monkeypatch, terrain_ready):
+    # Cache reuse needs identical inputs. Read-ahead can otherwise add a finish estimate
+    # between requests, which correctly asks the coach again and consumes the rejection replies.
+    monkeypatch.setattr(api, "warm_details", lambda *a, **k: None)
     client = _setup(tmp_path, monkeypatch)
+    if terrain_ready:
+        for a in client.get("/api/activities?limit=200").json():
+            assert client.get(f"/api/activities/{a['id']}").status_code == 200
     day = (date.today() + timedelta(weeks=10)).isoformat()
     # Coach off: the engine builds the draft.
     draft = client.put("/api/plan/objective", json=OBJ | {"day": day}).json()["draft"]
     assert draft["builder"] == "engine" and draft["build_cost"] is None
+    assert (api.get_store().plan("draft")["finish_estimate"] is not None) == terrain_ready
     weeks = [{"start": w["start"], "focus": w["focus"], "miles": w["miles"], "gain_ft": w["gain_ft"],
               "loss_ft": w["loss_ft"], "workout": "tempo", "note": "Steady."} for w in draft["weeks"]]
     reply = {"approach": "Vert first, then miles, with a tempo run each week.", "weeks": weeks}
@@ -691,6 +699,41 @@ def test_drafts_are_built_by_the_coach_with_the_engine_as_fallback(tmp_path, mon
     assert client.get("/api/settings").json()["coach"]["ai_plans"] is False
     p = client.post("/api/plan/draft", json={"reason": "flag"}).json()["draft"]
     assert p["builder"] == "engine" and len(fake.calls) == 4
+
+
+def test_drafts_refresh_coach_replies_when_a_finish_estimate_becomes_available(tmp_path, monkeypatch):
+    # Advance the actual terrain cache explicitly instead of depending on thread timing.
+    monkeypatch.setattr(api, "warm_details", lambda *a, **k: None)
+    client = _setup(tmp_path, monkeypatch)
+    day = (date.today() + timedelta(weeks=10)).isoformat()
+    draft = client.put("/api/plan/objective", json=OBJ | {"day": day}).json()["draft"]
+    assert api.get_store().plan("draft")["finish_estimate"] is None
+    weeks = [{"start": w["start"], "focus": w["focus"], "miles": w["miles"], "gain_ft": w["gain_ft"],
+              "loss_ft": w["loss_ft"], "workout": "none", "note": "Steady."} for w in draft["weeks"]]
+    reply = {"approach": "Steady building.", "weeks": weeks}
+    fake = FakeClient(reply, CHECK_OK, reply, CHECK_OK)
+    monkeypatch.setattr(api, "coach_client", lambda: fake)
+
+    def request():
+        r = client.post("/api/plan/draft", json={"reason": "request"})
+        assert r.status_code == 200
+        p = r.json()["draft"]
+        assert p["builder"] == "coach" and p["check"]["ok"]
+        return api.get_store().plan("draft")
+
+    assert request()["finish_estimate"] is None
+    request()
+    assert len(fake.calls) == 2  # both builder and checker reuse their replies
+    before = [r["packet_hash"] for r in api.get_store().db.execute("SELECT packet_hash FROM coach_log ORDER BY id")]
+    for a in client.get("/api/activities?limit=200").json():
+        assert client.get(f"/api/activities/{a['id']}").status_code == 200
+    assert request()["finish_estimate"] is not None
+    assert len(fake.calls) == 4  # new evidence invalidates both cached replies
+    rows = api.get_store().db.execute("SELECT mode, packet_hash FROM coach_log ORDER BY id").fetchall()
+    assert [r["mode"] for r in rows] == ["build", "check", "build", "check"]
+    assert all(rows[i + 2]["packet_hash"] != before[i] for i in range(2))
+    request()
+    assert len(fake.calls) == 4  # unchanged evidence reuses the new replies
 
 
 def test_the_coach_checks_its_plan_and_the_engine_holds_the_revision(tmp_path, monkeypatch):

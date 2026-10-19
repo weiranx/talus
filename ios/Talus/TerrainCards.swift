@@ -151,75 +151,99 @@ struct DurabilityCard: View {
 
     var body: some View {
         Card {
-            HStack {
-                SectionLabel("Durability")
-                Spacer()
-                if let v = verdict { Pill(text: v.0, tone: v.1) }
-            }
-            if !summary.isEmpty { Text(summary).font(.subheadline).fixedSize(horizontal: false, vertical: true) }
-            // Each row's name sits above its two halves, so nothing truncates at phone width.
-            Grid(alignment: .trailing, horizontalSpacing: 12, verticalSpacing: 4) {
-                GridRow {
-                    Text("First half")
-                    Text("Second half")
-                }
+            SectionLabel("Durability")
+            Text(status).font(.headline)
+            Text(d.decouplingPct.map { $0 == 0 ? "Aerobic efficiency unchanged" : efficiencyLabel($0) } ?? "Not enough heart-rate evidence")
+                .font(.title2.weight(.semibold)).monospacedDigit()
+            Text(history).font(.subheadline).foregroundStyle(.secondary)
+            if let interpretation { Text(interpretation).font(.subheadline) }
+            Text("Comparison by moving-time halves").font(.caption).foregroundStyle(.secondary)
+            comparison(rows)
+            DisclosureGroup("Compare terrain and duration") {
+                comparison(contextRows)
+            }.font(.subheadline)
+            DisclosureGroup("How this is calculated") {
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("Aerobic efficiency compares grade-adjusted speed per heartbeat between moving-time halves. A positive drop means lower efficiency in the second half; a gain means higher efficiency. Talus labels a drop below 5% as steady, 5% to below 10% as declined, and 10% or more as substantially declined. This assesses aerobic efficiency, not overall durability.")
+                    Text("Grade-adjusted pace estimates equivalent flat-ground pace based on slope. It does not fully account for terrain or conditions. The first 10 moving minutes are excluded from first-half heart rate and efficiency, but included in the displayed pace and duration, so the table alone will not reproduce the efficiency result.")
+                    Text("The recent median uses activities of the same type in the prior 90 days with an efficiency measurement; these are not matched by duration.")
+                }.font(.caption).foregroundStyle(.secondary)
+            }.font(.subheadline)
+        }
+    }
+
+    private func comparison(_ values: [(String, String, String, String)]) -> some View {
+        Grid(alignment: .trailing, horizontalSpacing: 12, verticalSpacing: 6) {
+            GridRow { Text("First half"); Text("Second half") }
                 .font(.caption.weight(.semibold)).foregroundStyle(.secondary)
-                ForEach(rows, id: \.0) { k, a, b in
-                    GridRow {
-                        Text(k).font(.subheadline).foregroundStyle(.secondary)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .gridCellColumns(2)
-                    }
-                    .padding(.top, 4)
-                    GridRow {
-                        Text(a)
-                        Text(b)
-                    }
+            ForEach(values, id: \.0) { label, first, second, change in
+                GridRow {
+                    Text(label).font(.subheadline).foregroundStyle(.secondary)
+                        .frame(maxWidth: .infinity, alignment: .leading).gridCellColumns(2)
+                }.padding(.top, 6)
+                GridRow { Text(first); Text(second) }
                     .font(.subheadline.monospacedDigit())
                     .frame(maxWidth: .infinity, alignment: .trailing)
+                if !change.isEmpty {
+                    GridRow {
+                        Text("Change: \(change)").font(.caption).foregroundStyle(.secondary)
+                            .frame(maxWidth: .infinity, alignment: .leading).gridCellColumns(2)
+                    }
                 }
             }
-            Text("Grade-adjusted pace (\(Fmt.pace(d.flatPaceMinMi)) /mi overall) is what each mile would have been on the flat for the same heart rate, so climbing out and running home compare fairly. The first 10 minutes are left out of the heart-rate read while it warms up.")
-                .font(.caption).foregroundStyle(.secondary)
         }
     }
 
-    private var verdict: (String, Tone)? {
-        switch d.verdict {
-        case "held": ("Held", .good)
-        case "drifted": ("Drifted", .warn)
-        case "faded": ("Faded", .bad)
-        default: nil
-        }
+    private func efficiencyLabel(_ value: Double) -> String {
+        "\(Fmt.plain(abs(value)))% efficiency \(value < 0 ? "gain" : "drop")"
     }
-
-    private var rows: [(String, String, String)] {
+    private func movingTime(_ seconds: Double) -> String {
+        let minutes = Int((seconds / 60).rounded())
+        return "\(minutes / 60)h \(minutes % 60)m"
+    }
+    private var status: String {
+        guard let v = d.decouplingPct else { return "Aerobic efficiency unavailable" }
+        return v < 5 ? "Aerobic effort held steady" : v < 10 ? "Aerobic efficiency declined" : "Aerobic efficiency declined substantially"
+    }
+    private var history: String {
+        guard let v = d.usualDecouplingPct else { return "Recent median unavailable: not enough comparable activity history." }
+        return "Recent median: \(efficiencyLabel(v)) across \(d.usualRuns) activities of the same type in the prior 90 days."
+    }
+    private var interpretation: String? {
+        guard let x = d.first.flatPaceMinMi, let y = d.second.flatPaceMinMi,
+              let h = d.first.avgHr, let j = d.second.avgHr else { return nil }
+        let pace = y > x ? "slowed" : y < x ? "quickened" : "held steady"
+        let hr = j < h ? "fell" : j > h ? "rose" : "held steady"
+        let steady = d.decouplingPct.map { abs($0) < 5 } ?? false
+        return "Grade-adjusted pace \(pace) while average heart rate \(hr)." + (steady ? " Aerobic efficiency was nearly unchanged." : "")
+    }
+    private var rows: [(String, String, String, String)] {
         let a = d.first, b = d.second
-        var rows = [
-            ("Distance and vert", "\(Fmt.mi(a.distanceMi)) mi, +\(Fmt.n0(a.gainFt)) ft", "\(Fmt.mi(b.distanceMi)) mi, +\(Fmt.n0(b.gainFt)) ft"),
-            ("Moving time", Fmt.duration(a.timeS), Fmt.duration(b.timeS)),
-            ("Grade-adjusted pace", "\(Fmt.pace(a.flatPaceMinMi)) /mi", "\(Fmt.pace(b.flatPaceMinMi)) /mi"),
+        var paceChange = "Unavailable"
+        if let x = a.flatPaceMinMi, let y = b.flatPaceMinMi {
+            let delta = Int((y * 60).rounded()) - Int((x * 60).rounded())
+            paceChange = delta == 0 ? "Unchanged" : "\(abs(delta)) sec/mi \(delta > 0 ? "slower" : "faster")"
+        }
+        let pace: (Double?) -> String = { $0.map { "\(Fmt.pace($0))/mi" } ?? "Unavailable" }
+        let hr: (Double?) -> String = { $0.map { "\(Int($0.rounded())) bpm" } ?? "Unavailable" }
+        let climb: (Double?) -> String = { $0.map { "\(Fmt.n0($0)) ft/h" } ?? "Unavailable" }
+        var hrChange = "Unavailable", climbChange = "Unavailable"
+        if let x = a.avgHr, let y = b.avgHr { hrChange = "\(Fmt.signedPlain(y.rounded() - x.rounded())) bpm" }
+        if let x = a.climbRateFtH, let y = b.climbRateFtH, x > 0 {
+            climbChange = "\(Fmt.signedPlain(((y / x - 1) * 100).rounded()))%"
+        }
+        return [
+            ("Grade-adjusted pace", pace(a.flatPaceMinMi), pace(b.flatPaceMinMi), paceChange),
+            ("Average heart rate", hr(a.avgHr), hr(b.avgHr), hrChange),
+            ("Uphill speed · grades ≥8%", climb(a.climbRateFtH), climb(b.climbRateFtH), climbChange),
         ]
-        if let x = a.climbRateFtH, let y = b.climbRateFtH, x > 0, y > 0 {
-            rows.append(("Climbing over 8%", "\(Fmt.n0(x)) ft/h", "\(Fmt.n0(y)) ft/h"))
-        }
-        if let x = a.avgHr, let y = b.avgHr, x > 0, y > 0 {
-            rows.append(("Average HR", "\(Int(x.rounded()))", "\(Int(y.rounded()))"))
-        }
-        return rows
     }
-
-    private var summary: String {
-        if let drift = d.decouplingPct {
-            let usual = d.usualDecouplingPct.map { " Your usual on runs this long is \(Fmt.signedPlain($0))%." } ?? ""
-            if drift <= 0 { return "No drift: heart rate held or fell against grade-adjusted pace (\(Fmt.signedPlain(drift))%).\(usual)" }
-            return "Heart rate drifted \(Fmt.plain(drift))% against grade-adjusted pace. Under 5% is a held aerobic effort; over 10% is a fade.\(usual)"
-        }
-        if let p = d.paceChangePct {
-            return p > 0
-                ? "Grade-adjusted pace slowed \(Fmt.plain(p))% in the second half. No heart rate, so drift can't be read."
-                : "Grade-adjusted pace held or got quicker in the second half (\(Fmt.signedPlain(p))%)."
-        }
-        return ""
+    private var contextRows: [(String, String, String, String)] {
+        let a = d.first, b = d.second
+        return [
+            ("Distance", "\(Fmt.mi(a.distanceMi)) mi", "\(Fmt.mi(b.distanceMi)) mi", ""),
+            ("Elevation gain", "\(Fmt.n0(a.gainFt)) ft", "\(Fmt.n0(b.gainFt)) ft", ""),
+            ("Moving time", movingTime(a.timeS), movingTime(b.timeS), ""),
+        ]
     }
 }

@@ -108,61 +108,72 @@ export function GradeCard({ t, footer }: { t: Terrain; footer?: ReactNode }) {
   );
 }
 
-const VERDICT = {
-  held: { tone: "good", text: "Held" },
-  drifted: { tone: "warn", text: "Drifted" },
-  faded: { tone: "bad", text: "Faded" },
-} as const;
+const efficiencyLabel = (value: number) => `${Math.abs(value)}% efficiency ${value < 0 ? "gain" : "drop"}`;
+const movingTime = (seconds: number) => {
+  const minutes = Math.round(seconds / 60);
+  return `${Math.floor(minutes / 60)}h ${minutes % 60}m`;
+};
+const paceValue = (value: number | null) => value == null ? "Unavailable" : `${pace(value)}/mi`;
 
-function halfRows(a: DurabilityHalf, b: DurabilityHalf): [string, string, string][] {
-  const rows: [string, string, string][] = [
-    ["Distance and vert", `${mi(a.distance_mi)} mi, +${n0(a.gain_ft)} ft`, `${mi(b.distance_mi)} mi, +${n0(b.gain_ft)} ft`],
-    ["Moving time", duration(a.time_s), duration(b.time_s)],
-    ["Grade-adjusted pace", `${pace(a.flat_pace_min_mi)} /mi`, `${pace(b.flat_pace_min_mi)} /mi`],
+function comparisonRows(a: DurabilityHalf, b: DurabilityHalf): [string, string, string, string][] {
+  const delta = a.flat_pace_min_mi != null && b.flat_pace_min_mi != null
+    ? Math.round(b.flat_pace_min_mi * 60) - Math.round(a.flat_pace_min_mi * 60) : null;
+  const hr = (v: number | null) => v == null ? "Unavailable" : `${Math.round(v)} bpm`;
+  const climb = (v: number | null) => v == null ? "Unavailable" : `${n0(v)} ft/h`;
+  return [
+    ["Grade-adjusted pace", paceValue(a.flat_pace_min_mi), paceValue(b.flat_pace_min_mi),
+      delta == null ? "Unavailable" : delta === 0 ? "Unchanged" : `${Math.abs(delta)} sec/mi ${delta > 0 ? "slower" : "faster"}`],
+    ["Average heart rate", hr(a.avg_hr), hr(b.avg_hr), a.avg_hr == null || b.avg_hr == null ? "Unavailable" : `${signed(Math.round(b.avg_hr) - Math.round(a.avg_hr))} bpm`],
+    ["Uphill speed · grades ≥8%", climb(a.climb_rate_ft_h), climb(b.climb_rate_ft_h),
+      a.climb_rate_ft_h == null || a.climb_rate_ft_h <= 0 || b.climb_rate_ft_h == null ? "Unavailable" : `${signed(Math.round((b.climb_rate_ft_h / a.climb_rate_ft_h - 1) * 100))}%`],
   ];
-  if (a.climb_rate_ft_h && b.climb_rate_ft_h) rows.push(["Climbing over 8%", `${n0(a.climb_rate_ft_h)} ft/h`, `${n0(b.climb_rate_ft_h)} ft/h`]);
-  if (a.avg_hr && b.avg_hr) rows.push(["Average HR", `${Math.round(a.avg_hr)}`, `${Math.round(b.avg_hr)}`]);
-  return rows;
-}
-
-function summary(d: Durability): string {
-  if (d.decoupling_pct != null) {
-    const usual = d.usual_decoupling_pct != null ? ` Your usual on runs this long is ${signed(d.usual_decoupling_pct)}%.` : "";
-    if (d.decoupling_pct <= 0) return `No drift: heart rate held or fell against grade-adjusted pace (${signed(d.decoupling_pct)}%).${usual}`;
-    return `Heart rate drifted ${d.decoupling_pct}% against grade-adjusted pace. Under 5% is a held aerobic effort; over 10% is a fade.${usual}`;
-  }
-  if (d.pace_change_pct != null) {
-    return d.pace_change_pct > 0
-      ? `Grade-adjusted pace slowed ${d.pace_change_pct}% in the second half. No heart rate, so drift can't be read.`
-      : `Grade-adjusted pace held or got quicker in the second half (${signed(d.pace_change_pct)}%).`;
-  }
-  return "";
 }
 
 export function DurabilityCard({ d }: { d: Durability }) {
-  const v = d.verdict ? VERDICT[d.verdict] : null;
+  const drift = d.decoupling_pct;
+  const status = drift == null ? "Aerobic efficiency unavailable" : drift < 5 ? "Aerobic effort held steady" : drift < 10 ? "Aerobic efficiency declined" : "Aerobic efficiency declined substantially";
+  const a = d.first, b = d.second;
+  const paceDirection = a.flat_pace_min_mi == null || b.flat_pace_min_mi == null ? null : b.flat_pace_min_mi > a.flat_pace_min_mi ? "slowed" : b.flat_pace_min_mi < a.flat_pace_min_mi ? "quickened" : "held steady";
+  const hrDirection = a.avg_hr == null || b.avg_hr == null ? null : b.avg_hr < a.avg_hr ? "fell" : b.avg_hr > a.avg_hr ? "rose" : "held steady";
   return (
     <section className="card">
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
-        <h2 className="label">Durability</h2>
-        {v ? <Pill tone={v.tone}>{v.text}</Pill> : null}
-      </div>
-      <div>{summary(d)}</div>
-      <div className="table-wrap">
-        <table>
-          <thead>
-            <tr><th scope="col" /><th scope="col" className="num">First half</th><th scope="col" className="num">Second half</th></tr>
-          </thead>
-          <tbody>
-            {halfRows(d.first, d.second).map(([k, a, b]) => (
-              <tr key={k}><td>{k}</td><td className="num">{a}</td><td className="num">{b}</td></tr>
-            ))}
-          </tbody>
-        </table>
+      <h2 className="label">Durability</h2>
+      <div style={{ fontWeight: 600 }}>{status}</div>
+      <div style={{ fontSize: "clamp(1.5rem, 4vw, 2rem)", fontWeight: 650, fontVariantNumeric: "tabular-nums" }}>
+        {drift == null ? "Not enough heart-rate evidence" : drift === 0 ? "Aerobic efficiency unchanged" : efficiencyLabel(drift)}
       </div>
       <div className="muted">
-        Grade-adjusted pace ({pace(d.flat_pace_min_mi)} /mi overall) is what each mile would have been on the flat for the same heart rate, so climbing out and running home compare fairly. The first 10 minutes are left out of the heart-rate read while it warms up.
+        {d.usual_decoupling_pct != null
+          ? `Recent median: ${efficiencyLabel(d.usual_decoupling_pct)} across ${d.usual_runs} activities of the same type in the prior 90 days.`
+          : "Recent median unavailable: not enough comparable activity history."}
       </div>
+      {paceDirection && hrDirection ? <p>Grade-adjusted pace {paceDirection} while average heart rate {hrDirection}.{drift != null && Math.abs(drift) < 5 ? " Aerobic efficiency was nearly unchanged." : ""}</p> : null}
+      <div className="table-wrap">
+        <table>
+          <caption className="muted" style={{ textAlign: "left" }}>Comparison by moving-time halves</caption>
+          <thead><tr><th scope="col">Metric</th><th scope="col" className="num">First half</th><th scope="col" className="num">Second half</th><th scope="col" className="num">Change</th></tr></thead>
+          <tbody>{comparisonRows(a, b).map(([label, first, second, change]) => (
+            <tr key={label}><th scope="row" style={{ fontWeight: 400 }}>{label}</th><td className="num">{first}</td><td className="num">{second}</td><td className="num">{change}</td></tr>
+          ))}</tbody>
+        </table>
+      </div>
+      <details>
+        <summary>Compare terrain and duration</summary>
+        <div className="table-wrap"><table>
+          <thead><tr><th scope="col">Metric</th><th scope="col" className="num">First half</th><th scope="col" className="num">Second half</th></tr></thead>
+          <tbody>
+            <tr><th scope="row">Distance</th><td className="num">{mi(a.distance_mi)} mi</td><td className="num">{mi(b.distance_mi)} mi</td></tr>
+            <tr><th scope="row">Elevation gain</th><td className="num">{n0(a.gain_ft)} ft</td><td className="num">{n0(b.gain_ft)} ft</td></tr>
+            <tr><th scope="row">Moving time</th><td className="num">{movingTime(a.time_s)}</td><td className="num">{movingTime(b.time_s)}</td></tr>
+          </tbody>
+        </table></div>
+      </details>
+      <details className="muted">
+        <summary>How this is calculated</summary>
+        <p>Aerobic efficiency compares grade-adjusted speed per heartbeat between moving-time halves. A positive drop means lower efficiency in the second half; a gain means higher efficiency. Talus labels a drop below 5% as steady, 5% to below 10% as declined, and 10% or more as substantially declined. This assesses aerobic efficiency, not overall durability.</p>
+        <p>Grade-adjusted pace estimates equivalent flat-ground pace based on slope. It does not fully account for terrain or conditions. The first 10 moving minutes are excluded from first-half heart rate and efficiency, but included in the displayed pace and duration, so the table alone will not reproduce the efficiency result.</p>
+        <p>The recent median uses activities of the same type in the prior 90 days with an efficiency measurement; these are not matched by duration.</p>
+      </details>
     </section>
   );
 }

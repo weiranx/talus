@@ -1,7 +1,7 @@
 import SwiftUI
 
-// Climbing and descending by grade against the athlete's own last 90 days, what running a climb
-// bought over hiking it, and how the second half held up on grade-adjusted pace. Same wording as
+// Estimated vertical speed and observed gait comparisons against recent activity history.
+// Also shows how the second half held up on grade-adjusted pace. Same wording as
 // web/components/TerrainCards.tsx; the web's wide tables become one block per grade.
 
 extension Fmt {
@@ -38,16 +38,17 @@ struct GradeCard: View {
         let descents = t.bands.filter { $0.kind == "descent" }
         Card {
             SectionLabel("Climbing and descending by grade")
-            Text("How fast you gained and lost vert on each grade, set against your own runs on the same grade over the last 90 days.")
+            Text("Estimated vertical speed by grade band, compared with your median from similar activity types in the preceding 90 days. Comparisons require at least 3 prior activities in the band and do not account for effort or trail conditions.")
                 .font(.subheadline).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
             group("Climbs", climbs)
             group("Descents", descents)
             if !t.hikeOrRun.isEmpty {
                 Divider()
-                Text("Hike or run?").font(.subheadline.weight(.semibold))
+                Text("Observed running vs. hiking").font(.subheadline.weight(.semibold))
+                Text("Observed within this activity on different segments. This does not predict the benefit or HR cost of switching gait on the same terrain.").font(.caption).foregroundStyle(.secondary)
                 ForEach(t.hikeOrRun) { hikeOrRun($0).font(.subheadline).fixedSize(horizontal: false, vertical: true) }
             }
-            Text("ft/h is vertical feet gained or lost per moving hour on that grade. HR in brackets is against your usual on the grade. Hiked is the share of the time spent hiking. \(footer)")
+            Text("ft/h is estimated vertical feet gained or lost per moving hour in that grade band. HR in parentheses is the difference from your recent median in the band. Hiking share is estimated from cadence, or speed when cadence is unavailable; activities recorded as hikes or walks are treated as hiking. Lower speed at lower HR does not by itself indicate worse performance. \(footer)")
                 .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
         }
     }
@@ -62,11 +63,11 @@ struct GradeCard: View {
     }
 
     private func hikeOrRun(_ h: HikeOrRun) -> Text {
-        let gain = h.runRateGainPct >= 0 ? "\(Fmt.plain(h.runRateGainPct))% faster" : "\(Fmt.plain(-h.runRateGainPct))% slower"
-        var t = Text("On ") + Text(h.label).bold() + Text(" climbs, running gained vert ") + Text(gain).bold()
-            + Text(" than hiking (\(Fmt.n0(h.runRateFtH)) against \(Fmt.n0(h.hikeRateFtH)) ft/h)")
+        let gain = h.runRateGainPct >= 0 ? "\(Fmt.plain(h.runRateGainPct))% higher vertical speed" : "\(Fmt.plain(-h.runRateGainPct))% lower vertical speed"
+        var t = Text("On ") + Text(h.label).bold() + Text(" climbs, segments classified as running had ") + Text(gain).bold()
+            + Text(" than those classified as hiking (\(Fmt.n0(h.runRateFtH)) against \(Fmt.n0(h.hikeRateFtH)) ft/h)")
         if let c = h.runHrCostBpm {
-            t = t + Text(" for ") + Text(c >= 0 ? "\(Fmt.plain(c)) more bpm" : "\(Fmt.plain(-c)) fewer bpm").bold()
+            t = t + Text(" with average HR ") + Text(c >= 0 ? "\(Fmt.plain(c)) bpm higher" : "\(Fmt.plain(-c)) bpm lower").bold()
         }
         return t + Text(".")
     }
@@ -87,7 +88,7 @@ private struct BandRow: View {
                 (Text(Fmt.n0(b.vertRateFtH)).font(.headline.monospacedDigit()) + Text(" ft/h").font(.caption).foregroundStyle(.secondary))
                 vsUsual
             }
-            (Text("Pace \(Fmt.pace(b.paceMinMi)) /mi · HR ") + hr + Text(" · Hiked \(Fmt.pct(b.hikeShare))"))
+            (Text("Pace \(Fmt.pace(b.paceMinMi)) /mi · HR ") + hr + Text(" · Est. hiking share \(Fmt.pct(b.hikeShare))"))
                 .font(.caption.monospacedDigit()).foregroundStyle(.secondary)
         }
         .padding(.vertical, 2)
@@ -98,12 +99,11 @@ private struct BandRow: View {
     private var vsUsual: some View {
         if let u = b.usual, let change = u.rateChangePct {
             let faster = change > 0
-            let tone: Tone = abs(change) < 5 ? .neutral : faster ? .good : .warn
-            Pill(text: abs(change) < 1 ? "same" : "\(Fmt.plain(abs(change)))% \(faster ? "faster" : "slower")", tone: tone)
-            if u.fastest { Pill(text: "90-day best", tone: .good) }
-            Text("usual \(Fmt.n0(u.vertRateFtH))").font(.caption.monospacedDigit()).foregroundStyle(.secondary)
+            Pill(text: abs(change) < 1 ? "At median" : "\(Fmt.plain(abs(change)))% \(faster ? "above" : "below") median", tone: .neutral)
+            if u.fastest { Pill(text: "90-day highest rate", tone: .neutral) }
+            Text("median \(Fmt.n0(u.vertRateFtH)) ft/h").font(.caption.monospacedDigit()).foregroundStyle(.secondary)
         } else {
-            Text("not enough runs yet").font(.caption).foregroundStyle(.secondary)
+            Text("Comparison unavailable").font(.caption).foregroundStyle(.secondary)
         }
     }
 

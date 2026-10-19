@@ -3,8 +3,8 @@ import Pill from "@/components/Pill";
 import { duration, mi, n0 } from "@/lib/format";
 import type { Durability, DurabilityHalf, GradeBand, Terrain } from "@/lib/types";
 
-// Climbing and descending by grade against the athlete's own last 90 days, what running a climb
-// bought over hiking it, and how the second half held up on grade-adjusted pace.
+// Estimated vertical speed and observed gait comparisons against recent activity history.
+// Also shows how the second half held up on grade-adjusted pace.
 
 export function pace(minPerMi: number | null | undefined): string {
   if (!minPerMi) return "–";
@@ -16,16 +16,15 @@ const signed = (v: number) => (v > 0 ? `+${v}` : v < 0 ? `−${Math.abs(v)}` : "
 
 function VsUsual({ b }: { b: GradeBand }) {
   const u = b.usual;
-  if (!u || u.rate_change_pct == null) return <span className="muted">not enough runs yet</span>;
+  if (!u || u.rate_change_pct == null) return <span className="muted">Comparison unavailable</span>;
   const faster = u.rate_change_pct > 0;
-  const tone = Math.abs(u.rate_change_pct) < 5 ? "neutral" : faster ? "good" : "warn";
   return (
     <span style={{ display: "inline-flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
-      <Pill tone={tone}>
-        {Math.abs(u.rate_change_pct) < 1 ? "same" : `${Math.abs(u.rate_change_pct)}% ${faster ? "faster" : "slower"}`}
+      <Pill tone="neutral">
+        {Math.abs(u.rate_change_pct) < 1 ? "At median" : `${Math.abs(u.rate_change_pct)}% ${faster ? "above" : "below"} median`}
       </Pill>
-      {u.fastest ? <Pill tone="good">90-day best</Pill> : null}
-      <span className="muted">usual {n0(u.vert_rate_ft_h)}</span>
+      {u.fastest ? <Pill tone="neutral">90-day highest rate</Pill> : null}
+      <span className="muted">median {n0(u.vert_rate_ft_h)} ft/h</span>
     </span>
   );
 }
@@ -65,7 +64,7 @@ export function GradeCard({ t, footer }: { t: Terrain; footer?: ReactNode }) {
     <section className="card">
       <h2 className="label">Climbing and descending by grade</h2>
       <div className="muted">
-        How fast you gained and lost vert on each grade, set against your own runs on the same grade over the last 90 days.
+        Estimated vertical speed by grade band, compared with your median from similar activity types in the preceding 90 days. Comparisons require at least 3 prior activities in the band and do not account for effort or trail conditions.
       </div>
       <div className="table-wrap">
         <table style={{ minWidth: 700 }}>
@@ -75,10 +74,10 @@ export function GradeCard({ t, footer }: { t: Terrain; footer?: ReactNode }) {
               <th scope="col" className="num">Vert, ft</th>
               <th scope="col" className="num">Time</th>
               <th scope="col" className="num">ft/h</th>
-              <th scope="col">Against your usual</th>
+              <th scope="col">Vertical speed vs. median</th>
               <th scope="col" className="num">Pace, /mi</th>
               <th scope="col" className="num">HR</th>
-              <th scope="col" className="num">Hiked</th>
+              <th scope="col" className="num">Est. hiking share</th>
             </tr>
           </thead>
           <tbody>
@@ -89,19 +88,20 @@ export function GradeCard({ t, footer }: { t: Terrain; footer?: ReactNode }) {
       </div>
       {t.hike_or_run.length ? (
         <div style={{ display: "grid", gap: 6 }}>
-          <div style={{ fontWeight: 600 }}>Hike or run?</div>
+          <div style={{ fontWeight: 600 }}>Observed running vs. hiking</div>
+          <div className="muted">Observed within this activity on different segments. This does not predict the benefit or HR cost of switching gait on the same terrain.</div>
           {t.hike_or_run.map((h) => (
             <div key={h.key}>
-              On <strong>{h.label}</strong> climbs, running gained vert{" "}
-              {h.run_rate_gain_pct >= 0 ? <strong>{h.run_rate_gain_pct}% faster</strong> : <strong>{-h.run_rate_gain_pct}% slower</strong>} than hiking
+              On <strong>{h.label}</strong> climbs, segments classified as running had{" "}
+              {h.run_rate_gain_pct >= 0 ? <strong>{h.run_rate_gain_pct}% higher vertical speed</strong> : <strong>{-h.run_rate_gain_pct}% lower vertical speed</strong>} than those classified as hiking
               {" "}({n0(h.run_rate_ft_h)} against {n0(h.hike_rate_ft_h)} ft/h)
-              {h.run_hr_cost_bpm != null ? <> for <strong>{h.run_hr_cost_bpm >= 0 ? `${h.run_hr_cost_bpm} more` : `${-h.run_hr_cost_bpm} fewer`} bpm</strong></> : null}.
+              {h.run_hr_cost_bpm != null ? <> with average HR <strong>{h.run_hr_cost_bpm >= 0 ? `${h.run_hr_cost_bpm} bpm higher` : `${-h.run_hr_cost_bpm} bpm lower`}</strong></> : null}.
             </div>
           ))}
         </div>
       ) : null}
       <div className="muted">
-        ft/h is vertical feet gained or lost per moving hour on that grade. HR in brackets is against your usual on the grade. Hiked is the share of the time spent hiking.
+        ft/h is estimated vertical feet gained or lost per moving hour in that grade band. HR in parentheses is the difference from your recent median in the band. Hiking share is estimated from cadence, or speed when cadence is unavailable; activities recorded as hikes or walks are treated as hiking. Lower speed at lower HR does not by itself indicate worse performance.
         {footer ? <> {footer}</> : null}
       </div>
     </section>

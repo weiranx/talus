@@ -1,0 +1,13 @@
+.grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 320px), 1fr)); gap: 16px; }
+.heading { font-size: 1.2rem; margin: 0; }
+.signal { min-width: 0; overflow-wrap: anywhere; }
+.observation { font-size: 1.35rem; font-weight: 600; line-height: 1.3; }
+.numbers { display: flex; flex-wrap: wrap; gap: 24px; }
+.numbers dt { font-size: .85rem; opacity: .7; }
+.numbers dd { margin: 4px 0 0; font-size: 1.65rem; font-variant-numeric: tabular-nums; }
+.numbers small { font-size: .8rem; }
+.signal summary { cursor: pointer; }
+.evidence { padding-left: 20px; }
+.evidence li { padding: 10px 0; }
+.evidence span, .evidence strong { display: block; font-size: .85rem; }
+.caveat { font-size: .85rem; line-height: 1.5; }

@@ -453,6 +453,25 @@ def activities(limit: int = 50) -> list[dict]:
     return _activities(store, limit=limit)
 
 
+@app.get("/api/progress")
+def activity_progress() -> dict:
+    from .progress import build
+
+    store = get_store()
+    warm_details(store)
+    today = date.today()
+    rows = store.scored_activities((today - timedelta(days=180)).isoformat())
+    tracks = heatmap.Tracks(store.dir)
+    lines, missing = tracks.lines(rows)
+    tracks.build(missing, lambda row: _streams(store, row))
+    names, on = store.activity_names(), _names_on(store)
+    records = [{"id": r["id"], "day": r["start_time"][:10], "sport": r["sport"],
+                **_name(r, names, on), "summary": json.loads(r["summary"]),
+                "terrain": _terrain_of(store, r), "line": lines.get(r["id"])} for r in rows]
+    return {**build(records, today), "analysis": read_ahead(store), "routes_pending": len(missing)}
+
+
+
 @app.get("/api/heatmap")
 def heatmap_routes() -> dict:
     """Every scored activity with its route as an encoded polyline (null without GPS), for the

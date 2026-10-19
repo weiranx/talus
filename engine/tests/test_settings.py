@@ -140,7 +140,7 @@ def test_settings_show_thresholds_inferred_from_runs(tmp_path, monkeypatch):
     inf = client.get("/api/settings").json()["inferred"]
     assert inf["status"] == "ready" and inf["runs_read"] == 3
     assert (inf["runs_with_hr"], inf["days"]) == (3, 180)
-    assert inf["ant"]["value"] == round(150 * 0.97) and inf["ant"]["confidence"] == "medium"
+    assert inf["ant"]["value"] == round(150 * 0.97) and inf["ant"]["confidence"] == "low"
     assert inf["ant"]["activities"][0].keys() == {"id", "day", "name"}
     assert inf["max"]["value"] == 150 and inf["aet"]["method"]
 

@@ -36,7 +36,7 @@ STEADY_CV = 0.06  # heart rate must stay this steady (sd / mean) for drift to me
 PROVISIONAL_AET = 0.88
 # Bump when `features` changes, so stored ones are read again. Elevation cleanup feeds the drift
 # reading, so a new scoring model reads them again too.
-FEATURES_VERSION = f"1-{MODEL_VERSION}"
+FEATURES_VERSION = f"2-{MODEL_VERSION}"
 HARD_SHARE_OF_MAX = 0.93  # a best hour this close to the highest HR recorded looks like a real hard effort
 MAX_SPIKE_S = 5  # a max must be held this long to count
 
@@ -61,18 +61,36 @@ def _cum(hr: np.ndarray, dt: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
     return np.concatenate([[0.0], np.cumsum(dt)]), np.concatenate([[0.0], np.cumsum(hr * dt)])
 
 
+def _blocks(mask: np.ndarray) -> list[np.ndarray]:
+    indices = np.flatnonzero(mask)
+    return [b for b in np.split(indices, np.flatnonzero(np.diff(indices) > 1) + 1) if b.size]
+
+
+def _valid_hr(hr: np.ndarray) -> np.ndarray:
+    return np.isfinite(hr) & (hr >= 30) & (hr <= 240)
+
+
 def best_average(hr: np.ndarray, time: np.ndarray, seconds: float) -> float | None:
-    """Highest time-weighted average heart rate over any `seconds` of the activity.
-    Pauses longer than MAX_DT_S count as MAX_DT_S, so standing around can't stretch a window."""
-    dt = np.minimum(np.diff(time, prepend=time[0]), MAX_DT_S)
-    t, w = _cum(hr, dt)
-    if t[-1] < seconds:
+    """Exact-duration HR average on continuous data; pauses and invalid samples break efforts.
+
+    Each sample describes the interval ending at its timestamp. Integrate fractional
+    edge intervals and consider windows starting or ending at every interval boundary.
+    """
+    if len(time) < 2 or len(hr) != len(time) or seconds <= 0:
         return None
-    end = np.searchsorted(t, t + seconds)
-    ok = end < t.size
-    start = np.nonzero(ok)[0]
-    end = end[ok]
-    return float(np.max((w[end] - w[start]) / (t[end] - t[start])))
+    dt = np.diff(time, prepend=time[0])
+    valid = (_valid_hr(hr) & np.isfinite(time) & np.isfinite(dt)
+             & (dt > 0) & (dt <= MAX_DT_S))
+    best = None
+    for block in _blocks(valid):
+        t, w = _cum(hr[block], dt[block])
+        if t[-1] < seconds:
+            continue
+        starts = np.unique(np.concatenate((t[t <= t[-1] - seconds], t[t >= seconds] - seconds)))
+        averages = (np.interp(starts + seconds, t, w) - np.interp(starts, t, w)) / seconds
+        candidate = float(np.max(averages))
+        best = candidate if best is None else max(best, candidate)
+    return best
 
 
 def held_max(hr: np.ndarray, time: np.ndarray) -> float | None:
@@ -83,35 +101,42 @@ def drift(s: Streams) -> tuple[float, float, float] | None:
     """Pace:HR decoupling on the flat, moving part of a run after warm-up:
     (first-half average HR, decoupling, flat minutes), or None when there isn't enough flat time or the
     heart rate wasn't steady enough to read."""
-    if s.heart_rate is None or s.distance is None:
+    if s.heart_rate is None or s.distance is None or s.altitude is None or len(s.time) < 2:
         return None
     raw_dt = np.diff(s.time, prepend=s.time[0])
     dt = np.minimum(raw_dt, MAX_DT_S)
     dd = np.diff(s.distance, prepend=s.distance[0])
     with np.errstate(divide="ignore", invalid="ignore"):
         speed = np.where(raw_dt > 0, dd / raw_dt, 0.0)  # over the real gap, as in score
-    if s.altitude is not None:
-        alt, _, _ = elevation.clean(s.altitude, s.barometric, s.time)
-        grade = elevation.smoothed_grade(s.distance, alt)
-    else:
-        grade = np.zeros_like(s.time)
-    use = (speed > MOVING_MPS) & (np.abs(grade) < FLAT_GRADE_PCT) & (s.time > WARMUP_S)
-    if np.sum(dt[use]) < DRIFT_MIN_S:
-        return None
-    hr_used = s.heart_rate[use]
-    if np.std(hr_used) / np.mean(hr_used) > STEADY_CV:
-        return None  # intervals or a workout with a cool-down, not a steady run
-    t_used = np.cumsum(np.where(use, dt, 0.0))
-    first = use & (t_used <= t_used[-1] / 2)
-    second = use & ~first
+    alt, _, _ = elevation.clean(s.altitude, s.barometric, s.time)
+    grade = elevation.smoothed_grade(s.distance, alt)
+    use = ((speed > MOVING_MPS) & np.isfinite(speed) & (np.abs(grade) < FLAT_GRADE_PCT)
+           & (s.time - s.time[0] > WARMUP_S) & (raw_dt > 0) & (raw_dt <= MAX_DT_S)
+           & _valid_hr(s.heart_rate))
+    candidates = []
+    for block in _blocks(use):
+        weights = dt[block]
+        duration = float(np.sum(weights))
+        if duration < DRIFT_MIN_S:
+            continue
+        hr, pace = s.heart_rate[block], speed[block]
 
-    def ef(m: np.ndarray) -> float:  # efficiency factor: distance per heartbeat
-        return float(np.sum(dd[m]) / np.sum(s.heart_rate[m] * dt[m]))
+        def cv(values: np.ndarray) -> float:
+            mean = np.average(values, weights=weights)
+            return float(np.sqrt(np.average((values - mean) ** 2, weights=weights)) / mean)
 
-    e1, e2 = ef(first), ef(second)
-    # Read the run at its first-half heart rate: the effort before any drift set in.
-    avg_hr = float(np.sum(s.heart_rate[first] * dt[first]) / np.sum(dt[first]))
-    return avg_hr, (e1 - e2) / e1, float(np.sum(dt[use]) / 60)
+        if cv(hr) > STEADY_CV or cv(pace) > 0.10:
+            continue
+        end = np.cumsum(weights)
+        first = np.clip(duration / 2 - (end - weights), 0, weights)
+        second = weights - first
+        e1 = np.sum(pace * first) / np.sum(hr * first)
+        e2 = np.sum(pace * second) / np.sum(hr * second)
+        decoupling = float((e1 - e2) / e1)
+        if decoupling < -DRIFT_MAX:
+            continue  # substantial negative drift suggests pacing/warm-up confounding
+        candidates.append((float(np.average(hr, weights=first)), decoupling, duration / 60))
+    return max(candidates, key=lambda d: d[2]) if candidates else None
 
 
 def features(s: Streams) -> dict | None:
@@ -121,7 +146,11 @@ def features(s: Streams) -> dict | None:
     if s.heart_rate is None or (s.sport or "generic").lower() not in FOOT_SPORTS:
         return None
     d = drift(s)
-    return {"max": held_max(s.heart_rate, s.time),
+    valid_hr = s.heart_rate[_valid_hr(s.heart_rate)]
+    if not valid_hr.size:
+        return None
+    return {"low_hr": float(np.percentile(valid_hr, 20)),
+            "max": held_max(s.heart_rate, s.time),
             "hour": best_average(s.heart_rate, s.time, ANT_HOLD_S),
             "half": best_average(s.heart_rate, s.time, ANT_SHORT_S),
             "drift": None if d is None else list(d)}
@@ -155,7 +184,10 @@ def combine(runs: list[tuple[int, dict | None]]) -> dict:
         efforts.sort(key=lambda x: x[1], reverse=True)
         best_id, best = efforts[0]
         backed = [i for i, v in efforts if best - v <= 3]
-        hard_enough = mx.value is not None and best >= HARD_SHARE_OF_MAX * mx.value
+        # An observed max from easy runs alone cannot establish a hard effort.
+        lower = [f["low_hr"] for _, f in foot if f.get("low_hr") is not None]
+        contrast = bool(lower) and best - min(lower) >= 10
+        hard_enough = mx.value is not None and best >= HARD_SHARE_OF_MAX * mx.value and contrast
         confidence = "medium" if len(backed) >= 2 and hard_enough else "low"
         why = "best hour of heart rate, or best 30 min less 3%"
         if not hard_enough:
@@ -164,9 +196,10 @@ def combine(runs: list[tuple[int, dict | None]]) -> dict:
     else:
         ant = Estimate(None, "none", "no run with 30 min of heart rate")
 
-    drifts = [Drift(i, round(f["drift"][0], 1), round(f["drift"][1], 4), round(f["drift"][2], 1))
+    # Classify using full precision: rounding can flip the 5% boundary.
+    drifts = [Drift(i, *f["drift"])
               for i, f in foot if f["drift"] is not None]
-    steady = [d for d in drifts if d.decoupling < DRIFT_MAX and (ant.value is None or d.avg_hr < ant.value)]
+    steady = [d for d in drifts if -DRIFT_MAX <= d.decoupling < DRIFT_MAX and (ant.value is None or d.avg_hr < ant.value)]
     drifted = [d for d in drifts if d.decoupling >= DRIFT_MAX]
     if steady:
         floor = max(steady, key=lambda d: d.avg_hr)
@@ -175,19 +208,25 @@ def combine(runs: list[tuple[int, dict | None]]) -> dict:
         if ceiling:
             c = min(ceiling, key=lambda d: d.avg_hr)
             ids.append(c.activity_id)
-            confidence = "high" if c.avg_hr - floor.avg_hr <= 10 else "medium"
+            confidence = "medium"  # ordinary runs are not controlled threshold tests
             method = (f"held under {DRIFT_MAX:.0%} drift at {floor.avg_hr:.0f} bpm, "
                       f"drifted at {c.avg_hr:.0f} bpm")
         else:
             confidence = "low"
-            method = (f"held under {DRIFT_MAX:.0%} drift at {floor.avg_hr:.0f} bpm; no run drifted, "
+            method = (f"held under {DRIFT_MAX:.0%} drift at {floor.avg_hr:.0f} bpm; no higher-HR run established a ceiling, "
                       "so AeT may be higher")
-        aet = Estimate(round(floor.avg_hr), confidence, method, ids)
+        conflicts = [d for d in drifted if d.avg_hr <= floor.avg_hr]
+        if conflicts:
+            confidence = "low"
+            method += "; conflicting drift at lower heart rates: confirm with a steady field test"
+            ids.extend(d.activity_id for d in conflicts[:3])
+        value = min(round(floor.avg_hr), ant.value - 1) if ant.value else round(floor.avg_hr)
+        aet = Estimate(value, confidence, method, ids)
     elif ant.value is not None:
         aet = Estimate(round(ant.value * PROVISIONAL_AET), "provisional",
-                       f"{PROVISIONAL_AET:.0%} of AnT: no steady flat hour to read drift from")
+                       f"{PROVISIONAL_AET:.0%} of AnT: no qualifying steady flat effort to read drift from")
     else:
-        aet = Estimate(None, "none", "no heart rate data")
+        aet = Estimate(None, "none", "not enough qualifying heart-rate data to estimate AeT")
 
     zones = None
     if aet.value and ant.value:

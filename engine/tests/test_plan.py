@@ -657,6 +657,9 @@ def test_the_coach_builds_the_weeks_and_the_engine_holds_them_to_its_limits():
 
 
 def test_drafts_are_built_by_the_coach_with_the_engine_as_fallback(tmp_path, monkeypatch):
+    # This test checks reuse of identical inputs. Background route parsing can make a finish
+    # estimate available between drafts, which correctly changes the coach's cache key.
+    monkeypatch.setattr(api, "_finish_brief", lambda *args: None)
     client = _setup(tmp_path, monkeypatch)
     day = (date.today() + timedelta(weeks=10)).isoformat()
     # Coach off: the engine builds the draft.

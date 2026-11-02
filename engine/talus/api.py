@@ -30,7 +30,7 @@ from fastapi import BackgroundTasks, FastAPI, HTTPException, Request, Response
 from fastapi.responses import JSONResponse, RedirectResponse, StreamingResponse
 from pydantic import BaseModel, ConfigDict, Field
 
-from . import MODEL_VERSION, admin, chatgpt, cli, coach, explain, google_auth, interview, intervals_auth, ledger, naming, readiness_score, status, wellness, zones
+from . import MODEL_VERSION, admin, cli, coach, explain, google_auth, interview, intervals_auth, ledger, naming, openai_api, readiness_score, status, wellness, zones
 from . import heatmap, routes, terrain
 from . import plan as planner
 from . import schedule
@@ -51,6 +51,7 @@ MAX_POINTS = 800
 
 app = FastAPI(title="Talus engine")
 coach_client = coach.default_client  # swapped out in tests
+openai_client = openai_api.default_client
 
 COOKIE = "talus_session"
 _account: ContextVar[Account | None] = ContextVar("talus_account", default=None)
@@ -841,23 +842,19 @@ def coach_models(accounts: Accounts | None = None) -> dict:
                   else out["analysis_model"]}
 
 
-def _provider_client(store: Store):
-    if store.settings().get("ai_provider", "anthropic") == "chatgpt":
-        accounts, account_id = get_accounts(), current_account().id
-        connection = chatgpt.status(accounts, account_id)
-        if not connection["available"] or not connection["sharing"] or not store.settings().get("chatgpt_model"):
-            return None
-        return chatgpt.Client(accounts, account_id)
-    return coach_client()
+def _provider_client(store: Store, model_id: str | None = None):
+    model_id = model_id or _coach_settings(store)["brief_model"]
+    return openai_client() if model_id.startswith("gpt-") else coach_client()
 
 
 def _coach_settings(store: Store) -> dict:
     saved = store.settings()
-    cfg = {k: saved.get(k, v) for k, v in app_settings.defaults().items()} | coach_models()
-    if saved.get("ai_provider") == "chatgpt":
-        model = "chatgpt/" + (saved.get("chatgpt_model") or "unselected")
-        cfg.update(brief_model=model, analysis_model=model, plan_model=model)
-    return cfg
+    return {k: saved.get(k, v) for k, v in app_settings.defaults().items()} | coach_models()
+
+
+def _coach_keys_set(store: Store) -> bool:
+    cfg = _coach_settings(store)
+    return all(coach.key_available(cfg[k]) for k in (*MODEL_KEYS, "plan_model"))
 
 
 def _is_owner() -> bool:
@@ -869,7 +866,7 @@ def _is_owner() -> bool:
 
 def _coach_cap(store: Store) -> dict:
     """This calendar month's coach spending against the account's cap. Coach calls run on the
-    server's Anthropic key, so every account other than the owner's is held under the server
+    server's provider keys, so every account other than the owner's is held under the server
     ceiling (TALUS_COACH_CAP_USD); each account can set its own cap lower."""
     account = _account.get()
     ceiling = None if account is None else admin.coach_ceiling(account)
@@ -933,10 +930,10 @@ def _coach(store: Store, mode: str, subject: str, packet: dict, fallback: dict, 
                 "feedback": row["feedback"], "fallback_reason": row["fallback_reason"], "model": row["model"],
                 "cost": _shown_cost(row["model"], row["usage"], cached=True)}
     cap = _coach_cap(store)
-    if not model_id.startswith("chatgpt/") and cap["limit"] is not None and cap["spent"] >= cap["limit"]:
+    if cap["limit"] is not None and cap["spent"] >= cap["limit"]:
         return {"source": "rules", "reply": fallback, "log_id": None, "feedback": None,
                 "fallback_reason": "cap", "model": None, "cost": None}
-    result = coach.run(mode, packet, fallback, _provider_client(store), model_id, style)
+    result = coach.run(mode, packet, fallback, _provider_client(store, model_id), model_id, style)
     log_id = None
     if result.fallback_reason != "no_key":
         log_id = store.log_coach(mode, subject, coach.PROMPT_VERSION, h, packet, result)
@@ -1219,7 +1216,7 @@ def _plan_answers(store: Store) -> dict | None:
 def _ai_builds(store: Store) -> bool:
     """Whether the AI coach builds this account's drafts: on in Settings, the coach on, a key set."""
     return bool(store.settings().get("ai_plans", True) and _coach_settings(store)["coach_enabled"]
-                and _provider_client(store) is not None)
+                and _provider_client(store, _coach_settings(store)["plan_model"]) is not None)
 
 
 def _draft_extras(store: Store, obj: planner.Objective, acts: list[dict], history: list, c: planner.Constraints,
@@ -1962,8 +1959,8 @@ def _race_lookup(store: Store, text: str, day: date) -> tuple[dict, dict | None]
     """A named race's date, distance and vert from the web, on the analysis model. Empty when
     the coach is off or over its cap, there's no key, or nothing usable was found."""
     cfg = _coach_settings(store)
-    client = _provider_client(store)
-    if isinstance(client, chatgpt.Client):
+    client = _provider_client(store, cfg["analysis_model"])
+    if isinstance(client, openai_api.Client):
         return {}, None  # Ask for race details; Claude web-search tools are provider-specific.
     cap = _coach_cap(store)
     if not cfg["coach_enabled"] or client is None or (cap["limit"] is not None and cap["spent"] >= cap["limit"]):
@@ -2579,7 +2576,7 @@ def clear_chat() -> dict:
 
 
 CHAT_UNAVAILABLE = {
-    "no_key": "The AI coach isn't set up: add an Anthropic API key to the engine's .env to chat.",
+    "no_key": "The AI coach isn't set up: add the selected model's provider API key to the engine's .env to chat.",
     "off": "The AI coach is turned off in Settings, so it can't answer questions.",
     "cap": "This month's coach spending limit is reached, so chat is paused until next month.",
 }
@@ -2884,11 +2881,7 @@ def get_settings() -> dict:
         "sync_method": "watch" if cli.watch_on(saved) else "intervals",
         "coach": {
             "enabled": cfg["coach_enabled"],
-            "provider": saved.get("ai_provider", "anthropic"),
-            "chatgpt": chatgpt.status(get_accounts(), current_account().id),
-            "chatgpt_model": saved.get("chatgpt_model", ""),
-            "key_set": (chatgpt.enabled() and chatgpt.status(get_accounts(), current_account().id)["sharing"]
-                        if saved.get("ai_provider") == "chatgpt" else bool(os.environ.get("ANTHROPIC_API_KEY"))),
+            "key_set": _coach_keys_set(store),
             "brief_model": cfg["brief_model"],
             "analysis_model": cfg["analysis_model"],
             "plan_model": cfg["plan_model"],
@@ -2974,39 +2967,8 @@ def put_thresholds(body: ThresholdsIn) -> dict:
     return {"ok": True, "rescored": n}
 
 
-@app.post("/api/settings/chatgpt/connect")
-def connect_chatgpt(request: Request) -> dict:
-    if request.url.hostname not in ("127.0.0.1", "localhost", "::1"):
-        raise HTTPException(422, "Open Talus locally to connect ChatGPT. Hosted sign-in needs OpenAI approval.")
-    try:
-        return {"url": chatgpt.start(get_accounts(), current_account().id)}
-    except ValueError as exc:
-        raise HTTPException(422, str(exc)) from exc
-
-
-@app.get("/api/settings/chatgpt")
-def get_chatgpt() -> dict:
-    return chatgpt.status(get_accounts(), current_account().id)
-
-
-@app.get("/api/settings/chatgpt/models")
-def chatgpt_models() -> dict:
-    try:
-        return {"models": chatgpt.Client(get_accounts(), current_account().id).models()}
-    except ValueError as exc:
-        raise HTTPException(422, str(exc)) from exc
-
-
-@app.delete("/api/settings/chatgpt")
-def disconnect_chatgpt() -> dict:
-    chatgpt.disconnect(get_accounts(), current_account().id)
-    return {"ok": True}
-
-
 class CoachIn(BaseModel):
     enabled: bool
-    provider: Literal["anthropic", "chatgpt"] | None = None
-    chatgpt_model: str | None = Field(default=None, max_length=200)
     # Models are set for everyone on the admin page; older apps still send these, and they're ignored.
     brief_model: str | None = None
     analysis_model: str | None = None
@@ -3020,16 +2982,6 @@ def put_coach(body: CoachIn) -> dict:
     if body.style is not None and body.style not in coach.STYLES:
         raise HTTPException(422, f"Unknown style {body.style}")
     values = {"coach_enabled": body.enabled}
-    if body.provider is not None:
-        values["ai_provider"] = body.provider
-    if body.chatgpt_model:
-        try:
-            models = chatgpt.Client(get_accounts(), current_account().id).models()
-        except ValueError as exc:
-            raise HTTPException(422, str(exc)) from exc
-        if body.chatgpt_model not in {m["id"] for m in models}:
-            raise HTTPException(422, "Choose a model available to your ChatGPT account.")
-        values["chatgpt_model"] = body.chatgpt_model
     if body.style is not None:
         values["coach_style"] = body.style
     if body.ai_plans is not None:
@@ -4228,6 +4180,7 @@ def admin_feature(name: str, body: FeatureIn) -> dict:
 def _system(accounts: Accounts) -> dict:
     out = admin.system(accounts)
     out["coach"] |= coach_models(accounts)
+    out["coach"]["key_set"] = all(coach.key_available(out["coach"][k]) for k in (*MODEL_KEYS, "plan_model"))
     return out
 
 
@@ -4338,8 +4291,10 @@ def status_page() -> dict:
     out = {"engine": status.engine(), "sources": status.sources(accounts, account, store, saved),
            "data": status.data(store), "read_ahead": read_ahead(store), "importing": importing,
            "coach": status.coach(store, _coach_cap(store), bool(_coach_settings(store)["coach_enabled"]),
-                                  key_available=(_provider_client(store) is not None
-                                                 if store.settings().get("ai_provider") == "chatgpt" else None)),
+                                  key_available=_coach_keys_set(store)),
            "server": status.server(accounts, _signup_open(accounts)) if account.is_admin else None}
+    if out["server"] is not None:
+        out["server"]["coach"] |= coach_models(accounts)
+        out["server"]["coach"]["key_set"] = _coach_keys_set(store)
     warm_details(store)
     return out

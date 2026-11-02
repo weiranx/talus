@@ -54,7 +54,7 @@ const day = (iso: string | null) => (iso ? new Date(`${iso.slice(0, 10)}T12:00:0
 
 const COACH_WHY: Record<string, string> = {
   off: "The coach is off in Settings, so pages show the rule-based read.",
-  no_key: "No Anthropic key on the server, so pages show the rule-based read.",
+  no_key: "An API key is missing for a selected model; affected tasks use the rule-based read.",
   cap: "This month's spending reached the cap. The coach is back next month, or raise the cap in Settings.",
   api_error: "The last call to the AI failed, so that page showed the rule-based read. Reloading tries again.",
   recent_errors: "Working now, but a call failed in the last 24 hours.",
@@ -258,7 +258,7 @@ export default async function StatusPage() {
                     )) : "None"}
                   </dd>
                   <dt>Coach, all accounts</dt>
-                  <dd>{usd(s.server.coach_spent)} this month{s.server.coach.key_set ? "" : <span className="error-text"> (no Anthropic key)</span>}</dd>
+                  <dd>{usd(s.server.coach_spent)} this month{s.server.coach.key_set ? "" : <span className="error-text"> (API key missing)</span>}</dd>
                   <dt>Coach models</dt>
                   <dd>
                     <span className="mono">{s.server.coach.brief_model}</span>, <span className="mono">{s.server.coach.analysis_model}</span>

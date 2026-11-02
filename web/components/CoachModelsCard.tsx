@@ -45,13 +45,17 @@ export default function CoachModelsCard({ data }: { data: AdminOverview["coach_m
   return (
     <section className="card">
       <h2 className="label">Coach models</h2>
-      <div className="muted">One choice for every account. Each account still picks its coaching style, its cap and whether the coach is on.</div>
+      <div className="muted">One choice for every account. Choose Claude or OpenAI for each task. Each account still picks its coaching style, its cap and whether the coach is on.</div>
       <div className="form-grid">
         {MODES.map((m) => (
           <label key={m.key} className="field">
             <span className="field-label">{m.label}</span>
             <select value={models[m.key]} disabled={busy} onChange={(e) => setModels({ ...models, [m.key]: e.target.value })}>
-              {data.models.map((o) => <option key={o.id} value={o.id}>{o.label}</option>)}
+              {[{ prefix: "claude-", label: "Claude · Anthropic" }, { prefix: "gpt-", label: "OpenAI · GPT" }].map(group => (
+                <optgroup key={group.prefix} label={group.label}>
+                  {data.models.filter(o => o.id.startsWith(group.prefix)).map(o => <option key={o.id} value={o.id}>{o.label}</option>)}
+                </optgroup>
+              ))}
             </select>
             <span className="muted">{m.when} {costLine(data.estimate[m.mode]?.[models[m.key]], m.mode === "plan" ? "a draft" : "a call")}.</span>
           </label>

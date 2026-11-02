@@ -166,7 +166,7 @@ enum StatusText {
 
     static let coachWhy = [
         "off": "The coach is off in Settings, so pages show the rule-based read.",
-        "no_key": "No Anthropic key on the server, so pages show the rule-based read.",
+        "no_key": "An API key is missing for a selected model; affected tasks use the rule-based read.",
         "cap": "This month's spending reached the cap. The coach is back next month, or raise the cap in Settings.",
         "api_error": "The last call to the AI failed, so that page showed the rule-based read. Reloading tries again.",
         "recent_errors": "Working now, but a call failed in the last 24 hours.",
@@ -367,7 +367,7 @@ private struct ServerCard: View {
                 LabeledContent("Coach, all accounts") {
                     HStack(spacing: 4) {
                         Text("\(SettingsText.usd(server.coachSpent)) this month")
-                        if !server.coach.keySet { Text("(no Anthropic key)").foregroundStyle(Tone.bad.ink) }
+                        if !server.coach.keySet { Text("(API key missing)").foregroundStyle(Tone.bad.ink) }
                     }
                 }
                 LabeledContent("Coach models") {

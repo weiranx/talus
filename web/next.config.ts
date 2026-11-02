@@ -21,7 +21,7 @@ const config: NextConfig = {
   experimental: {
     // Uploads (Settings > Upload files) pass through to the engine: an Apple Health export.zip
     // can run to gigabytes and take minutes to read. The engine sets its own limit.
-    middlewareClientMaxBodySize: "2gb",
+    proxyClientMaxBodySize: "2gb",
     proxyTimeout: 15 * 60 * 1000,
   },
   // Pages stream: the rest of Today, Plan and an activity show while the AI coach is still

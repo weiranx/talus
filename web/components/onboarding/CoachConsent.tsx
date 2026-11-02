@@ -41,7 +41,7 @@ export default function CoachConsent({ ob }: { ob: Onboarding }) {
       <h2 className="label">The AI coach</h2>
       <div>
         The coach writes the reason behind today&apos;s call, a read on each activity, and your plan&apos;s explanation, using
-        Claude from Anthropic. Every number it uses comes from Talus, and Talus checks its numbers before you see them. With
+        Claude from Anthropic or GPT from OpenAI, as selected by the admin. Every number it uses comes from Talus, and Talus checks its numbers before you see them. With
         it off, every screen still works with plain rule-based text.
       </div>
       <div className="row" style={{ gap: 16 }}>
@@ -54,7 +54,7 @@ export default function CoachConsent({ ob }: { ob: Onboarding }) {
           <ul className="method-list">{NEVER.map((s) => <li key={s}>{s}</li>)}</ul>
         </div>
       </div>
-      <div className="muted">Anthropic doesn&apos;t train models on API traffic. You can turn the coach off any time in Settings.</div>
+      <div className="muted">Training context is sent to the selected model&apos;s provider. You can turn the coach off any time in Settings.</div>
       <label className="field" style={{ maxWidth: 360 }}>
         <span className="field-label">Coaching style</span>
         <select value={style} onChange={(e) => setStyle(e.target.value)}>
@@ -62,7 +62,7 @@ export default function CoachConsent({ ob }: { ob: Onboarding }) {
         </select>
         <span className="muted">{ob.coach.styles.find((o) => o.key === style)?.description}</span>
       </label>
-      {!ob.coach.key_set ? <div className="muted">This Talus server has no Anthropic key yet, so the coach stays on rule-based text until it does.</div> : null}
+      {!ob.coach.key_set ? <div className="muted">This Talus server needs an API key for the selected model, so the coach stays on rule-based text until it is added.</div> : null}
       <div className="actions">
         <button className="btn" onClick={() => choose(true)} disabled={busy !== null} aria-busy={busy === "on"}>Turn on the coach</button>
         <button className="btn light outline" onClick={() => choose(false)} disabled={busy !== null} aria-busy={busy === "off"}>Load tracking only</button>

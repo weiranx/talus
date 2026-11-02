@@ -107,7 +107,7 @@ def coach(store: Store, cap: dict, coach_on: bool, key_available: bool | None = 
     since = (datetime.now() - timedelta(days=1)).isoformat(timespec="seconds")
     errors = store.db.execute("SELECT COUNT(*), MAX(created_at) FROM coach_log WHERE created_at >= ? "
                               "AND fallback_reason LIKE 'api_error%'", (since,)).fetchone()
-    over = store.settings().get("ai_provider") != "chatgpt" and cap["limit"] is not None and cap["spent"] >= cap["limit"]
+    over = cap["limit"] is not None and cap["spent"] >= cap["limit"]
     last_failed = bool(last and (last["fallback_reason"] or "").startswith("api_error"))
     if not coach_on:
         state, why = "idle", "off"

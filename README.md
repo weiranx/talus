@@ -81,7 +81,7 @@ Talus has sign-in. Each account has its own folder, `data/users/<id>/`, with its
 
 - **First launch after upgrading:** the engine backs up `data/talus.db` to `data/backups/talus-before-accounts-<time>.db`, then moves `talus.db` and `raw/` into `data/users/1/`. The web app opens on **Set up Talus**; the account you create there is the owner and gets that data, plus the `.env` intervals.icu key.
 - **Owner:** the first account. It has no coach spending ceiling, and `talus` commands work on its data unless `--user EMAIL` names another account.
-- **Other accounts:** sign up at `/login`. Each adds its own intervals.icu key under Settings, Data source. The coach runs on the server's Anthropic key, capped at `TALUS_COACH_CAP_USD` a month per account (default $5); each account can set a lower cap. Set `TALUS_SIGNUP=closed` to stop new sign-ups.
+- **Other accounts:** sign up at `/login`. Each adds its own intervals.icu key under Settings, Data source. The coach runs on the server's provider keys, capped at `TALUS_COACH_CAP_USD` a month per account (default $5); each account can set a lower cap. Set `TALUS_SIGNUP=closed` to stop new sign-ups.
 - **Admin page:** `/admin`, only for the weiranxiong@gmail.com account (`ADMIN_EMAIL` in `engine/talus/accounts.py`); everyone else gets a 404. It lists accounts (counts, sync times, coach spend, never activities or keys), turns an account's sign-in off or on, signs it out everywhere, sets its coach ceiling, picks the coach's models (daily brief, longer reads, and plan drafting, which builds and checks every plan draft), opens or closes sign-ups (overriding `TALUS_SIGNUP`) and shows the version and disk use. Actions are logged in `accounts.db`'s `admin_log`. Accounts can't be deleted from it.
 - **Export and delete:** Settings, Account. Export is a zip of the account's database and raw files, without keys. Delete needs the password and removes the folder.
 - **Google sign-in:** set `GOOGLE_CLIENT_ID` and `GOOGLE_CLIENT_SECRET` (a Google Cloud OAuth client of type Web application, redirect URI `http://localhost:3000/api/auth/google/callback`, or `TALUS_PUBLIC_URL` plus that path when served elsewhere). **Continue with Google** then shows on the sign-in screen. A Google account whose verified email matches a Talus account signs into it and is linked; otherwise it makes a new account (unless sign-ups are closed) with no password until one is set. Link or unlink Google under Settings, Account.
@@ -115,11 +115,11 @@ The Settings screen (`/settings`) edits what the engine stores in SQLite:
 
 - **Account:** change password, export, delete.
 
-The Anthropic key stays in `.env`; intervals.icu keys are per account and encrypted. The engine reports only whether a key is set and never sends one to the browser.
+Provider API keys stay in `.env`; intervals.icu keys are per account and encrypted. The engine reports only whether a key is set and never sends one to the browser.
 
 ### AI coach
 
-Put an Anthropic API key in `.env` as `ANTHROPIC_API_KEY` to turn it on. Without one, Today and Activity show rule-based text, labeled as such.
+Add the selected model’s API key to `.env`: `ANTHROPIC_API_KEY` for Claude or `OPENAI_API_KEY` for OpenAI. Without one, Today and Activity show rule-based text, labeled as such.
 
 - **When it calls:** right after each sync or import (`talus sync`, `talus import` or **Sync now**), it writes today's brief and a read of each new activity from the last 14 days, so the pages open with them ready. It also runs when you open a page whose input changed since (your check-in, a new day, an older activity). Replies are saved and reused until the input changes, so reloads are free. `--no-coach` skips the run after a sync or import.
 - **What it sees:** a compact packet of engine numbers (`talus/coach.py`): loads, readiness, check-in, the rule-based call, the last 14 days. No GPS, no names.
@@ -187,24 +187,21 @@ intervals.icu connects with OAuth when `INTERVALS_CLIENT_ID` and `INTERVALS_CLIE
 - **Strava's own numbers** go to the `external_metrics` table, for display and for checking Talus's loads. The coach never sees them; `tests/test_strava_web.py` checks that. Both are subscriber features: Relative Effort is the list's `suffer_score`, null without a subscription, and Fitness & Freshness isn't mapped.
 - **Live check:** `STRAVA_LIVE_TESTS=1 STRAVA_SESSION_COOKIE='...' uv run pytest tests/test_strava_web_live.py` reads your real list (and with `STRAVA_LIVE_ACTIVITY_ID`, downloads one of your files).
 
-### ChatGPT as the AI coach provider (local)
+### OpenAI coach models
 
-Set `TALUS_CHATGPT_LOCAL=1` in the local engine environment and restart it. Open Talus
-on `http://localhost:3000`, sign into Talus, then open **Settings → AI coach**. Choose
-**ChatGPT · Sign in with ChatGPT**, click **Continue with ChatGPT**, and approve ChatGPT
-plan usage in the browser. Return to Settings, choose an available model, and save.
-An eligible ChatGPT plan is required; no OpenAI API key is used. The connection is
-per Talus account, with tokens encrypted in `accounts.db`. **Disconnect** removes
-local credentials and cancels pending sign-in; manage the OpenAI-side grant and plan
-limits at [ChatGPT usage settings](https://chatgpt.com/settings/usage).
+Add `OPENAI_API_KEY` to the engine's `.env` and restart it. In **Admin → Coach models**,
+choose GPT-6 Astra, GPT-6.1 Sol, GPT-6.1 Terra or GPT-6 Luna for daily briefs,
+longer reads and plan drafting. Claude models remain available, and each task can use
+a different provider. The choices apply to every account; keys stay on the server.
+OpenAI requests use the Responses API with structured outputs and `store: false`.
+The coach's existing number checks, retries, spending caps and rule fallback apply to both providers.
+ChatGPT sign-in and subscription allowance are no longer used. Older saved sign-in
+settings are ignored; historical ChatGPT-plan calls remain excluded from API spending.
+Race web lookup uses Claude-specific tools; with an OpenAI analysis model, Talus asks
+for race details instead.
 
-The coach's existing checks and rule fallback apply to ChatGPT answers. ChatGPT
-requests use plan allowance rather than the Anthropic dollar cap. Race web lookup
-currently uses Claude-specific tools; with ChatGPT, Talus asks for race details instead.
-This flow requires the engine on the same computer as the browser because OpenAI
-returns to a temporary loopback listener. Hosted and iPhone-native authorization need
-a separate approved integration; do not enable the local flag on a remote server.
-See [OpenAI's integration guide](https://developers.openai.com/siwc/token-sharing-open-source/sign-in).
+Model IDs and prices: [OpenAI models](https://developers.openai.com/api/docs/models)
+and [API pricing](https://developers.openai.com/api/docs/pricing).
 
 ### Coach plan tools
 

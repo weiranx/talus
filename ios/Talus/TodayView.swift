@@ -221,7 +221,7 @@ struct CoachCallCard: View {
         }
         if coach.source == "coach" { return "Written by the AI coach from your engine numbers. Every number was checked against the data." }
         switch coach.fallbackReason {
-        case "no_key": return "Rule-based call. Add an Anthropic API key to the engine's .env to turn on the AI coach."
+        case "no_key": return "Rule-based call. Add the selected model's API key to the engine's .env to turn on the AI coach."
         case "off": return "Rule-based call. The AI coach is turned off in Settings."
         case "cap": return "Rule-based call. This month's AI coach budget is used up."
         case "rejected": return "Rule-based call. The coach quoted numbers that aren't in your data, so its reply was dropped."

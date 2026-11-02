@@ -446,7 +446,7 @@ enum PlanText {
     static func coachNote(_ source: String, _ reason: String?, _ what: String) -> String {
         if source == "coach" { return "Written by the AI coach from your engine numbers. Every number was checked against the data." }
         switch reason {
-        case "no_key": return "Rule-based \(what). Add an Anthropic API key to the engine's .env to turn on the AI coach."
+        case "no_key": return "Rule-based \(what). Add the selected model's API key to the engine's .env to turn on the AI coach."
         case "off": return "Rule-based \(what). The AI coach is turned off in Settings."
         case "cap": return "Rule-based \(what). This month's AI coach budget is used up."
         case "rejected": return "Rule-based \(what). The coach quoted numbers that aren't in your data, so its reply was dropped."

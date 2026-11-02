@@ -1,4 +1,4 @@
-"""The AI coach: a daily brief and a workout analysis, written by Claude from engine numbers.
+"""The AI coach: a daily brief and a workout analysis, written from engine numbers.
 
 The engine does all the math. The coach only explains it. Every reply goes through a number
 validator: any number in the text that can't be traced to the context packet is rejected. One
@@ -1355,7 +1355,7 @@ def rules_analysis(packet: dict) -> dict:
     return {"job": job, "off": off, "cost": cost, "changes": changes, "takeaway": takeaway}
 
 
-# Calling Claude ----------------------------------------------------------------------------
+# Calling the AI provider -------------------------------------------------------------------
 
 class Client(Protocol):
     beta: Any
@@ -1378,6 +1378,10 @@ def default_client() -> Client | None:
     import anthropic
 
     return anthropic.Anthropic()
+
+
+def key_available(model_id: str) -> bool:
+    return bool(os.environ.get("OPENAI_API_KEY" if model_id.startswith("gpt-") else "ANTHROPIC_API_KEY"))
 
 
 def default_model(mode: str) -> str:
@@ -1411,7 +1415,7 @@ def _ask(client: Client, mode: str, packet: dict, problems: list[str], model_id:
         text += ("\n\nYour last reply was rejected. " + " ".join(problems)
                  + (" Write it again." if cfg.get("free_numbers") else " Write it again using only numbers that appear in the data."))
     if hasattr(client, "ask"):
-        return client.ask(model_id.removeprefix("chatgpt/"), SYSTEM, text, cfg["schema"], cfg["max_tokens"])
+        return client.ask(model_id, SYSTEM, text, cfg["schema"], cfg["max_tokens"], cfg["effort"])
     resp = client.beta.messages.create(
         model=model_id,
         max_tokens=cfg["max_tokens"],

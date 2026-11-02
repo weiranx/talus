@@ -400,8 +400,8 @@ private struct CoachSettingsCard: View {
             Text("Tell the coach what kind of training you want under Coach, Your training goals.")
                 .font(.subheadline).foregroundStyle(.secondary)
             if !coach.keySet {
-                Text((coach.cap.ceiling == nil ? "Add ANTHROPIC_API_KEY to the engine's .env and restart it." : "The owner of this Talus hasn't added an Anthropic key yet.")
-                     + " Until then Talus shows rule-based text.")
+                Text((coach.cap.ceiling == nil ? "Add the selected models' API keys to the engine's .env: ANTHROPIC_API_KEY for Claude or OPENAI_API_KEY for OpenAI, then restart it." : "The owner of this Talus hasn't added all the selected models' API keys yet.")
+                     + " Models without a key use rule-based text.")
                     .font(.caption).foregroundStyle(.secondary)
             }
             if coach.aiPlans != nil {
@@ -715,7 +715,7 @@ private struct AdminContent: View {
                 LabeledContent("Version", value: d.system.revision.map { String($0.prefix(7)) } ?? "unknown")
                 LabeledContent("Scoring model", value: d.system.modelVersion)
                 LabeledContent("Coach") {
-                    Text("Brief \(d.system.coach.briefModel), analysis \(d.system.coach.analysisModel), prompt \(d.system.coach.promptVersion)\(d.system.coach.keySet ? "" : " (no Anthropic key)")")
+                    Text("Brief \(d.system.coach.briefModel), analysis \(d.system.coach.analysisModel), prompt \(d.system.coach.promptVersion)\(d.system.coach.keySet ? "" : " (API key missing)")")
                         .multilineTextAlignment(.trailing)
                 }
                 LabeledContent("Coach ceiling", value: "\(SettingsText.usd(d.system.serverCeilingUsd)) a month")

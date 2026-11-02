@@ -1,7 +1,7 @@
 """App settings kept in SQLite and edited from the web app's Settings screen.
 
-Each account has its own settings, in its own talus.db. Keys are not settings: the Anthropic key
-stays in .env (the coach runs on the server's key), and each account's intervals.icu key lives
+Each account has its own settings, in its own talus.db. Keys are not settings: the provider keys
+stay in .env (the coach runs on the server's keys), and each account's intervals.icu key lives
 encrypted in accounts.db. The engine only ever reports whether a key is set.
 """
 
@@ -17,6 +17,10 @@ MODELS = {
     "claude-opus-5-5": {"label": "Opus 5.5", "input": 4.00, "output": 20.00, "fallback": True},
     "claude-sonnet-5-5": {"label": "Sonnet 5.5", "input": 2.00, "output": 10.00, "fallback": True},
     "claude-haiku-5-5": {"label": "Haiku 5.5", "input": 0.10, "output": 0.50, "fallback": False},
+    "gpt-6-astra": {"label": "GPT-6 Astra", "input": 10.00, "output": 50.00, "fallback": False},
+    "gpt-6.1-sol": {"label": "GPT-6.1 Sol", "input": 2.00, "output": 10.00, "fallback": False},
+    "gpt-6.1-terra": {"label": "GPT-6.1 Terra", "input": 1.00, "output": 5.00, "fallback": False},
+    "gpt-6-luna": {"label": "GPT-6 Luna", "input": 0.10, "output": 0.50, "fallback": False},
 }
 
 # Typical tokens per call, used for the cost estimate until the coach log has real usage.
@@ -39,12 +43,13 @@ def cost_per_call(model: str, tokens: tuple[float, float]) -> float | None:
 
 def _priced_as(model: str | None) -> str:
     """The price list entry for a logged model. The API can answer with a dated id or, with the
-    server-side fallback, another model; anything not recognised is priced as the dearest, so the
+    server-side fallback, another model; anything not recognised is priced as the dearest in its provider family, so the
     cap errs on the safe side."""
     for name in MODELS:
         if model and (model == name or model.startswith(name + "-")):
             return name
-    return max(MODELS, key=lambda m: MODELS[m]["output"])
+    family = [m for m in MODELS if m.startswith("claude-") == (model or "").startswith("claude-")]
+    return max(family, key=lambda m: MODELS[m]["output"])
 
 
 def server_ceiling() -> float:

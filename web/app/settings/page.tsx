@@ -85,7 +85,7 @@ export default async function SettingsPage() {
               <ThresholdsCard current={s.thresholds} inferred={s.inferred} />
               {s.thresholds ? <ZonesCard zones={s.thresholds.zones} /> : null}
               <ReadinessSettings readiness={s.readiness} />
-              <CoachSettings coach={s.coach} />
+              <CoachSettings coach={s.coach} canManageModels={account.is_admin} />
               <NamesCard />
             </div>
           </SettingsSection>

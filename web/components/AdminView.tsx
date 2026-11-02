@@ -275,7 +275,7 @@ export default function AdminView({ data }: { data: AdminOverview }) {
             <dd>
               Brief <span className="mono">{s.coach.brief_model}</span>, analysis <span className="mono">{s.coach.analysis_model}</span>,
               {s.coach.plan_model ? <> plans <span className="mono">{s.coach.plan_model}</span>,</> : null}
-              prompt <span className="mono">{s.coach.prompt_version}</span>{s.coach.key_set ? "" : <span className="error-text"> (no Anthropic key)</span>}
+              prompt <span className="mono">{s.coach.prompt_version}</span>{s.coach.key_set ? "" : <span className="error-text"> (API key missing)</span>}
             </dd>
             <dt>Coach ceiling</dt>
             <dd>{usd(s.server_ceiling_usd)} a month for each account but the owner</dd>

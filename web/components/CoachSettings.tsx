@@ -3,7 +3,6 @@
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 import Link from "next/link";
-import ChatGPTProvider from "@/components/ChatGPTProvider";
 import Pill from "@/components/Pill";
 import type { Settings } from "@/lib/types";
 
@@ -13,10 +12,8 @@ function money(v: number | null): string {
   return v < 1 ? `${Math.round(v * 100)}¢` : `$${v.toFixed(2)}`;
 }
 
-export default function CoachSettings({ coach }: { coach: Settings["coach"] }) {
+export default function CoachSettings({ coach, canManageModels = false }: { coach: Settings["coach"]; canManageModels?: boolean }) {
   const router = useRouter();
-  const [provider, setProvider] = useState(coach.provider ?? "anthropic");
-  const [chatgptModel, setChatgptModel] = useState(coach.chatgpt_model ?? "");
   const [enabled, setEnabled] = useState(coach.enabled);
   const [style, setStyle] = useState(coach.style);
   const [aiPlans, setAiPlans] = useState(coach.ai_plans ?? true);
@@ -26,7 +23,7 @@ export default function CoachSettings({ coach }: { coach: Settings["coach"] }) {
   const capValue = cap.trim() === "" ? null : Number(cap);
   const capDirty = capValue !== coach.cap.limit;
   const capValid = capValue == null || (Number.isFinite(capValue) && capValue >= 0 && capValue <= 1000);
-  const dirty = provider !== (coach.provider ?? "anthropic") || chatgptModel !== (coach.chatgpt_model ?? "") || capDirty || enabled !== coach.enabled || style !== coach.style || aiPlans !== (coach.ai_plans ?? true);
+  const dirty = capDirty || enabled !== coach.enabled || style !== coach.style || aiPlans !== (coach.ai_plans ?? true);
   // A draft is the coach's build plus its second check of the plan.
   const planModel = coach.plan_model ?? coach.analysis_model;
   const buildOnly = coach.estimate.build?.[planModel]?.per_call ?? null;
@@ -40,7 +37,7 @@ export default function CoachSettings({ coach }: { coach: Settings["coach"] }) {
     const res = await fetch("/api/settings/coach", {
       method: "PUT",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ enabled, provider, ...(provider === "chatgpt" && chatgptModel ? { chatgpt_model: chatgptModel } : {}), style, ai_plans: aiPlans, ...(capDirty ? { monthly_cap_usd: capValue } : {}) }),
+      body: JSON.stringify({ enabled, style, ai_plans: aiPlans, ...(capDirty ? { monthly_cap_usd: capValue } : {}) }),
     }).catch(() => null);
     setSaving(false);
     if (!res) return setMessage({ ok: false, text: "Could not save. Is the engine running?" });
@@ -53,17 +50,16 @@ export default function CoachSettings({ coach }: { coach: Settings["coach"] }) {
     <section className="card">
       <div style={{ display: "flex", flexWrap: "wrap", justifyContent: "space-between", alignItems: "center", gap: 8 }}>
         <h2 className="label">AI coach</h2>
-        {!coach.key_set ? <Pill tone="warn">Connect a provider</Pill> : coach.enabled ? <Pill tone="good">On</Pill> : <Pill tone="neutral">Off</Pill>}
+        {!coach.key_set ? <Pill tone="warn">No API key</Pill> : coach.enabled ? <Pill tone="good">On</Pill> : <Pill tone="neutral">Off</Pill>}
       </div>
 
-      <label className="field">
-        <span className="field-label">AI provider</span>
-        <select value={provider} onChange={e => setProvider(e.target.value as "anthropic" | "chatgpt")}>
-          <option value="anthropic">Claude · Anthropic API key</option>
-          <option value="chatgpt">ChatGPT · Sign in with ChatGPT</option>
-        </select>
-      </label>
-      {provider === "chatgpt" && coach.chatgpt && <ChatGPTProvider initial={coach.chatgpt} model={chatgptModel} onModel={setChatgptModel} />}
+      <div className="field">
+        <span className="field-label">Coach models</span>
+        <div className="muted">
+          Daily brief: {coach.models.find(m => m.id === coach.brief_model)?.label ?? coach.brief_model}. Longer reads: {coach.models.find(m => m.id === coach.analysis_model)?.label ?? coach.analysis_model}. Plans: {coach.models.find(m => m.id === planModel)?.label ?? planModel}.
+        </div>
+        <span className="muted">Claude and OpenAI models use the server&apos;s API keys. {canManageModels ? <Link href="/admin">Choose models in Admin</Link> : "The admin chooses models for every account."}</span>
+      </div>
 
       <label className="toggle">
         <input type="checkbox" role="switch" checked={enabled} onChange={(e) => setEnabled(e.target.checked)} />
@@ -77,11 +73,11 @@ export default function CoachSettings({ coach }: { coach: Settings["coach"] }) {
       <div className="muted" style={{ fontSize: 14 }}>
         Tell the coach what kind of training you want under <Link href="/coach">Coach, Your training goals</Link>.
       </div>
-      {provider === "anthropic" && !coach.key_set ? (
+      {!coach.key_set ? (
         <div className="muted">
           {coach.cap.ceiling == null
-            ? <>Add <code>ANTHROPIC_API_KEY</code> to the engine&apos;s .env and restart it.</>
-            : "The owner of this Talus hasn't added an Anthropic key yet."} Until then Talus shows rule-based text.
+            ? <>Add the selected models&apos; keys (<code>ANTHROPIC_API_KEY</code> for Claude, <code>OPENAI_API_KEY</code> for OpenAI) to the engine&apos;s .env and restart it.</>
+            : "The owner of this Talus hasn't added all the selected models' API keys yet."} Models without a key use rule-based text.
         </div>
       ) : null}
 
@@ -91,7 +87,7 @@ export default function CoachSettings({ coach }: { coach: Settings["coach"] }) {
           <span style={{ fontWeight: 600 }}>Let the coach build training plans</span>
           <span className="muted" style={{ display: "block" }}>
             The coach writes each plan draft from your history, goals and answers, then checks it a second time, and the engine holds every week to the load limits. 
-            {provider === "anthropic" && buildCost != null ? `About ${money(buildCost)} a draft. ` : ""}Off, the engine builds plans by its rules.
+            {buildCost != null ? `About ${money(buildCost)} a draft. ` : ""}Off, the engine builds plans by its rules.
           </span>
         </span>
       </label>
@@ -108,7 +104,7 @@ export default function CoachSettings({ coach }: { coach: Settings["coach"] }) {
         </label>
       </div>
 
-      {provider === "anthropic" && <label className="field">
+      <label className="field">
         <span className="field-label">Monthly spending cap</span>
         <input inputMode="decimal" value={cap} placeholder={coach.cap.ceiling == null ? "No cap" : ""}
           disabled={!enabled} onChange={(e) => setCap(e.target.value.replace(/[^0-9.]/g, ""))} />
@@ -117,10 +113,10 @@ export default function CoachSettings({ coach }: { coach: Settings["coach"] }) {
           {capped ? " Cap reached: rule-based text until next month." : ""}
           {coach.cap.ceiling != null ? ` This Talus allows up to $${coach.cap.ceiling.toFixed(2)} a month per account.` : " In dollars; blank means no cap."}
         </span>
-      </label>}
+      </label>
 
       <div className="actions">
-        <button className="btn" onClick={save} disabled={!dirty || saving || (provider === "chatgpt" && !chatgptModel)} aria-busy={saving}>{saving ? "Saving" : "Save coach settings"}</button>
+        <button className="btn" onClick={save} disabled={!dirty || saving} aria-busy={saving}>{saving ? "Saving" : "Save coach settings"}</button>
       </div>
       {message ? <div className={message.ok ? "ok-text" : "error-text"} role="status">{message.text}</div> : null}
     </section>

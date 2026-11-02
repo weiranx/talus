@@ -393,9 +393,6 @@ export interface Settings {
     watch: { enabled: boolean; last_sync: string | null; last_attempt: { at: string; error: string | null; saved: number } | null };
   };
   coach: {
-    provider?: "anthropic" | "chatgpt";
-    chatgpt_model?: string;
-    chatgpt?: { available: boolean; connected: boolean; sharing: boolean; email: string | null; pending: boolean; error: string | null };
     enabled: boolean;
     key_set: boolean;
     brief_model: string;
@@ -408,7 +405,7 @@ export interface Settings {
     styles: { key: string; label: string; description: string }[];
     models: { id: string; label: string; input: number; output: number }[];
     estimate: { brief: Record<string, CostEstimate>; analysis: Record<string, CostEstimate>; build?: Record<string, CostEstimate>; check?: Record<string, CostEstimate> };
-    // This month's spending on the server's Anthropic key. ceiling is null for the owner.
+    // This month's spending on the server's provider keys. ceiling is null for the owner.
     cap: { limit: number | null; ceiling: number | null; spent: number; month: string };
   };
   readiness: { sleep_need_h: number; sleep_need_source: "saved" | "env" | "default" };

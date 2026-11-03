@@ -25,9 +25,12 @@ it. Data and `.env` stay put. The first build takes a few minutes on the 1 vCPU 
 
 ## The web app on Cloudflare
 
-Pushing to `main` deploys the droplet first, then the Worker (the `web-cloudflare` job, which needs
-the `CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID` repository secrets; the token needs the
-*Edit Cloudflare Workers* template). By hand, from `web/`: `npx wrangler login`, then `npm run cf:deploy`.
+Cloudflare deploys the Worker itself on every push to `main` (Workers Builds, set up under
+Workers & Pages > talus-web > Settings > Builds: repo `weiranx/talus`, path `web`, build
+`npx opennextjs-cloudflare build`, deploy `npx opennextjs-cloudflare deploy`, build variable
+`ENGINE_URL=https://talus.weiranxiong.com`). It runs alongside the droplet deploy in GitHub Actions,
+not after it, so for a few minutes after a merge new pages can meet the previous engine. By hand,
+from `web/`: `npx wrangler login`, then `npm run cf:deploy`.
 
 The Worker serves pages; the droplet serves everything under `/api/`. Two Worker routes on the
 `weiranxiong.com` zone (Workers Routes in the dashboard) split them:

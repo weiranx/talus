@@ -115,11 +115,11 @@ The Settings screen (`/settings`) edits what the engine stores in SQLite:
 
 - **Account:** change password, export, delete.
 
-Provider API keys stay in `.env`; intervals.icu keys are per account and encrypted. The engine reports only whether a key is set and never sends one to the browser.
+Provider API keys can be managed under **Admin → Coach models & API keys → Provider API keys**. Keys entered there are encrypted in `accounts.db`, override `.env` keys and apply to new requests immediately. Removing a saved key falls back to the corresponding `.env` key, if configured. intervals.icu keys are per account and encrypted. The engine reports only whether a key is set and never sends one to the browser.
 
 ### AI coach
 
-Add the selected model’s API key to `.env`: `ANTHROPIC_API_KEY` for Claude or `OPENAI_API_KEY` for OpenAI. Without one, Today and Activity show rule-based text, labeled as such.
+Add the selected model’s API key in **Admin → Coach models & API keys**, or configure `ANTHROPIC_API_KEY` for Claude or `OPENAI_API_KEY` for OpenAI in `.env`. Without one, Today and Activity show rule-based text, labeled as such.
 
 - **When it calls:** right after each sync or import (`talus sync`, `talus import` or **Sync now**), it writes today's brief and a read of each new activity from the last 14 days, so the pages open with them ready. It also runs when you open a page whose input changed since (your check-in, a new day, an older activity). Replies are saved and reused until the input changes, so reloads are free. `--no-coach` skips the run after a sync or import.
 - **What it sees:** a compact packet of engine numbers (`talus/coach.py`): loads, readiness, check-in, the rule-based call, the last 14 days. No GPS, no names.
@@ -189,10 +189,10 @@ intervals.icu connects with OAuth when `INTERVALS_CLIENT_ID` and `INTERVALS_CLIE
 
 ### OpenAI coach models
 
-Add `OPENAI_API_KEY` to the engine's `.env` and restart it. In **Admin → Coach models**,
+In **Admin → Coach models**, save an OpenAI or Anthropic API key under **Provider API keys**, then
 choose GPT-6 Astra, GPT-6.1 Sol, GPT-6.1 Terra or GPT-6 Luna for daily briefs,
 longer reads and plan drafting. Claude models remain available, and each task can use
-a different provider. The choices apply to every account; keys stay on the server.
+a different provider. The choices apply to every account; keys stay on the server. Only the admin can replace or remove saved provider keys. Key changes are audited without recording the key. Existing `OPENAI_API_KEY` and `ANTHROPIC_API_KEY` environment keys remain supported.
 OpenAI requests use the Responses API with structured outputs and `store: false`.
 The coach's existing number checks, retries, spending caps and rule fallback apply to both providers.
 ChatGPT sign-in and subscription allowance are no longer used. Older saved sign-in

@@ -17,6 +17,8 @@ const ACTIONS: Record<string, string> = {
   feature_on: "Turned on",
   feature_off: "Turned off",
   coach_models: "Changed coach models",
+  coach_key_updated: "Updated provider API key",
+  coach_key_removed: "Removed saved provider API key",
 };
 
 const FEATURES: { key: keyof AdminOverview["features"]; label: string; help: string }[] = [
@@ -140,6 +142,7 @@ export default function AdminView({ data }: { data: AdminOverview }) {
 
   return (
     <>
+      <CoachModelsCard data={data.coach_models} />
       <section className="card">
         <h2 className="label">Accounts ({data.accounts.length})</h2>
         <div className="table-wrap">
@@ -229,8 +232,6 @@ export default function AdminView({ data }: { data: AdminOverview }) {
             </div>
           </section>
 
-          <CoachModelsCard data={data.coach_models} />
-
           <section className="card">
             <h2 className="label">Feature flags</h2>
             {FEATURES.map((f) => (
@@ -256,6 +257,7 @@ export default function AdminView({ data }: { data: AdminOverview }) {
                     {e.target ? ` for ${e.target}` : ""}
                     {e.action.startsWith("feature_") && e.detail ? ` ${FEATURES.find((f) => f.key === e.detail?.feature)?.label ?? String(e.detail.feature)}` : ""}
                     {e.action === "coach_ceiling" && e.detail ? ` to ${e.detail.to === null ? "the default" : usd(Number(e.detail.to))}` : ""}
+                    {e.action.startsWith("coach_key_") && e.detail ? ` · ${e.detail.provider === "openai" ? "OpenAI" : "Anthropic"}` : ""}
                     {" · "}{when(e.at, true)}
                   </li>
                 ))}

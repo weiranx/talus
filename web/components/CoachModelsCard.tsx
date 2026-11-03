@@ -2,6 +2,7 @@
 
 import { useRouter } from "next/navigation";
 import { useState } from "react";
+import CoachProviderKeys from "@/components/CoachProviderKeys";
 import type { AdminOverview, CostEstimate } from "@/lib/types";
 
 function money(v: number | null): string {
@@ -43,8 +44,8 @@ export default function CoachModelsCard({ data }: { data: AdminOverview["coach_m
   }
 
   return (
-    <section className="card">
-      <h2 className="label">Coach models</h2>
+    <section className="card" id="coach-models">
+      <h2 className="label">Coach models &amp; API keys</h2>
       <div className="muted">One choice for every account. Choose Claude or OpenAI for each task. Each account still picks its coaching style, its cap and whether the coach is on.</div>
       <div className="form-grid">
         {MODES.map((m) => (
@@ -66,6 +67,7 @@ export default function CoachModelsCard({ data }: { data: AdminOverview["coach_m
         <button className="btn" onClick={save} disabled={!dirty || busy} aria-busy={busy}>{busy ? "Saving" : "Save models"}</button>
       </div>
       {msg ? <div className={msg.ok ? "ok-text" : "error-text"} role="status">{msg.text}</div> : null}
+      {data.providers?.length ? <CoachProviderKeys providers={data.providers} /> : null}
     </section>
   );
 }

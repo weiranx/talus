@@ -4,7 +4,7 @@ Each account gets its own folder, data/users/<id>/, holding its own talus.db and
 engine opens that folder's Store for every request, so one account can never read another's
 activities, thresholds, settings or coach log: there is no shared table to filter wrongly.
 accounts.db, next to the folders, holds only who can sign in, their sessions and their
-data-source keys (encrypted).
+data-source and shared coach keys (encrypted).
 
 Passwords are hashed with scrypt. An account can also sign in with Google (identity table); an
 account made through Google has no password until its owner sets one. Sessions are random tokens; only their SHA-256 is stored.
@@ -73,6 +73,11 @@ CREATE TABLE IF NOT EXISTS identity (
 CREATE TABLE IF NOT EXISTS config (
     key TEXT PRIMARY KEY,
     value TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS coach_key (
+    provider TEXT PRIMARY KEY,
+    secret TEXT NOT NULL,
     updated_at TEXT NOT NULL
 );
 CREATE TABLE IF NOT EXISTS admin_log (
@@ -431,4 +436,27 @@ class Accounts:
 
     def clear_credential(self, account_id: int, source: str) -> None:
         self.db.execute("DELETE FROM credential WHERE account_id = ? AND source = ?", (account_id, source))
+        self.db.commit()
+
+    def set_coach_key(self, provider: str, api_key: str) -> None:
+        """Server-wide coach credentials. Only admin routes may write these."""
+        secret = self._cipher().encrypt(api_key.encode()).decode()
+        self.db.execute("INSERT OR REPLACE INTO coach_key VALUES (?, ?, ?)",
+                        (provider, secret, _now().isoformat()))
+        self.db.commit()
+
+    def coach_key(self, provider: str) -> dict | None:
+        row = self.db.execute("SELECT secret, updated_at FROM coach_key WHERE provider = ?", (provider,)).fetchone()
+        if row is None:
+            return None
+        from cryptography.fernet import InvalidToken
+
+        try:
+            value = self._cipher().decrypt(row["secret"].encode()).decode()
+        except InvalidToken:
+            value = None  # Keep metadata so the admin can replace or remove an unreadable key.
+        return {"api_key": value, "updated_at": row["updated_at"]}
+
+    def clear_coach_key(self, provider: str) -> None:
+        self.db.execute("DELETE FROM coach_key WHERE provider = ?", (provider,))
         self.db.commit()

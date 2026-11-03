@@ -11,6 +11,7 @@ import hashlib
 import io
 import json
 import os
+import re
 import secrets
 import sqlite3
 import threading
@@ -30,7 +31,7 @@ from fastapi import BackgroundTasks, FastAPI, HTTPException, Request, Response
 from fastapi.responses import JSONResponse, RedirectResponse, StreamingResponse
 from pydantic import BaseModel, ConfigDict, Field
 
-from . import MODEL_VERSION, admin, cli, coach, explain, google_auth, interview, intervals_auth, ledger, naming, openai_api, readiness_score, status, wellness, zones
+from . import MODEL_VERSION, admin, cli, coach, explain, google_auth, interview, intervals_auth, ledger, naming, openai_api, provider_keys, readiness_score, status, wellness, zones
 from . import heatmap, routes, terrain
 from . import plan as planner
 from . import schedule
@@ -844,7 +845,10 @@ def coach_models(accounts: Accounts | None = None) -> dict:
 
 def _provider_client(store: Store, model_id: str | None = None):
     model_id = model_id or _coach_settings(store)["brief_model"]
-    return openai_client() if model_id.startswith("gpt-") else coach_client()
+    provider = provider_keys.for_model(model_id)
+    client = openai_client if provider == "openai" else coach_client
+    key = provider_keys.saved_key(get_accounts(), provider)
+    return client(api_key=key) if key else client()
 
 
 def _coach_settings(store: Store) -> dict:
@@ -854,7 +858,8 @@ def _coach_settings(store: Store) -> dict:
 
 def _coach_keys_set(store: Store) -> bool:
     cfg = _coach_settings(store)
-    return all(coach.key_available(cfg[k]) for k in (*MODEL_KEYS, "plan_model"))
+    accounts = get_accounts()
+    return all(provider_keys.available(accounts, cfg[k]) for k in (*MODEL_KEYS, "plan_model"))
 
 
 def _is_owner() -> bool:
@@ -4180,7 +4185,7 @@ def admin_feature(name: str, body: FeatureIn) -> dict:
 def _system(accounts: Accounts) -> dict:
     out = admin.system(accounts)
     out["coach"] |= coach_models(accounts)
-    out["coach"]["key_set"] = all(coach.key_available(out["coach"][k]) for k in (*MODEL_KEYS, "plan_model"))
+    out["coach"]["key_set"] = all(provider_keys.available(accounts, out["coach"][k]) for k in (*MODEL_KEYS, "plan_model"))
     return out
 
 
@@ -4191,6 +4196,7 @@ def _admin_models(accounts: Accounts) -> dict:
     return coach_models(accounts) | {
         "chosen": accounts.config("coach_models") is not None,
         "env": os.environ.get("TALUS_COACH_MODEL") or None,
+        "providers": [provider_keys.status(accounts, p) for p in provider_keys.PROVIDERS],
         "models": [{"id": k, "label": v["label"], "input": v["input"], "output": v["output"]}
                    for k, v in app_settings.MODELS.items()],
         # What each model would cost on the admin's own account, the same estimate Settings used to show.
@@ -4228,6 +4234,39 @@ def admin_coach_models(body: ModelsIn) -> dict:
     accounts.set_config("coach_models", values)
     accounts.log_admin(me.id, "coach_models", None, values)
     return coach_models(accounts)
+
+
+@app.put("/api/admin/coach-keys/{provider}")
+async def admin_coach_key(provider: str, request: Request) -> dict:
+    accounts, me = _admin()
+    if provider not in provider_keys.PROVIDERS:
+        raise HTTPException(404, "No such provider.")
+    # Parse after authorization; never let validation errors echo a submitted credential.
+    if request.headers.get("content-type", "").split(";")[0].strip().lower() != "application/json":
+        raise HTTPException(415, "Send the API key as JSON.")
+    try:
+        body = await request.json()
+    except ValueError:
+        raise HTTPException(422, "Enter a valid API key.") from None
+    key = body.get("api_key") if isinstance(body, dict) else None
+    if not isinstance(key, str):
+        raise HTTPException(422, "Enter a valid API key.")
+    key = key.strip()
+    if not 16 <= len(key) <= 1024 or not key.startswith("sk-") or not re.fullmatch(r"[A-Za-z0-9_-]+", key):
+        raise HTTPException(422, "Enter a valid API key starting with sk-.")
+    accounts.set_coach_key(provider, key)
+    accounts.log_admin(me.id, "coach_key_updated", detail={"provider": provider})
+    return provider_keys.status(accounts, provider)
+
+
+@app.delete("/api/admin/coach-keys/{provider}")
+def remove_admin_coach_key(provider: str) -> dict:
+    accounts, me = _admin()
+    if provider not in provider_keys.PROVIDERS:
+        raise HTTPException(404, "No such provider.")
+    accounts.clear_coach_key(provider)
+    accounts.log_admin(me.id, "coach_key_removed", detail={"provider": provider})
+    return provider_keys.status(accounts, provider)
 
 
 class SignupIn(BaseModel):

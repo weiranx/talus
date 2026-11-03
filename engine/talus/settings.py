@@ -1,8 +1,8 @@
 """App settings kept in SQLite and edited from the web app's Settings screen.
 
-Each account has its own settings, in its own talus.db. Keys are not settings: the provider keys
-stay in .env (the coach runs on the server's keys), and each account's intervals.icu key lives
-encrypted in accounts.db. The engine only ever reports whether a key is set.
+Each account has its own settings, in its own talus.db. Provider keys are shared server-wide,
+stored encrypted in accounts.db or read from the environment. Each account's intervals.icu
+key is encrypted in accounts.db too. The engine only ever reports whether a key is set.
 """
 
 from __future__ import annotations

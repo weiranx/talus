@@ -732,12 +732,23 @@ export interface AdminAccount {
   disk_bytes: number;
 }
 
+export interface CoachProviderStatus {
+  id: "anthropic" | "openai";
+  label: string;
+  key_set: boolean;
+  source: "admin" | "environment" | null;
+  saved_key_set: boolean;
+  environment_key_set: boolean;
+  updated_at: string | null;
+}
+
 export interface AdminOverview {
   accounts: AdminAccount[];
   month: string;
   signup: { open: boolean; chosen: boolean | null; env: boolean };
   features: { show_ai_cost: boolean };
   coach_models: {
+    providers: CoachProviderStatus[];
     brief_model: string;
     analysis_model: string;
     plan_model: string;

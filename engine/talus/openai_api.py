@@ -8,17 +8,23 @@ from types import SimpleNamespace
 import httpx
 
 
-def default_client() -> Client | None:
-    return Client() if os.environ.get("OPENAI_API_KEY") else None
+def default_client(api_key: str | None = None) -> Client | None:
+    key = api_key or os.environ.get("OPENAI_API_KEY")
+    return Client(key) if key else None
 
 
 class Client:
+    def __init__(self, api_key: str | None = None):
+        self._api_key = api_key or os.environ.get("OPENAI_API_KEY")
+
     def ask(self, model: str, system: str, text: str, schema: dict, max_tokens: int,
             effort: str = "low") -> tuple[SimpleNamespace, dict | None]:
         try:
+            if not self._api_key:
+                raise ValueError("OpenAI key not configured.")
             response = httpx.post(
                 "https://api.openai.com/v1/responses",
-                headers={"Authorization": "Bearer " + os.environ["OPENAI_API_KEY"]},
+                headers={"Authorization": "Bearer " + self._api_key},
                 json={"model": model, "instructions": system, "input": text, "store": False,
                       "max_output_tokens": max_tokens, "reasoning": {"effort": effort},
                       "text": {"format": {"type": "json_schema", "name": "coach_reply",

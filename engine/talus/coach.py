@@ -1372,12 +1372,13 @@ class Result:
     usage: dict | None = None
 
 
-def default_client() -> Client | None:
-    if not os.environ.get("ANTHROPIC_API_KEY"):
+def default_client(api_key: str | None = None) -> Client | None:
+    key = api_key or os.environ.get("ANTHROPIC_API_KEY")
+    if not key:
         return None
     import anthropic
 
-    return anthropic.Anthropic()
+    return anthropic.Anthropic(api_key=key)
 
 
 def key_available(model_id: str) -> bool:

@@ -75,9 +75,9 @@ export default function CoachSettings({ coach, canManageModels = false }: { coac
       </div>
       {!coach.key_set ? (
         <div className="muted">
-          {coach.cap.ceiling == null
-            ? <>Add the selected models&apos; keys (<code>ANTHROPIC_API_KEY</code> for Claude, <code>OPENAI_API_KEY</code> for OpenAI) to the engine&apos;s .env and restart it.</>
-            : "The owner of this Talus hasn't added all the selected models' API keys yet."} Models without a key use rule-based text.
+          {canManageModels
+            ? <>Add the selected models&apos; API keys in <Link href="/admin">Admin → Coach models</Link>.</>
+            : "Ask the admin to add the selected models' API keys."} Models without a key use rule-based text.
         </div>
       ) : null}
 
